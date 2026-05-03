@@ -1,0 +1,15 @@
+HTTP/1.1 200 OK
+content-length: 405
+content-type: application/json; charset=utf-8
+server: drogon/1.9.12
+permissions-policy: camera=(), microphone=(), geolocation=()
+x-content-type-options: nosniff
+access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS, PATCH
+referrer-policy: strict-origin-when-cross-origin
+x-frame-options: DENY
+access-control-allow-headers: Content-Type, Authorization
+access-control-allow-credentials: true
+access-control-allow-origin: http://localhost:3000
+set-cookie: token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InByb2RjaGVja18xMGE1NWY4NmFmODJAZXhhbXBsZS5jb20iLCJleHAiOjE3NzcwNjEzMTMsImlhdCI6MTc3NzA1NzcxMywidXNlcl9pZCI6IjlhZDk4ZTgxLTFjM2YtNGQ0MC04OWRlLTNhY2JjZmFiYzQ1NCJ9.J0An-3r7lYD1-VQ2jMIo2uv-0zocajkR_IQudnMIMlA; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+date: Fri, 24 Apr 2026 19:08:33 GMT
+

@@ -1,0 +1,1 @@
+{"repo_url":"https://github.com/heroku/python-getting-started","description":"env smoke test","name":"env-flow-test","source_type":"github","env_vars":[{"key":"NEXT_PUBLIC_EMAILJS_SERVICE_ID","value":"service_initial"},{"key":"NEXT_PUBLIC_EMAILJS_TEMPLATE_ID","value":"template_initial"}]}

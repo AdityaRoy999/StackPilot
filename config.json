@@ -1,0 +1,23 @@
+{
+    "listeners": [
+        {
+            "address": "0.0.0.0",
+            "port": 8090,
+            "https": false
+        }
+    ],
+    "app": {
+        "threads_num": 4,
+        "enable_session": false,
+        "document_root": "./",
+        "upload_path": "uploads",
+        "max_connections": 100000,
+        "max_connections_per_ip": 0,
+        "log": {
+            "log_path": "./logs",
+            "logfile_base_name": "aids-platform",
+            "log_size_limit": 100000000,
+            "log_level": "DEBUG"
+        }
+    }
+}

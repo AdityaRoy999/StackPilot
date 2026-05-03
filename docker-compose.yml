@@ -1,0 +1,280 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL Database ────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: aids-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:?Set DB_USER in .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME in .env}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aids_admin -d aids_platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── C++ Backend ────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: aids-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aids-backend
+    restart: unless-stopped
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:?Set DB_NAME in .env}
+      - DB_USER=${DB_USER:?Set DB_USER in .env}
+      - DB_PASSWORD=${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - AIDS_REDIS_QUEUE=${AIDS_REDIS_QUEUE:-aids:jobs:deployment}
+      - AIDS_JOB_WORKERS=${AIDS_JOB_WORKERS:-2}
+      - AIDS_JOB_MAX_ATTEMPTS=${AIDS_JOB_MAX_ATTEMPTS:-3}
+      - PROMETHEUS_PUBLIC_URL=${PROMETHEUS_PUBLIC_URL:-http://localhost:9090}
+      - GRAFANA_PUBLIC_URL=${GRAFANA_PUBLIC_URL:-http://localhost:3001}
+      - LOKI_PUBLIC_URL=${LOKI_PUBLIC_URL:-http://localhost:3001/explore}
+      - AIDS_METRICS_BEARER_TOKEN=${AIDS_METRICS_BEARER_TOKEN:-}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env}
+      - JWT_EXPIRY_SECONDS=${JWT_EXPIRY_SECONDS:-3600}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
+      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:?Set CORS_ALLOWED_ORIGIN in .env}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-http://localhost:3000}
+      - BACKEND_PUBLIC_URL=${BACKEND_PUBLIC_URL:-http://localhost:8090}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-AIDS Platform}
+      - BUILD_WORKSPACE_DIR=/app/uploads/builds
+      - BUILD_MAX_LOG_BYTES=${BUILD_MAX_LOG_BYTES:-200000}
+      - BUILD_CLONE_TIMEOUT_SECONDS=${BUILD_CLONE_TIMEOUT_SECONDS:-120}
+      - BUILD_COMMAND_TIMEOUT_SECONDS=${BUILD_COMMAND_TIMEOUT_SECONDS:-900}
+      - BUILD_DOCKER_MEMORY=${BUILD_DOCKER_MEMORY:-1g}
+      - LOCAL_SOURCE_ROOTS=${LOCAL_SOURCE_ROOTS:-/app/local-projects}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}
+      - K8S_NAMESPACE=${K8S_NAMESPACE:-aids-apps}
+      - K8S_SERVICE_TYPE=${K8S_SERVICE_TYPE:-NodePort}
+      - K8S_EXPOSURE_MODE=${K8S_EXPOSURE_MODE:-service}
+      - K8S_NODE_HOST=${K8S_NODE_HOST:-localhost}
+      - K8S_BASE_DOMAIN=${K8S_BASE_DOMAIN:-}
+      - K8S_RUNTIME_SCHEME=${K8S_RUNTIME_SCHEME:-http}
+      - K8S_INGRESS_CLASS=${K8S_INGRESS_CLASS:-}
+      - K8S_CERT_CLUSTER_ISSUER=${K8S_CERT_CLUSTER_ISSUER:-}
+      - K8S_INGRESS_TLS_SECRET=${K8S_INGRESS_TLS_SECRET:-}
+      - K8S_INGRESS_ANNOTATIONS_JSON=${K8S_INGRESS_ANNOTATIONS_JSON:-}
+      - REMOTE_K8S_BASE_DOMAIN=${REMOTE_K8S_BASE_DOMAIN:-}
+      - REMOTE_K8S_INGRESS_CLASS=${REMOTE_K8S_INGRESS_CLASS:-}
+      - REMOTE_K8S_CERT_CLUSTER_ISSUER=${REMOTE_K8S_CERT_CLUSTER_ISSUER:-}
+      - REMOTE_K8S_CERT_MANAGER_VERSION=${REMOTE_K8S_CERT_MANAGER_VERSION:-v1.15.3}
+      - K8S_NAMESPACE_PREFIX=${K8S_NAMESPACE_PREFIX:-}
+      - K8S_IMAGE_PULL_SECRET=${K8S_IMAGE_PULL_SECRET:-}
+      - K8S_SERVICE_ACCOUNT_NAME=${K8S_SERVICE_ACCOUNT_NAME:-}
+      - K8S_ENABLE_PDB=${K8S_ENABLE_PDB:-true}
+      - K8S_ENABLE_HPA=${K8S_ENABLE_HPA:-false}
+      - K8S_HPA_MIN_REPLICAS=${K8S_HPA_MIN_REPLICAS:-1}
+      - K8S_HPA_MAX_REPLICAS=${K8S_HPA_MAX_REPLICAS:-3}
+      - K8S_HPA_CPU_UTILIZATION=${K8S_HPA_CPU_UTILIZATION:-70}
+      - K8S_MAX_REPLICAS=${K8S_MAX_REPLICAS:-10}
+      - K8S_CPU_REQUEST=${K8S_CPU_REQUEST:-100m}
+      - K8S_MEMORY_REQUEST=${K8S_MEMORY_REQUEST:-128Mi}
+      - K8S_CPU_LIMIT=${K8S_CPU_LIMIT:-500m}
+      - K8S_MEMORY_LIMIT=${K8S_MEMORY_LIMIT:-512Mi}
+      - K8S_PROBE_PATH=${K8S_PROBE_PATH:-/}
+      - K8S_READINESS_INITIAL_DELAY_SECONDS=${K8S_READINESS_INITIAL_DELAY_SECONDS:-5}
+      - K8S_LIVENESS_INITIAL_DELAY_SECONDS=${K8S_LIVENESS_INITIAL_DELAY_SECONDS:-15}
+      - K8S_STARTUP_FAILURE_THRESHOLD=${K8S_STARTUP_FAILURE_THRESHOLD:-30}
+      - K8S_ROLLOUT_TIMEOUT_SECONDS=${K8S_ROLLOUT_TIMEOUT_SECONDS:-180}
+      - KUBECONFIG_PATH=${KUBECONFIG_PATH:-/root/.kube/config}
+      - KUBECONFIG=/root/.kube/config
+      - AIDS_AI_ENABLED=${AIDS_AI_ENABLED:-true}
+      - AIDS_AI_SERVICE_URL=${AIDS_AI_SERVICE_URL:-http://ai-service:8010}
+      - AIDS_AI_PROVIDER=${AIDS_AI_PROVIDER:-nvidia_nim}
+      - AIDS_AI_MODEL=${AIDS_AI_MODEL:-}
+      - AIDS_AI_CONFIDENCE_THRESHOLD=${AIDS_AI_CONFIDENCE_THRESHOLD:-0.72}
+      - AIDS_AI_RATE_LIMIT_PER_MINUTE=${AIDS_AI_RATE_LIMIT_PER_MINUTE:-12}
+      - AIDS_AI_MAX_CONTEXT_BYTES=${AIDS_AI_MAX_CONTEXT_BYTES:-32000}
+      - AIDS_AI_SERVICE_TIMEOUT_SECONDS=${AIDS_AI_SERVICE_TIMEOUT_SECONDS:-120}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
+      - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-meta/llama-3.1-70b-instruct}
+      - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-meta/llama-3.1-8b-instruct}
+      - NVIDIA_NIM_THINKING_MODEL=${NVIDIA_NIM_THINKING_MODEL:-meta/llama-3.1-70b-instruct}
+      - NVIDIA_NIM_ALLOWED_MODELS=${NVIDIA_NIM_ALLOWED_MODELS:-}
+      - NVIDIA_NIM_DISCOVER_MODELS=${NVIDIA_NIM_DISCOVER_MODELS:-true}
+      - NVIDIA_NIM_PROBE_MODELS=${NVIDIA_NIM_PROBE_MODELS:-true}
+      - OPENAI_COMPATIBLE_BASE_URL=${OPENAI_COMPATIBLE_BASE_URL:-}
+      - OPENAI_COMPATIBLE_API_KEY=${OPENAI_COMPATIBLE_API_KEY:-}
+      - OPENAI_COMPATIBLE_MODEL=${OPENAI_COMPATIBLE_MODEL:-}
+    ports:
+      - "8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./uploads:/app/uploads
+      - ${AIDS_LOCAL_PROJECTS_DIR:-./local-projects}:/app/local-projects:ro
+      - ${USERPROFILE}/.kube/config:/root/.kube/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
+
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: aids-ai-service
+    restart: unless-stopped
+    environment:
+      - AIDS_AI_PROVIDER=${AIDS_AI_PROVIDER:-nvidia_nim}
+      - AIDS_AI_MODEL=${AIDS_AI_MODEL:-}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
+      - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-meta/llama-3.1-70b-instruct}
+      - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-meta/llama-3.1-8b-instruct}
+      - NVIDIA_NIM_THINKING_MODEL=${NVIDIA_NIM_THINKING_MODEL:-meta/llama-3.1-70b-instruct}
+      - NVIDIA_NIM_ALLOWED_MODELS=${NVIDIA_NIM_ALLOWED_MODELS:-}
+      - NVIDIA_NIM_DISCOVER_MODELS=${NVIDIA_NIM_DISCOVER_MODELS:-true}
+      - NVIDIA_NIM_PROBE_MODELS=${NVIDIA_NIM_PROBE_MODELS:-true}
+      - NVIDIA_NIM_MODEL_PROBE_LIMIT=${NVIDIA_NIM_MODEL_PROBE_LIMIT:-100}
+      - OPENAI_COMPATIBLE_BASE_URL=${OPENAI_COMPATIBLE_BASE_URL:-}
+      - OPENAI_COMPATIBLE_API_KEY=${OPENAI_COMPATIBLE_API_KEY:-}
+      - OPENAI_COMPATIBLE_MODEL=${OPENAI_COMPATIBLE_MODEL:-}
+      - AIDS_AI_REQUEST_TIMEOUT_SECONDS=${AIDS_AI_REQUEST_TIMEOUT_SECONDS:-90}
+      - AIDS_AI_MAX_TEXT_BYTES=${AIDS_AI_MAX_TEXT_BYTES:-24000}
+    ports:
+      - "${AIDS_AI_SERVICE_PORT:-8010}:8010"
+
+  # ─── Next.js Frontend ───────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8090/api/v1}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8090}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GITHUB_CLIENT_ID: ${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
+    container_name: aids-frontend
+    restart: unless-stopped
+    environment:
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+      - NEXT_PUBLIC_GITHUB_CLIENT_ID=${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: aids-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}"
+      - "--web.enable-lifecycle"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - backend
+
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: aids-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./observability/loki/config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:3.4.2
+    container_name: aids-promtail
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./observability/promtail/config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: aids-cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${CADVISOR_PORT:-8081}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  grafana:
+    image: grafana/grafana-oss:11.5.2
+    container_name: aids-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:

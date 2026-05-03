@@ -1,0 +1,11 @@
+node_modules/
+.next/
+build/
+build-mingw/
+.vscode/
+.env*
+.git/
+frontend/node_modules/
+frontend/.next/
+uploads/
+logs/

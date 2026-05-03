@@ -1,0 +1,11 @@
+{
+  "name": "aids-platform",
+  "version-string": "0.1.0",
+  "description": "AI-Native Autonomous Deployment Platform",
+  "dependencies": [
+    "drogon",
+    "libpqxx",
+    "spdlog",
+    "jsoncpp"
+  ]
+}

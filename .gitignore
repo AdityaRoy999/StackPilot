@@ -1,0 +1,30 @@
+# Build
+build/
+cmake-build-*/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+.env
+
+# vcpkg
+vcpkg_installed/
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.codex_ai_venv/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Docker volumes
+postgres_data/
