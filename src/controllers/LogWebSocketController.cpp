@@ -6,7 +6,7 @@
 #include <json/json.h>
 #include <spdlog/spdlog.h>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -130,4 +130,4 @@ void LogWebSocketController::sendToChannelUnlocked(const std::string& channelKey
     }
 }
 
-} // namespace aids
+} // namespace dokscp

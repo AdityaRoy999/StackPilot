@@ -14,7 +14,7 @@
 #include <sstream>
 #include <sys/wait.h>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -171,7 +171,7 @@ void writeYamlBlockScalar(std::ostream& out, const std::string& key, const std::
 
 KubernetesService::KubernetesService()
     : kubeconfigPath_(getEnvOrDefault("KUBECONFIG_PATH", "")),
-      defaultNamespace_(getEnvOrDefault("K8S_NAMESPACE", "aids-apps")),
+      defaultNamespace_(getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps")),
       serviceType_(getEnvOrDefault("K8S_SERVICE_TYPE", "NodePort")),
       exposureMode_(getEnvOrDefault("K8S_EXPOSURE_MODE", "")),
       nodeHost_(getEnvOrDefault("K8S_NODE_HOST", "localhost")),
@@ -300,9 +300,8 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
                 ingressAnnotationsJson_.find("cert-manager.io/cluster-issuer") != std::string::npos ||
                 ingressAnnotationsJson_.find("cert-manager.io/issuer") != std::string::npos;
             if (!certManagerConfigured) {
-                result.error = "HTTPS requires K8S_INGRESS_TLS_SECRET or cert-manager ingress annotations";
-                result.logs = logs.str();
-                return result;
+                logs << "[runtime] WARNING: HTTPS requested but no K8S_INGRESS_TLS_SECRET or cert-manager annotations found. Falling back to HTTP.\n";
+                result.runtimeScheme = "http";
             }
         }
         if (!ingressClassName_.empty()) {
@@ -326,7 +325,7 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
     }
 
     const std::filesystem::path manifestPath =
-        std::filesystem::temp_directory_path() / ("aids-k8s-" + options.deploymentId + ".yaml");
+        std::filesystem::temp_directory_path() / ("dokscp-k8s-" + options.deploymentId + ".yaml");
     const auto deployStamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
@@ -395,7 +394,7 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
             << "      labels:\n"
             << "        app: " << result.deploymentName << "\n"
             << "      annotations:\n"
-            << "        aids.io/deployed-at: \"" << deployStamp << "\"\n"
+            << "        dokscp.io/deployed-at: \"" << deployStamp << "\"\n"
             << "    spec:\n"
             << (!serviceAccountName_.empty() ? "      serviceAccountName: " + serviceAccountName_ + "\n" : "")
             << "      securityContext:\n"
@@ -867,7 +866,16 @@ KubernetesRuntimeInfo KubernetesService::remove(const std::string& nameSpace,
     output.clear();
     int deploymentExit = runCommand(
         kubectlPrefix() + " delete deployment " + shellQuote(deploymentName) +
-            " -n " + shellQuote(result.nameSpace) + " --ignore-not-found",
+            " -n " + shellQuote(result.nameSpace) + " --ignore-not-found --cascade=foreground",
+        output
+    );
+    logs << output;
+
+    // Aggressive Pod-level cleanup by label to ensure 'ghost' pods are entirely killed.
+    output.clear();
+    runCommand(
+        kubectlPrefix() + " delete pods -l app=" + shellQuote(deploymentName) +
+            " -n " + shellQuote(result.nameSpace) + " --ignore-not-found --grace-period=0 --force",
         output
     );
     logs << output;
@@ -971,7 +979,7 @@ std::string KubernetesService::sanitizeDnsLabel(const std::string& value) const 
         out.pop_back();
     }
     if (out.empty()) {
-        out = "aids-runtime";
+        out = "dokscp-runtime";
     }
     if (out.size() > 50) {
         out.resize(50);
@@ -1238,4 +1246,4 @@ std::string KubernetesService::serviceTypeForExposure(const std::string& exposur
     return "NodePort";
 }
 
-} // namespace aids
+} // namespace dokscp

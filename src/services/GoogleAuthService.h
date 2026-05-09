@@ -7,7 +7,7 @@
 #include <functional>
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 struct GoogleIdentity {
     std::string subject;
@@ -26,4 +26,4 @@ public:
                           ErrorCallback onError) const;
 };
 
-} // namespace aids
+} // namespace dokscp

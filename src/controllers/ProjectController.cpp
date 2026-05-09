@@ -6,6 +6,7 @@
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
 #include "../services/BuildService.h"
+#include "../services/DeploymentCleanupService.h"
 #include "../services/JobQueueService.h"
 #include "../services/KubernetesService.h"
 #include "../services/SshService.h"
@@ -30,14 +31,14 @@
 #include <filesystem>
 #include <mutex>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
 std::mutex projectDeploymentLogMutex;
 
 bool isSupportedSourceType(const std::string& sourceType) {
-    return sourceType == "github" || sourceType == "ssh" || sourceType == "local";
+    return sourceType == "github" || sourceType == "ssh" || sourceType == "local" || sourceType == "artifact";
 }
 
 bool isSupportedExecutionMode(const std::string& executionMode) {
@@ -74,6 +75,194 @@ std::string trim(const std::string& value) {
     }
 
     return value.substr(start, end - start);
+}
+
+std::string toLower(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::string githubFullNameFromUrl(std::string value) {
+    value = trim(value);
+    if (value.empty()) {
+        return "";
+    }
+    if (value.rfind("git@github.com:", 0) == 0) {
+        value = value.substr(std::string("git@github.com:").size());
+    } else {
+        const std::string marker = "github.com/";
+        const auto pos = value.find(marker);
+        if (pos != std::string::npos) {
+            value = value.substr(pos + marker.size());
+        }
+    }
+    while (!value.empty() && value.front() == '/') {
+        value.erase(value.begin());
+    }
+    const auto queryPos = value.find_first_of("?#");
+    if (queryPos != std::string::npos) {
+        value = value.substr(0, queryPos);
+    }
+    if (value.size() > 4 && value.substr(value.size() - 4) == ".git") {
+        value.resize(value.size() - 4);
+    }
+    while (!value.empty() && value.back() == '/') {
+        value.pop_back();
+    }
+    const auto slash = value.find('/');
+    if (slash == std::string::npos || slash == 0 || slash == value.size() - 1) {
+        return "";
+    }
+    if (value.find('/', slash + 1) != std::string::npos) {
+        value = value.substr(0, value.find('/', slash + 1));
+    }
+    for (char c : value) {
+        const bool ok = std::isalnum(static_cast<unsigned char>(c)) ||
+                        c == '-' || c == '_' || c == '.' || c == '/';
+        if (!ok) {
+            return "";
+        }
+    }
+    return value;
+}
+
+std::string envOrEmpty(const char* name) {
+    const char* value = std::getenv(name);
+    return value && *value ? value : "";
+}
+
+bool looksPublicHttpsUrl(const std::string& url) {
+    const std::string cleaned = toLower(trim(url));
+    if (cleaned.rfind("https://", 0) != 0) {
+        return false;
+    }
+    return cleaned.find("localhost") == std::string::npos &&
+           cleaned.find("127.0.0.1") == std::string::npos &&
+           cleaned.find("0.0.0.0") == std::string::npos &&
+           cleaned.find("[::1]") == std::string::npos;
+}
+
+bool githubAppWebhookModeEnabled() {
+    const std::string value = toLower(trim(envOrEmpty("GITHUB_APP_WEBHOOK_MODE")));
+    return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
+std::string loadConnectedGitHubToken(const std::string& userId) {
+    try {
+        auto conn = Database::getInstance().getConnection();
+        pqxx::work txn(*conn);
+        auto rows = txn.exec_params(
+            "SELECT github_access_token FROM users WHERE id = $1",
+            userId
+        );
+        txn.commit();
+        if (!rows.empty() && !rows[0]["github_access_token"].is_null()) {
+            return TokenCrypto::decrypt(rows[0]["github_access_token"].as<std::string>());
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Failed to load connected GitHub token for webhook registration: {}", e.what());
+    }
+    return "";
+}
+
+Json::Value maybeRegisterGitHubWebhook(const std::string& userId,
+                                       const std::string& repoUrl,
+                                       const std::string& explicitToken,
+                                       const Json::Value& environments) {
+    Json::Value warnings(Json::arrayValue);
+    bool autoDeployRequested = false;
+    for (const auto& env : environments) {
+        if (env.isObject() && env.isMember("auto_deploy") && env["auto_deploy"].asBool()) {
+            autoDeployRequested = true;
+            break;
+        }
+    }
+    if (!autoDeployRequested) {
+        return warnings;
+    }
+
+    const std::string fullName = githubFullNameFromUrl(repoUrl);
+    if (fullName.empty()) {
+        warnings.append("GitHub webhook was not registered because the repository URL could not be parsed.");
+        return warnings;
+    }
+
+    if (githubAppWebhookModeEnabled()) {
+        warnings.append("GitHub App webhook mode is enabled. DOKSCP will use the central GitHub App webhook instead of creating a repository webhook.");
+        return warnings;
+    }
+
+    std::string backendPublicUrl = envOrEmpty("BACKEND_PUBLIC_URL");
+    if (backendPublicUrl.empty()) {
+        backendPublicUrl = "http://localhost:8090";
+    }
+    while (!backendPublicUrl.empty() && backendPublicUrl.back() == '/') {
+        backendPublicUrl.pop_back();
+    }
+    const std::string webhookSecret = envOrEmpty("GITHUB_WEBHOOK_SECRET");
+    if (webhookSecret.empty()) {
+        warnings.append("Auto deploy needs GITHUB_WEBHOOK_SECRET before DOKSCP can register a production GitHub webhook.");
+        return warnings;
+    }
+    if (!looksPublicHttpsUrl(backendPublicUrl)) {
+        warnings.append("Auto deploy webhook was not registered because BACKEND_PUBLIC_URL must be a public HTTPS URL reachable by GitHub.");
+        return warnings;
+    }
+
+    const std::string token = explicitToken.empty() ? loadConnectedGitHubToken(userId) : explicitToken;
+    if (token.empty()) {
+        warnings.append("Auto deploy webhook was not registered because no GitHub token is available. Reconnect GitHub after the repo hook permission is added.");
+        return warnings;
+    }
+
+    const std::string webhookUrl = backendPublicUrl + "/api/v1/github/webhooks";
+    std::thread([fullName, token, webhookSecret, webhookUrl]() {
+        try {
+            auto client = drogon::HttpClient::newHttpClient("https://api.github.com");
+            Json::Value payload;
+            payload["name"] = "web";
+            payload["active"] = true;
+            payload["events"].append("push");
+            payload["events"].append("check_run");
+            payload["events"].append("check_suite");
+            payload["config"]["url"] = webhookUrl;
+            payload["config"]["content_type"] = "json";
+            payload["config"]["secret"] = webhookSecret;
+            payload["config"]["insecure_ssl"] = "0";
+
+            auto hookReq = drogon::HttpRequest::newHttpJsonRequest(payload);
+            hookReq->setMethod(drogon::Post);
+            hookReq->setPath("/repos/" + fullName + "/hooks");
+            hookReq->addHeader("Authorization", "Bearer " + token);
+            hookReq->addHeader("Accept", "application/vnd.github+json");
+            hookReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
+            hookReq->addHeader("User-Agent", "DOKSCP-Platform");
+            client->sendRequest(
+                hookReq,
+                [fullName](drogon::ReqResult result, const drogon::HttpResponsePtr& response) {
+                    if (result != drogon::ReqResult::Ok || !response) {
+                        spdlog::warn("GitHub webhook registration failed for {}: transport error", fullName);
+                        return;
+                    }
+                    const auto status = response->getStatusCode();
+                    if (status == drogon::k201Created || status == drogon::k200OK) {
+                        spdlog::info("GitHub webhook registered for {}", fullName);
+                    } else if (status == drogon::k422UnprocessableEntity) {
+                        spdlog::info("GitHub webhook for {} already exists or GitHub rejected a duplicate", fullName);
+                    } else {
+                        spdlog::warn("GitHub webhook registration for {} returned HTTP {}", fullName, static_cast<int>(status));
+                    }
+                },
+                10.0
+            );
+        } catch (const std::exception& e) {
+            spdlog::warn("GitHub webhook registration failed for {}: {}", fullName, e.what());
+        }
+    }).detach();
+
+    return warnings;
 }
 
 std::string normalizeRemoteK8sExposure(const std::string& value) {
@@ -132,6 +321,236 @@ void normalizeRuntimePreferences(const std::string& executionMode,
     if (executionMode == "remote_host") {
         localHttpsEnabled = false;
     }
+}
+
+struct ProjectEnvironmentConfig {
+    std::string name;
+    std::string branch;
+    bool autoDeploy = true;
+    bool requireCi = false;
+    bool cleanupPreviousOnSuccess = false;
+    std::vector<BuildEnvVar> envVars;
+    std::string executionMode = "local";
+    std::string remoteConnectionId;
+    std::string remoteRuntimeType = "docker";
+    std::string remoteK8sExposure = "nodeport";
+    std::string runtimeScheme = "http";
+};
+
+std::vector<BuildEnvVar> parseEnvVarArray(const Json::Value& value) {
+    std::vector<BuildEnvVar> envVars;
+    if (!value.isArray()) {
+        return envVars;
+    }
+
+    std::unordered_set<std::string> seenKeys;
+    for (const auto& item : value) {
+        if (!item.isObject()) {
+            continue;
+        }
+        const std::string key = trim(item.get("key", "").asString());
+        const std::string envValue = item.get("value", "").asString();
+        if (!isValidEnvKey(key)) {
+            continue;
+        }
+        if (seenKeys.insert(key).second) {
+            envVars.push_back({key, envValue});
+        }
+    }
+
+    std::sort(envVars.begin(), envVars.end(), [](const BuildEnvVar& left, const BuildEnvVar& right) {
+        return left.key < right.key;
+    });
+    return envVars;
+}
+
+ProjectEnvironmentConfig makeProjectEnvironmentConfig(const std::string& name,
+                                                       const std::string& branch,
+                                                       bool autoDeploy,
+                                                       bool requireCi,
+                                                       bool cleanupPreviousOnSuccess,
+                                                       const std::vector<BuildEnvVar>& envVars,
+                                                       const std::string& executionMode,
+                                                       const std::string& remoteConnectionId,
+                                                       const std::string& remoteRuntimeType,
+                                                       const std::string& remoteK8sExposure,
+                                                       const std::string& runtimeScheme) {
+    ProjectEnvironmentConfig env;
+    env.name = toLower(trim(name));
+    env.branch = trim(branch);
+    env.autoDeploy = autoDeploy;
+    env.requireCi = requireCi;
+    env.cleanupPreviousOnSuccess = cleanupPreviousOnSuccess;
+    env.envVars = envVars;
+    env.executionMode = executionMode.empty() ? "local" : executionMode;
+    env.remoteConnectionId = remoteConnectionId;
+    env.remoteRuntimeType = remoteRuntimeType.empty() ? "docker" : remoteRuntimeType;
+    env.remoteK8sExposure = remoteK8sExposure.empty() ? "nodeport" : remoteK8sExposure;
+    env.runtimeScheme = runtimeScheme.empty() ? "http" : runtimeScheme;
+    bool localHttpsEnabled = false;
+    normalizeRuntimePreferences(env.executionMode, env.remoteRuntimeType, env.remoteK8sExposure, env.runtimeScheme, localHttpsEnabled);
+    return env;
+}
+
+std::vector<ProjectEnvironmentConfig> defaultProjectEnvironmentConfigs(const std::string& executionMode,
+                                                                       const std::string& remoteConnectionId,
+                                                                       const std::string& remoteRuntimeType,
+                                                                       const std::string& remoteK8sExposure,
+                                                                       const std::string& runtimeScheme) {
+    return {
+        makeProjectEnvironmentConfig(
+            "development", "dev", true, false, true, {},
+            executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme
+        ),
+        makeProjectEnvironmentConfig(
+            "production", "main", false, true, false, {},
+            executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme
+        )
+    };
+}
+
+std::vector<ProjectEnvironmentConfig> parseProjectEnvironmentConfigs(const Json::Value& body,
+                                                                     const std::string& executionMode,
+                                                                     const std::string& remoteConnectionId,
+                                                                     const std::string& remoteRuntimeType,
+                                                                     const std::string& remoteK8sExposure,
+                                                                     const std::string& runtimeScheme,
+                                                                     std::string& error) {
+    if (!body.isMember("environments") || !body["environments"].isArray() || body["environments"].size() == 0u) {
+        return defaultProjectEnvironmentConfigs(
+            executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme
+        );
+    }
+
+    std::vector<ProjectEnvironmentConfig> configs;
+    std::unordered_set<std::string> seenNames;
+    int index = 0;
+    for (const auto& item : body["environments"]) {
+        ++index;
+        if (!item.isObject()) {
+            error = "Environment entries must be objects";
+            return {};
+        }
+
+        ProjectEnvironmentConfig env = makeProjectEnvironmentConfig(
+            item.get("name", index == 1 ? "development" : "environment").asString(),
+            item.get("branch", "").asString(),
+            item.get("auto_deploy", true).asBool(),
+            item.get("require_ci", false).asBool(),
+            item.get("cleanup_previous_on_success", false).asBool(),
+            parseEnvVarArray(item["env_vars"]),
+            item.get("execution_mode", executionMode.empty() ? "local" : executionMode).asString(),
+            item.get("remote_connection_id", remoteConnectionId).asString(),
+            item.get("remote_runtime_type", remoteRuntimeType.empty() ? "docker" : remoteRuntimeType).asString(),
+            normalizeRemoteK8sExposure(item.get("remote_k8s_exposure", remoteK8sExposure.empty() ? "nodeport" : remoteK8sExposure).asString()),
+            normalizeRuntimeScheme(item.get("runtime_scheme", runtimeScheme.empty() ? "http" : runtimeScheme).asString())
+        );
+
+        if (env.name.empty()) {
+            error = "Each environment needs a name";
+            return {};
+        }
+        if (env.branch.empty()) {
+            error = "Each environment needs a Git branch";
+            return {};
+        }
+        if (!isSupportedExecutionMode(env.executionMode)) {
+            error = "Environment execution mode must be local or remote_host";
+            return {};
+        }
+        if (env.remoteRuntimeType != "docker" && env.remoteRuntimeType != "kubernetes") {
+            error = "Environment runtime must be docker or kubernetes";
+            return {};
+        }
+        if (!seenNames.insert(env.name).second) {
+            error = "Environment names must be unique";
+            return {};
+        }
+        configs.push_back(env);
+    }
+
+    if (configs.empty()) {
+        return defaultProjectEnvironmentConfigs(
+            executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme
+        );
+    }
+    return configs;
+}
+
+void replaceProjectEnvironmentEnvVars(pqxx::transaction_base& txn,
+                                      const std::string& environmentId,
+                                      const std::vector<BuildEnvVar>& envVars) {
+    txn.exec_params("DELETE FROM project_environment_env_vars WHERE environment_id = $1", environmentId);
+    for (const auto& envVar : envVars) {
+        txn.exec_params(
+            "INSERT INTO project_environment_env_vars (environment_id, key, value_encrypted) "
+            "VALUES ($1, $2, $3) "
+            "ON CONFLICT (environment_id, key) DO UPDATE SET value_encrypted = EXCLUDED.value_encrypted, updated_at = NOW()",
+            environmentId,
+            envVar.key,
+            TokenCrypto::encrypt(envVar.value)
+        );
+    }
+}
+
+Json::Value envVarArrayToJson(const std::vector<BuildEnvVar>& envVars) {
+    Json::Value values(Json::arrayValue);
+    for (const auto& envVar : envVars) {
+        Json::Value item(Json::objectValue);
+        item["key"] = envVar.key;
+        item["value"] = envVar.value;
+        values.append(item);
+    }
+    return values;
+}
+
+Json::Value insertProjectEnvironments(pqxx::transaction_base& txn,
+                                      const std::string& projectId,
+                                      const std::vector<ProjectEnvironmentConfig>& configs) {
+    Json::Value environments(Json::arrayValue);
+    for (const auto& env : configs) {
+        auto rows = txn.exec_params(
+            "INSERT INTO project_environments "
+            "(project_id, name, branch, auto_deploy, require_ci, cleanup_previous_on_success, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::uuid, $9, $10, $11) "
+            "ON CONFLICT (project_id, name) DO UPDATE SET "
+            "branch = EXCLUDED.branch, auto_deploy = EXCLUDED.auto_deploy, require_ci = EXCLUDED.require_ci, "
+            "cleanup_previous_on_success = EXCLUDED.cleanup_previous_on_success, execution_mode = EXCLUDED.execution_mode, "
+            "remote_connection_id = EXCLUDED.remote_connection_id, remote_runtime_type = EXCLUDED.remote_runtime_type, "
+            "remote_k8s_exposure = EXCLUDED.remote_k8s_exposure, runtime_scheme = EXCLUDED.runtime_scheme, updated_at = NOW() "
+            "RETURNING id, name, branch, auto_deploy, require_ci, cleanup_previous_on_success, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme",
+            projectId,
+            env.name,
+            env.branch,
+            env.autoDeploy,
+            env.requireCi,
+            env.cleanupPreviousOnSuccess,
+            env.executionMode,
+            env.remoteConnectionId,
+            env.remoteRuntimeType,
+            env.remoteK8sExposure,
+            env.runtimeScheme
+        );
+        if (!rows.empty()) {
+            const std::string environmentId = rows[0]["id"].as<std::string>();
+            replaceProjectEnvironmentEnvVars(txn, environmentId, env.envVars);
+            Json::Value item(Json::objectValue);
+            item["id"] = environmentId;
+            item["name"] = rows[0]["name"].as<std::string>();
+            item["branch"] = rows[0]["branch"].as<std::string>();
+            item["auto_deploy"] = rows[0]["auto_deploy"].as<bool>();
+            item["require_ci"] = rows[0]["require_ci"].as<bool>();
+            item["cleanup_previous_on_success"] = rows[0]["cleanup_previous_on_success"].as<bool>();
+            item["env_vars"] = envVarArrayToJson(env.envVars);
+            item["execution_mode"] = rows[0]["execution_mode"].as<std::string>();
+            item["remote_connection_id"] = rows[0]["remote_connection_id"].is_null() ? "" : rows[0]["remote_connection_id"].as<std::string>();
+            item["remote_runtime_type"] = rows[0]["remote_runtime_type"].as<std::string>();
+            item["remote_k8s_exposure"] = rows[0]["remote_k8s_exposure"].as<std::string>();
+            item["runtime_scheme"] = rows[0]["runtime_scheme"].as<std::string>();
+            environments.append(item);
+        }
+    }
+    return environments;
 }
 
 std::string compactJson(const Json::Value& value) {
@@ -421,6 +840,8 @@ void startBackgroundBuild(const std::string& deploymentId,
                         sourcePath,
                         version,
                         githubPat,
+                        "",
+                        "",
                         projectName,
                         3000,
                         envVars,
@@ -450,7 +871,7 @@ void startBackgroundBuild(const std::string& deploymentId,
                     options.deploymentId = deploymentId;
                     options.projectName = projectName;
                     options.imageName = buildResult.imageName;
-                    options.nameSpace = "aids-apps";
+                    options.nameSpace = "dokscp-apps";
                     options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
                     options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                     options.replicas = 1;
@@ -490,6 +911,8 @@ void startBackgroundBuild(const std::string& deploymentId,
                     repoUrl,
                     version,
                     githubPat,
+                    "",
+                    "",
                     envVars,
                     logSink
                 );
@@ -500,7 +923,7 @@ void startBackgroundBuild(const std::string& deploymentId,
                 options.deploymentId = deploymentId;
                 options.projectName = projectName;
                 options.imageName = buildResult.imageName;
-                options.nameSpace = "aids-apps";
+                options.nameSpace = "dokscp-apps";
                 options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
                 options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                 options.replicas = 1;
@@ -707,6 +1130,23 @@ Json::Value projectRowToJson(const pqxx::row& row) {
     return pj;
 }
 
+SshConnectionConfig rowToRemoteRuntimeConfig(const pqxx::row& row) {
+    SshConnectionConfig config;
+    config.connectionType = row["remote_connection_type"].is_null() ? "ssh" : row["remote_connection_type"].as<std::string>();
+    config.host = row["remote_host"].is_null() ? "" : row["remote_host"].as<std::string>();
+    config.port = row["remote_port"].is_null() ? 22 : row["remote_port"].as<int>();
+    config.username = row["remote_username"].is_null() ? "" : row["remote_username"].as<std::string>();
+    config.authType = row["remote_auth_type"].is_null() ? "" : row["remote_auth_type"].as<std::string>();
+    config.password = row["remote_password_encrypted"].is_null()
+        ? ""
+        : TokenCrypto::decrypt(row["remote_password_encrypted"].as<std::string>());
+    config.privateKey = row["remote_private_key_encrypted"].is_null()
+        ? ""
+        : TokenCrypto::decrypt(row["remote_private_key_encrypted"].as<std::string>());
+    config.knownHostsEntry = row["remote_known_hosts_entry"].is_null() ? "" : row["remote_known_hosts_entry"].as<std::string>();
+    return config;
+}
+
 } // namespace
 
 std::string ProjectController::extractUserId(const drogon::HttpRequestPtr& req) {
@@ -804,12 +1244,7 @@ void ProjectController::createProject(
             resp->setStatusCode(drogon::k400BadRequest);
             callback(resp); return;
         }
-        if (executionMode == "remote_host" && sourceType == "local") {
-            Json::Value err; err["error"] = "Remote host execution does not support local source projects";
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp); return;
-        }
+        // Remote host execution for local source is allowed if the path is accessible to the backend.
 
         auto& db = Database::getInstance();
         auto conn = db.getConnection();
@@ -852,6 +1287,22 @@ void ProjectController::createProject(
             repoUrl.clear();
             githubPat.clear();
             sshConnectionId.clear();
+        } else if (sourceType == "artifact") {
+            repoUrl.clear();
+            githubPat.clear();
+            sshConnectionId.clear();
+            if (executionMode == "remote_host" && sourcePath.empty()) {
+                sourcePath = "/tmp";
+            }
+            if (executionMode == "remote_host" && !sourcePath.empty()) {
+                SshService sshService;
+                if (!sshService.isValidRemotePath(sourcePath)) {
+                    Json::Value err; err["error"] = "Remote artifact workspace path must be an absolute Linux path";
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                    resp->setStatusCode(drogon::k400BadRequest);
+                    callback(resp); return;
+                }
+            }
         } else if (sourceType == "github") {
             sshConnectionId.clear();
             if (executionMode == "remote_host" && sourcePath.empty()) {
@@ -894,6 +1345,51 @@ void ProjectController::createProject(
             normalizeRuntimePreferences(executionMode, remoteRuntimeType, remoteK8sExposure, runtimeScheme, localHttpsEnabled);
         }
 
+        std::string environmentConfigError;
+        const auto environmentConfigs = parseProjectEnvironmentConfigs(
+            *body,
+            executionMode,
+            remoteConnectionId,
+            remoteRuntimeType,
+            remoteK8sExposure,
+            runtimeScheme,
+            environmentConfigError
+        );
+        if (!environmentConfigError.empty()) {
+            Json::Value err; err["error"] = environmentConfigError;
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k400BadRequest);
+            callback(resp); return;
+        }
+        for (const auto& envConfig : environmentConfigs) {
+            if (sourceType == "local" && envConfig.executionMode == "remote_host") {
+                Json::Value err;
+                err["error"] = "Local source projects cannot use remote-host branch environments directly. Use the MCP artifact deploy path for local-to-remote deployments.";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp); return;
+            }
+            if (envConfig.executionMode == "remote_host" && envConfig.remoteConnectionId.empty()) {
+                Json::Value err; err["error"] = "Remote-host environments require a saved SSH/VPS connection";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp); return;
+            }
+            if (!envConfig.remoteConnectionId.empty()) {
+                auto envRemoteRows = txn.exec_params(
+                    "SELECT id FROM ssh_connections WHERE id = $1 AND user_id = $2",
+                    envConfig.remoteConnectionId,
+                    userId
+                );
+                if (envRemoteRows.empty()) {
+                    Json::Value err; err["error"] = "Environment remote execution connection not found";
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                    resp->setStatusCode(drogon::k404NotFound);
+                    callback(resp); return;
+                }
+            }
+        }
+
         const std::string encryptedGithubPat = TokenCrypto::encrypt(githubPat);
 
         auto result = txn.exec_params(
@@ -904,6 +1400,7 @@ void ProjectController::createProject(
         );
         const std::string projectId = result[0]["id"].as<std::string>();
         replaceProjectEnvVars(txn, projectId, envVars);
+        Json::Value createdEnvironments = insertProjectEnvironments(txn, projectId, environmentConfigs);
         txn.commit();
 
         Json::Value auditMeta;
@@ -914,15 +1411,24 @@ void ProjectController::createProject(
         auditMeta["runtime_scheme"] = runtimeScheme;
         auditMeta["local_https_enabled"] = localHttpsEnabled;
         auditMeta["env_var_count"] = static_cast<int>(envVars.size());
+        auditMeta["environment_count"] = static_cast<int>(createdEnvironments.size());
         AuditLogger::recordFromRequest(req, userId, "project.created", "project", projectId, auditMeta);
 
         Json::Value pj = projectRowToJson(result[0]);
         pj["env_var_count"] = static_cast<int>(envVars.size());
         pj["env_vars"] = envVarsToJson(envVars);
+        pj["environments"] = createdEnvironments;
+        Json::Value webhookWarnings(Json::arrayValue);
+        if (sourceType == "github") {
+            webhookWarnings = maybeRegisterGitHubWebhook(userId, repoUrl, githubPat, createdEnvironments);
+        }
 
         Json::Value resp_body;
         resp_body["message"] = "Project created";
         resp_body["project"] = pj;
+        if (!webhookWarnings.empty()) {
+            resp_body["warnings"] = webhookWarnings;
+        }
         auto resp = drogon::HttpResponse::newHttpJsonResponse(resp_body);
         resp->setStatusCode(drogon::k201Created);
         callback(resp);
@@ -1216,6 +1722,25 @@ void ProjectController::updateProject(
             sshConnectionId.clear();
             repoUrl.clear();
             githubPat.clear();
+        } else if (resolvedSourceType == "artifact") {
+            sshConnectionId.clear();
+            repoUrl.clear();
+            githubPat.clear();
+            if (sourcePath.empty()) {
+                sourcePath = existingSourcePath;
+            }
+            if (executionMode == "remote_host" && sourcePath.empty()) {
+                sourcePath = "/tmp";
+            }
+            if (executionMode == "remote_host" && !sourcePath.empty()) {
+                SshService sshService;
+                if (!sshService.isValidRemotePath(sourcePath)) {
+                    Json::Value err; err["error"] = "Remote artifact workspace path must be an absolute Linux path";
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                    resp->setStatusCode(drogon::k400BadRequest);
+                    callback(resp); return;
+                }
+            }
         } else {
             sshConnectionId.clear();
             if (sourcePath.empty()) {
@@ -1255,12 +1780,6 @@ void ProjectController::updateProject(
         }
         normalizeRuntimePreferences(executionMode, remoteRuntimeType, remoteK8sExposure, runtimeScheme, localHttpsEnabled);
         if (executionMode == "remote_host") {
-            if (resolvedSourceType == "local") {
-                Json::Value err; err["error"] = "Remote host execution does not support local source projects";
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k400BadRequest);
-                callback(resp); return;
-            }
             if (remoteConnectionId.empty()) {
                 if (resolvedSourceType == "ssh") {
                     remoteConnectionId = existingRemoteConnectionId.empty() ? sshConnectionId : existingRemoteConnectionId;
@@ -1348,21 +1867,21 @@ void ProjectController::updateProject(
             "name = COALESCE(NULLIF($1, ''), name), "
             "description = COALESCE(NULLIF($2, ''), description), "
             "repo_url = CASE "
-            "    WHEN NULLIF($5, '') IN ('ssh', 'local') THEN '' "
+            "    WHEN NULLIF($5, '') IN ('ssh', 'local', 'artifact') THEN '' "
             "    ELSE COALESCE(NULLIF($3, ''), repo_url) "
             "END, "
             "github_pat = CASE "
-            "    WHEN NULLIF($5, '') IN ('ssh', 'local') THEN github_pat "
+            "    WHEN NULLIF($5, '') IN ('ssh', 'local', 'artifact') THEN github_pat "
             "    ELSE COALESCE(NULLIF($4, ''), github_pat) "
             "END, "
             "source_type = COALESCE(NULLIF($5, ''), source_type), "
             "ssh_connection_id = CASE "
             "    WHEN NULLIF($5, '') = 'ssh' THEN NULLIF($6, '')::uuid "
-            "    WHEN NULLIF($5, '') IN ('github', 'local') THEN NULL "
+            "    WHEN NULLIF($5, '') IN ('github', 'local', 'artifact') THEN NULL "
             "    ELSE ssh_connection_id "
             "END, "
             "source_path = CASE "
-            "    WHEN NULLIF($5, '') IN ('ssh', 'local') THEN $7 "
+            "    WHEN NULLIF($5, '') IN ('ssh', 'local', 'artifact') THEN $7 "
             "    WHEN NULLIF($5, '') = 'github' THEN $7 "
             "    ELSE COALESCE(NULLIF($7, ''), source_path) "
             "END, "
@@ -1463,8 +1982,80 @@ void ProjectController::deleteProject(
     try {
         auto& db = Database::getInstance();
         auto conn = db.getConnection();
-        pqxx::work txn(*conn);
 
+        std::vector<std::string> deploymentIds;
+        {
+            pqxx::work txn(*conn);
+            auto projectRows = txn.exec_params(
+                "SELECT id FROM projects WHERE id = $1 AND user_id = $2",
+                id,
+                userId
+            );
+            if (projectRows.empty()) {
+                txn.commit();
+                Json::Value err; err["error"] = "Project not found";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k404NotFound);
+                callback(resp); return;
+            }
+
+            auto activeJobs = txn.exec_params(
+                "SELECT COUNT(*) FROM deployments d "
+                "JOIN deployment_jobs j ON j.deployment_id = d.id "
+                "WHERE d.project_id = $1 AND j.status = 'running'",
+                id
+            );
+            const int runningJobs = activeJobs.empty() ? 0 : activeJobs[0][0].as<int>();
+            if (runningJobs > 0) {
+                txn.commit();
+                Json::Value err;
+                err["error"] = "Project has running deployment jobs. Wait for them to finish before deleting so runtime cleanup can be authoritative.";
+                err["running_jobs"] = runningJobs;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k409Conflict);
+                callback(resp); return;
+            }
+
+            txn.exec_params(
+                "UPDATE deployment_jobs j "
+                "SET status = 'canceled', completed_at = NOW(), locked_by = '', locked_at = NULL, updated_at = NOW() "
+                "FROM deployments d "
+                "WHERE j.deployment_id = d.id AND d.project_id = $1 AND j.status IN ('queued', 'retrying')",
+                id
+            );
+
+            auto rows = txn.exec_params(
+                "SELECT id FROM deployments WHERE project_id = $1 ORDER BY created_at DESC",
+                id
+            );
+            for (const auto& row : rows) {
+                deploymentIds.push_back(row["id"].as<std::string>());
+            }
+            txn.commit();
+        }
+
+        DeploymentCleanupService cleanupService;
+        Json::Value cleanupResults(Json::arrayValue);
+        for (const auto& deploymentId : deploymentIds) {
+            DeploymentCleanupOptions options;
+            options.deleteDatabaseRow = false;
+            options.deleteImage = true;
+            options.deleteRemoteWorkspace = true;
+            const DeploymentCleanupResult cleanup = cleanupService.cleanupDeployment(userId, deploymentId, options);
+            cleanupResults.append(cleanup.toJson());
+            if (!cleanup.success) {
+                Json::Value err;
+                err["error"] = cleanup.error.empty() ? "Failed to clean deployment before deleting project" : cleanup.error;
+                err["deployment_id"] = deploymentId;
+                err["cleanup_results"] = cleanupResults;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k500InternalServerError);
+                callback(resp);
+                return;
+            }
+        }
+
+        pqxx::work txn(*conn);
         auto result = txn.exec_params(
             "DELETE FROM projects WHERE id = $1 AND user_id = $2 RETURNING id",
             id, userId
@@ -1478,8 +2069,12 @@ void ProjectController::deleteProject(
             callback(resp); return;
         }
 
-        Json::Value resp_body; resp_body["message"] = "Project deleted successfully";
-        AuditLogger::recordFromRequest(req, userId, "project.deleted", "project", id, Json::Value(Json::objectValue));
+        Json::Value resp_body;
+        resp_body["message"] = "Project deleted successfully";
+        resp_body["cleaned_deployments"] = cleanupResults;
+        Json::Value auditMeta(Json::objectValue);
+        auditMeta["cleaned_deployment_count"] = static_cast<int>(deploymentIds.size());
+        AuditLogger::recordFromRequest(req, userId, "project.deleted", "project", id, auditMeta);
         callback(drogon::HttpResponse::newHttpJsonResponse(resp_body));
 
     } catch (const std::exception& e) {
@@ -1675,7 +2270,7 @@ void ProjectController::listGitHubRepos(
         gitReq->setPath(requestPath);
         gitReq->setMethod(drogon::Get);
         gitReq->addHeader("Authorization", "Bearer " + pat);
-        gitReq->addHeader("User-Agent", "AIDS-Platform");
+        gitReq->addHeader("User-Agent", "DOKSCP-Platform");
         gitReq->addHeader("Accept", "application/vnd.github+json");
         gitReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
         return gitReq;
@@ -1859,4 +2454,163 @@ void ProjectController::listGitHubRepos(
     (*fetchUserRepos)();
 }
 
-} // namespace aids
+void ProjectController::listGitHubBranches(
+    const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& callback
+) {
+    std::string userId = extractUserId(req);
+    if (userId.empty()) {
+        Json::Value err; err["error"] = "Unauthorized";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp); return;
+    }
+
+    auto body = req->getJsonObject();
+    if (!body) {
+        Json::Value err; err["error"] = "Invalid JSON body";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k400BadRequest);
+        callback(resp); return;
+    }
+
+    std::string pat = body->isMember("pat") ? (*body)["pat"].asString() : "";
+    const std::string repoInput = body->isMember("repo_url")
+        ? (*body)["repo_url"].asString()
+        : (body->isMember("full_name") ? (*body)["full_name"].asString() : "");
+    const std::string fullName = githubFullNameFromUrl(repoInput);
+    if (fullName.empty()) {
+        Json::Value err; err["error"] = "A GitHub repository URL or owner/name is required";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k400BadRequest);
+        callback(resp); return;
+    }
+
+    if (pat.empty()) {
+        try {
+            auto conn = Database::getInstance().getConnection();
+            pqxx::work txn(*conn);
+            auto userRows = txn.exec_params(
+                "SELECT github_access_token FROM users WHERE id = $1",
+                userId
+            );
+            txn.commit();
+            if (!userRows.empty() && !userRows[0]["github_access_token"].is_null()) {
+                pat = TokenCrypto::decrypt(userRows[0]["github_access_token"].as<std::string>());
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("Unable to load connected GitHub token for branch listing: {}", e.what());
+        }
+    }
+
+    auto client = drogon::HttpClient::newHttpClient("https://api.github.com");
+    auto branches = std::make_shared<Json::Value>(Json::arrayValue);
+    auto completed = std::make_shared<bool>(false);
+    auto page = std::make_shared<int>(1);
+    auto fetchPage = std::make_shared<std::function<void()>>();
+
+    auto makeBranchRequest = [fullName, pat](int currentPage) {
+        auto gitReq = drogon::HttpRequest::newHttpRequest();
+        gitReq->setMethod(drogon::Get);
+        gitReq->setPath(
+            "/repos/" + fullName + "/branches?per_page=100&page=" + std::to_string(currentPage)
+        );
+        if (!pat.empty()) {
+            gitReq->addHeader("Authorization", "Bearer " + pat);
+        }
+        gitReq->addHeader("User-Agent", "DOKSCP-Platform");
+        gitReq->addHeader("Accept", "application/vnd.github+json");
+        gitReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
+        return gitReq;
+    };
+
+    auto sendError = [callback, completed, fullName](drogon::HttpStatusCode status,
+                                                     const std::string& message,
+                                                     const Json::Value& payload = Json::Value()) {
+        if (*completed) {
+            return;
+        }
+        *completed = true;
+        Json::Value err;
+        err["error"] = message;
+        if (payload.isObject() && payload.isMember("message")) {
+            err["details"] = payload["message"].asString();
+        }
+        if (payload.isObject() && payload.isMember("documentation_url")) {
+            err["documentation_url"] = payload["documentation_url"].asString();
+        }
+        err["repository"] = fullName;
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(status);
+        callback(resp);
+    };
+
+    auto sendFinal = [callback, completed, fullName, branches]() {
+        if (*completed) {
+            return;
+        }
+        *completed = true;
+        Json::Value body(Json::objectValue);
+        body["repository"] = fullName;
+        body["branches"] = *branches;
+        body["count"] = static_cast<Json::UInt64>(branches->size());
+        callback(drogon::HttpResponse::newHttpJsonResponse(body));
+    };
+
+    *fetchPage = [client, makeBranchRequest, branches, page, fetchPage, sendError, sendFinal]() {
+        client->sendRequest(
+            makeBranchRequest(*page),
+            [branches, page, fetchPage, sendError, sendFinal](
+                drogon::ReqResult result,
+                const drogon::HttpResponsePtr& response
+            ) {
+                if (result != drogon::ReqResult::Ok || !response) {
+                    sendError(drogon::k502BadGateway, "Failed to connect to GitHub while listing branches");
+                    return;
+                }
+
+                Json::Value payload;
+                Json::CharReaderBuilder builder;
+                builder["collectComments"] = false;
+                std::string errors;
+                std::istringstream bodyStream(std::string(response->getBody()));
+                Json::parseFromStream(builder, bodyStream, &payload, &errors);
+
+                if (response->getStatusCode() != drogon::k200OK || !payload.isArray()) {
+                    sendError(
+                        response->getStatusCode() == drogon::k404NotFound ? drogon::k404NotFound : drogon::k400BadRequest,
+                        "GitHub rejected branch listing",
+                        payload
+                    );
+                    return;
+                }
+
+                for (const auto& branch : payload) {
+                    const std::string name = branch.isMember("name") ? branch["name"].asString() : "";
+                    if (name.empty()) {
+                        continue;
+                    }
+                    Json::Value item(Json::objectValue);
+                    item["name"] = name;
+                    item["protected"] = branch.isMember("protected") && branch["protected"].asBool();
+                    if (branch.isMember("commit") && branch["commit"].isObject()) {
+                        item["commit_sha"] = branch["commit"].get("sha", "").asString();
+                    }
+                    branches->append(item);
+                }
+
+                if (payload.size() == 100u) {
+                    ++(*page);
+                    (*fetchPage)();
+                    return;
+                }
+
+                sendFinal();
+            }
+        );
+    };
+
+    (*fetchPage)();
+}
+
+} // namespace dokscp

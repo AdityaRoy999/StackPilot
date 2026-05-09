@@ -78,7 +78,7 @@ export function RegisterClient({
           Create an Account
         </CardTitle>
         <CardDescription className="text-center">
-          Join the AIDS Platform
+          Join the DOKSCP Platform
         </CardDescription>
       </CardHeader>
       <div className="px-6">

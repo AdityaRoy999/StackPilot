@@ -6,6 +6,7 @@
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
 #include "../services/BuildService.h"
+#include "../services/DeploymentCleanupService.h"
 #include "../services/JobQueueService.h"
 #include "../services/KubernetesService.h"
 #include "../services/SshService.h"
@@ -30,7 +31,7 @@
 #include <sys/wait.h>
 #endif
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -71,6 +72,15 @@ std::string toLower(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+bool looksLikeGitCommitSha(const std::string& value) {
+    if (value.size() < 7 || value.size() > 64) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isxdigit(c) != 0;
+    });
 }
 
 std::string normalizeRuntimeScheme(const std::string& value) {
@@ -251,7 +261,7 @@ std::string valueFromKeyValueOutput(const std::string& output, const std::string
 }
 
 std::string remoteLogTailFromInspectOutput(const std::string& output) {
-    const std::string marker = "__AIDS_REMOTE_LOG_TAIL__";
+    const std::string marker = "__DOKSCP_REMOTE_LOG_TAIL__";
     const auto pos = output.find(marker);
     if (pos == std::string::npos) {
         return "";
@@ -375,12 +385,15 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     auto conn = db.getConnection();
     pqxx::work txn(*conn);
     auto rows = txn.exec_params(
-        "SELECT d.id, d.project_id, p.name AS project_name, d.status, d.version, d.commit_hash, d.image_name, "
+        "SELECT d.id, d.project_id, p.name AS project_name, p.repo_url, d.status, d.version, d.commit_hash, "
+        "d.environment_id, e.name AS environment_name, d.branch, d.commit_sha, d.trigger_source, d.github_delivery_id, "
+        "d.ci_required, d.ci_status, d.image_name, "
         "d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.k8s_ingress_name, "
         "d.desired_replicas, d.runtime_url, d.runtime_exposure, d.runtime_provider, d.remote_container_name, "
         "d.runtime_paused, d.runtime_snapshot::text AS runtime_snapshot, d.created_at "
         "FROM deployments d "
         "JOIN projects p ON d.project_id = p.id "
+        "LEFT JOIN project_environments e ON d.environment_id = e.id "
         "WHERE d.id = $1",
         deploymentId
     );
@@ -395,9 +408,18 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     dep["id"] = row["id"].as<std::string>();
     dep["project_id"] = row["project_id"].as<std::string>();
     dep["project_name"] = row["project_name"].as<std::string>();
+    dep["repo_url"] = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
     dep["status"] = row["status"].as<std::string>();
     dep["version"] = row["version"].as<std::string>();
     dep["commit_hash"] = row["commit_hash"].as<std::string>();
+    dep["environment_id"] = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
+    dep["environment_name"] = row["environment_name"].is_null() ? "" : row["environment_name"].as<std::string>();
+    dep["branch"] = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
+    dep["commit_sha"] = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+    dep["trigger_source"] = row["trigger_source"].is_null() ? "manual" : row["trigger_source"].as<std::string>();
+    dep["github_delivery_id"] = row["github_delivery_id"].is_null() ? "" : row["github_delivery_id"].as<std::string>();
+    dep["ci_required"] = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
+    dep["ci_status"] = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
     hydrateDeploymentRuntimeFields(dep, row);
     dep["created_at"] = row["created_at"].as<std::string>();
     return dep;
@@ -444,11 +466,126 @@ std::string shellQuote(const std::string& value) {
 std::string makeDockerPauseCommand(const std::string& containerName, bool paused) {
     const std::string container = shellQuote(containerName);
     return "set -e; "
-           "command -v docker >/dev/null 2>&1 || { echo __AIDS_DOCKER_MISSING__; exit 10; }; "
-           "docker info >/dev/null 2>&1 || { echo __AIDS_DOCKER_DAEMON_DOWN__; exit 11; }; "
-           "docker inspect " + container + " >/dev/null 2>&1 || { echo __AIDS_CONTAINER_MISSING__; exit 12; }; "
+           "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+           "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+           "docker inspect " + container + " >/dev/null 2>&1 || { echo __DOKSCP_CONTAINER_MISSING__; exit 12; }; "
            "docker " + std::string(paused ? "pause " : "unpause ") + container + " >/dev/null; "
            "docker inspect --format 'status={{.State.Status}}\nrunning={{.State.Running}}\npaused={{.State.Paused}}\nimage={{.Config.Image}}\nstarted_at={{.State.StartedAt}}\nfinished_at={{.State.FinishedAt}}\nrestart_count={{.RestartCount}}' " + container;
+}
+
+int runLocalCommand(const std::string& command, std::string& output);
+
+std::string sanitizeDockerContainerName(const std::string& raw) {
+    std::string cleaned;
+    cleaned.reserve(std::min<size_t>(raw.size(), 96));
+    for (char c : raw) {
+        const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
+        cleaned.push_back(ok ? static_cast<char>(std::tolower(static_cast<unsigned char>(c))) : '-');
+        if (cleaned.size() >= 96) {
+            break;
+        }
+    }
+    while (!cleaned.empty() && cleaned.front() == '-') {
+        cleaned.erase(cleaned.begin());
+    }
+    while (!cleaned.empty() && cleaned.back() == '-') {
+        cleaned.pop_back();
+    }
+    return cleaned.empty() ? "deployment" : cleaned;
+}
+
+bool isValidRuntimeEnvKey(const std::string& key) {
+    if (key.empty()) {
+        return false;
+    }
+    if (!(std::isalpha(static_cast<unsigned char>(key.front())) || key.front() == '_')) {
+        return false;
+    }
+    for (char c : key) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string makeLocalDockerRunCommand(const std::string& containerName,
+                                      const std::string& imageName,
+                                      int containerPort,
+                                      const std::vector<std::pair<std::string, std::string>>& envVars) {
+    std::string envArgs;
+    for (const auto& envVar : envVars) {
+        if (!isValidRuntimeEnvKey(envVar.first)) {
+            continue;
+        }
+        std::string value = envVar.second;
+        std::replace(value.begin(), value.end(), '\n', ' ');
+        envArgs += " --env " + shellQuote(envVar.first + "=" + value);
+    }
+
+    const std::string container = shellQuote(containerName);
+    const std::string image = shellQuote(imageName);
+    const std::string requestedPort = std::to_string(std::clamp(containerPort, 0, 65535));
+    return
+        "set -e; "
+        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __DOKSCP_IMAGE_MISSING__; exit 12; }; "
+        "requested_port=" + requestedPort + "; "
+        "if [ \"$requested_port\" -gt 0 ]; then "
+        "container_port=\"$requested_port\"; "
+        "else "
+        "container_port=$(docker image inspect --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' " + image + " 2>/dev/null | sed -n 's#/tcp$##p' | head -n 1); "
+        "[ -n \"$container_port\" ] || container_port=3000; "
+        "fi; "
+        "docker rm -f " + container + " >/dev/null 2>&1 || true; "
+        "docker run -d --restart unless-stopped --name " + container + envArgs +
+        " -p 127.0.0.1::$container_port " + image + " >/tmp/dokscp-local-container-id; "
+        "host_port=$(docker port " + container + " $container_port/tcp 2>/dev/null | awk -F: 'NF {print $NF; exit}'); "
+        "[ -n \"$host_port\" ] || { echo __DOKSCP_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
+        "status=$(docker inspect --format '{{.State.Status}}' " + container + "); "
+        "running=$(docker inspect --format '{{.State.Running}}' " + container + "); "
+        "echo __DOKSCP_LOCAL_DOCKER_RUNNING__; "
+        "echo container_name=" + containerName + "; "
+        "echo container_port=$container_port; "
+        "echo host_port=$host_port; "
+        "echo runtime_url=http://localhost:$host_port; "
+        "echo status=$status; "
+        "echo running=$running; "
+        "echo image=" + imageName + "; "
+        "echo __DOKSCP_LOCAL_LOG_TAIL__; "
+        "docker logs --tail 80 " + container + " 2>&1 || true";
+}
+
+SshOperationResult removeLocalDockerContainer(const std::string& containerName,
+                                             const std::string& imageName,
+                                             bool removeImage) {
+    SshOperationResult result;
+    if (trim(containerName).empty()) {
+        result.error = "Local Docker container name is missing";
+        return result;
+    }
+    const std::string command =
+        "timeout 60s sh -lc " + shellQuote(
+            std::string("set -e; ")
+            + "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+            + "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+            + "docker rm -f " + shellQuote(containerName) + " >/dev/null 2>&1 || true; "
+            + "echo __DOKSCP_LOCAL_CONTAINER_REMOVED__; "
+            + (removeImage && !imageName.empty()
+                ? "docker image rm -f " + shellQuote(imageName) + " >/dev/null 2>&1 || true; echo __DOKSCP_LOCAL_IMAGE_REMOVE_ATTEMPTED__;"
+                : "")
+        );
+    std::string output;
+    const int exitCode = runLocalCommand(command, output);
+    result.exitCode = exitCode;
+    result.output = output;
+    if (exitCode != 0 || output.find("__DOKSCP_LOCAL_CONTAINER_REMOVED__") == std::string::npos) {
+        result.error = exitCode == 124 ? "Local Docker runtime removal timed out" : "Failed to remove local Docker runtime";
+        return result;
+    }
+    result.success = true;
+    return result;
 }
 
 bool isValidDockerImageRefForCleanup(const std::string& value) {
@@ -593,35 +730,35 @@ SshOperationResult removeLocalDockerImage(const std::string& imageName) {
     const std::string command =
         "timeout 45s sh -lc " + shellQuote(
             "set -e; "
-            "command -v docker >/dev/null 2>&1 || { echo __AIDS_DOCKER_MISSING__; exit 10; }; "
-            "docker info >/dev/null 2>&1 || { echo __AIDS_DOCKER_DAEMON_DOWN__; exit 11; }; "
+            "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+            "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
             "failed=0; "
             "for img in " + shellQuote(imageName) + " " + shellQuote(registryImage) + "; do "
             "  [ -n \"$img\" ] || continue; "
             "  if docker image inspect \"$img\" >/dev/null 2>&1; then "
             "    if docker image rm \"$img\" >/dev/null 2>&1; then "
-            "      echo __AIDS_LOCAL_IMAGE_REMOVED__=$img; "
+            "      echo __DOKSCP_LOCAL_IMAGE_REMOVED__=$img; "
             "    else "
-            "      echo __AIDS_LOCAL_IMAGE_REMOVE_FAILED__=$img; failed=1; "
+            "      echo __DOKSCP_LOCAL_IMAGE_REMOVE_FAILED__=$img; failed=1; "
             "    fi; "
             "  else "
-            "    echo __AIDS_LOCAL_IMAGE_ALREADY_ABSENT__=$img; "
+            "    echo __DOKSCP_LOCAL_IMAGE_ALREADY_ABSENT__=$img; "
             "  fi; "
             "done; "
             "[ \"$failed\" -eq 0 ] || exit 12; "
-            "echo __AIDS_LOCAL_IMAGE_CLEANUP_DONE__"
+            "echo __DOKSCP_LOCAL_IMAGE_CLEANUP_DONE__"
         );
 
     std::string output;
     const int exitCode = runLocalCommand(command, output);
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__AIDS_LOCAL_IMAGE_CLEANUP_DONE__") == std::string::npos) {
-        if (output.find("__AIDS_DOCKER_MISSING__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__DOKSCP_LOCAL_IMAGE_CLEANUP_DONE__") == std::string::npos) {
+        if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
             result.error = "Docker is not installed on this host";
-        } else if (output.find("__AIDS_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker daemon is not reachable on this host";
-        } else if (output.find("__AIDS_LOCAL_IMAGE_REMOVE_FAILED__") != std::string::npos) {
+        } else if (output.find("__DOKSCP_LOCAL_IMAGE_REMOVE_FAILED__") != std::string::npos) {
             result.error = "Docker image could not be deleted because it may still be in use";
         } else if (exitCode == 124) {
             result.error = "Docker image cleanup timed out";
@@ -1079,13 +1216,15 @@ void DeploymentController::createDeployment(
         pqxx::work txn(*conn);
 
         // Verify project ownership
-        auto check = txn.exec_params("SELECT id FROM projects WHERE id = $1 AND user_id = $2", projectId, userId);
+        auto check = txn.exec_params("SELECT id, source_type, repo_url FROM projects WHERE id = $1 AND user_id = $2", projectId, userId);
         if (check.empty()) {
             Json::Value err; err["error"] = "Project not found";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k404NotFound);
             callback(resp); return;
         }
+        const std::string projectSourceType = check[0]["source_type"].is_null() ? "github" : check[0]["source_type"].as<std::string>();
+        const std::string projectRepoUrl = check[0]["repo_url"].is_null() ? "" : trim(check[0]["repo_url"].as<std::string>());
 
         auto body = req->getJsonObject();
         if (!body) {
@@ -1095,14 +1234,107 @@ void DeploymentController::createDeployment(
             callback(resp); return;
         }
 
-        std::string version = (*body).isMember("version") ? (*body)["version"].asString() : "v1.0.0";
-        std::string commitHash = (*body).isMember("commit_hash") ? (*body)["commit_hash"].asString() : "";
+        std::string version = trim((*body).isMember("version") ? (*body)["version"].asString() : "v1.0.0");
+        std::string commitHash = trim((*body).isMember("commit_hash") ? (*body)["commit_hash"].asString() : "");
+        std::string commitSha = trim((*body).isMember("commit_sha") ? (*body)["commit_sha"].asString() : "");
+        std::string branch = trim((*body).isMember("branch") ? (*body)["branch"].asString() : "");
+        std::string triggerSource = trim((*body).isMember("trigger_source") ? (*body)["trigger_source"].asString() : "manual");
+        std::string githubDeliveryId = trim((*body).isMember("github_delivery_id") ? (*body)["github_delivery_id"].asString() : "");
+        std::string environmentId = trim((*body).isMember("environment_id") ? (*body)["environment_id"].asString() : "");
+        std::string sourceArtifactId = trim((*body).isMember("source_artifact_id") ? (*body)["source_artifact_id"].asString() : "");
+        bool ciRequired = (*body).isMember("ci_required") && (*body)["ci_required"].asBool();
+
+        if (commitSha.empty() && looksLikeGitCommitSha(commitHash)) {
+            commitSha = commitHash;
+        }
+        if (!commitSha.empty() && !looksLikeGitCommitSha(commitSha)) {
+            Json::Value err; err["error"] = "Commit SHA must be a 7-64 character hexadecimal Git SHA";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k400BadRequest);
+            callback(resp); return;
+        }
+
+        std::string environmentName;
+        if (environmentId.empty()) {
+            auto defaultEnvRows = txn.exec_params(
+                "SELECT id, name, branch, require_ci FROM project_environments "
+                "WHERE project_id = $1 "
+                "ORDER BY "
+                "CASE "
+                "WHEN lower(name) = 'production' THEN 0 "
+                "WHEN lower(branch) IN ('main', 'master') THEN 1 "
+                "WHEN lower(name) = 'development' THEN 2 "
+                "ELSE 3 END, "
+                "name ASC LIMIT 1",
+                projectId
+            );
+            if (!defaultEnvRows.empty()) {
+                environmentId = defaultEnvRows[0]["id"].as<std::string>();
+                environmentName = defaultEnvRows[0]["name"].as<std::string>();
+                if (branch.empty()) {
+                    branch = defaultEnvRows[0]["branch"].as<std::string>();
+                }
+                ciRequired = ciRequired || (triggerSource == "github_push" && projectSourceType == "github" &&
+                                            !projectRepoUrl.empty() && !commitSha.empty() &&
+                                            defaultEnvRows[0]["require_ci"].as<bool>());
+            }
+        }
+
+        if (!environmentId.empty() && environmentName.empty()) {
+            auto envRows = txn.exec_params(
+                "SELECT name, branch, require_ci FROM project_environments WHERE id = $1 AND project_id = $2",
+                environmentId,
+                projectId
+            );
+            if (envRows.empty()) {
+                Json::Value err; err["error"] = "Project environment not found";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k404NotFound);
+                callback(resp); return;
+            }
+            environmentName = envRows[0]["name"].as<std::string>();
+            if (branch.empty()) {
+                branch = envRows[0]["branch"].as<std::string>();
+            }
+            ciRequired = ciRequired || (triggerSource == "github_push" && projectSourceType == "github" &&
+                                        !projectRepoUrl.empty() && !commitSha.empty() &&
+                                        envRows[0]["require_ci"].as<bool>());
+        }
+
+        if (commitHash.empty()) {
+            commitHash = !commitSha.empty() ? commitSha : (!branch.empty() ? "branch:" + branch : "manual");
+        }
+
+        if (!sourceArtifactId.empty()) {
+            auto artifactRows = txn.exec_params(
+                "SELECT id FROM source_artifacts WHERE id = $1 AND user_id = $2",
+                sourceArtifactId,
+                userId
+            );
+            if (artifactRows.empty()) {
+                Json::Value err; err["error"] = "Source artifact not found";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k404NotFound);
+                callback(resp); return;
+            }
+        }
 
         auto result = txn.exec_params(
-            "INSERT INTO deployments (project_id, version, commit_hash) "
-            "VALUES ($1, $2, $3) "
-            "RETURNING id, status, version, commit_hash, logs, created_at",
-            projectId, version, commitHash
+            "INSERT INTO deployments "
+            "(project_id, version, commit_hash, environment_id, source_artifact_id, branch, commit_sha, trigger_source, github_delivery_id, ci_required, ci_status) "
+            "VALUES ($1, $2, $3, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10, $11) "
+            "RETURNING id, status, version, commit_hash, branch, commit_sha, trigger_source, ci_required, ci_status, logs, created_at",
+            projectId,
+            version,
+            commitHash,
+            environmentId,
+            sourceArtifactId,
+            branch,
+            commitSha,
+            triggerSource,
+            githubDeliveryId,
+            ciRequired,
+            ciRequired ? "pending" : "not_required"
         );
         txn.commit();
 
@@ -1112,6 +1344,13 @@ void DeploymentController::createDeployment(
         dep["status"] = result[0]["status"].as<std::string>();
         dep["version"] = result[0]["version"].as<std::string>();
         dep["commit_hash"] = result[0]["commit_hash"].as<std::string>();
+        dep["environment_id"] = environmentId;
+        dep["environment_name"] = environmentName;
+        dep["branch"] = result[0]["branch"].as<std::string>();
+        dep["commit_sha"] = result[0]["commit_sha"].as<std::string>();
+        dep["trigger_source"] = result[0]["trigger_source"].as<std::string>();
+        dep["ci_required"] = result[0]["ci_required"].as<bool>();
+        dep["ci_status"] = result[0]["ci_status"].as<std::string>();
         dep["logs"] = result[0]["logs"].as<std::string>();
         dep["created_at"] = result[0]["created_at"].as<std::string>();
 
@@ -1121,6 +1360,9 @@ void DeploymentController::createDeployment(
         Json::Value auditMeta;
         auditMeta["project_id"] = projectId;
         auditMeta["version"] = version;
+        auditMeta["trigger_source"] = triggerSource;
+        auditMeta["branch"] = branch;
+        auditMeta["ci_required"] = ciRequired;
         AuditLogger::recordFromRequest(req, userId, "deployment.created", "deployment", dep["id"].asString(), auditMeta);
         auto resp = drogon::HttpResponse::newHttpJsonResponse(resp_body);
         resp->setStatusCode(drogon::k201Created);
@@ -1163,10 +1405,15 @@ void DeploymentController::listDeployments(
         }
 
         auto result = txn.exec_params(
-            "SELECT id, status, version, commit_hash, image_name, k8s_namespace, k8s_deployment_name, "
-            "k8s_service_name, k8s_ingress_name, desired_replicas, runtime_url, runtime_exposure, "
-            "runtime_provider, remote_container_name, runtime_paused, runtime_snapshot::text AS runtime_snapshot, created_at "
-            "FROM deployments WHERE project_id = $1 ORDER BY created_at DESC", projectId
+            "SELECT d.id, d.status, d.version, d.commit_hash, d.environment_id, e.name AS environment_name, "
+            "d.branch, d.commit_sha, d.trigger_source, d.github_delivery_id, d.ci_required, d.ci_status, d.image_name, "
+            "d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.k8s_ingress_name, d.desired_replicas, "
+            "d.runtime_url, d.runtime_exposure, d.runtime_provider, d.remote_container_name, d.runtime_paused, "
+            "d.runtime_snapshot::text AS runtime_snapshot, d.created_at "
+            "FROM deployments d "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id "
+            "WHERE d.project_id = $1 ORDER BY d.created_at DESC",
+            projectId
         );
         txn.commit();
 
@@ -1177,6 +1424,14 @@ void DeploymentController::listDeployments(
             dep["status"] = row["status"].as<std::string>();
             dep["version"] = row["version"].as<std::string>();
             dep["commit_hash"] = row["commit_hash"].as<std::string>();
+            dep["environment_id"] = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
+            dep["environment_name"] = row["environment_name"].is_null() ? "" : row["environment_name"].as<std::string>();
+            dep["branch"] = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
+            dep["commit_sha"] = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+            dep["trigger_source"] = row["trigger_source"].is_null() ? "manual" : row["trigger_source"].as<std::string>();
+            dep["github_delivery_id"] = row["github_delivery_id"].is_null() ? "" : row["github_delivery_id"].as<std::string>();
+            dep["ci_required"] = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
+            dep["ci_status"] = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
             hydrateDeploymentRuntimeFields(dep, row);
             dep["created_at"] = row["created_at"].as<std::string>();
             deps.append(dep);
@@ -1214,12 +1469,15 @@ void DeploymentController::listUserDeployments(
         pqxx::work txn(*conn);
 
         auto result = txn.exec_params(
-            "SELECT d.id, d.project_id, p.name AS project_name, d.status, d.version, d.commit_hash, d.image_name, "
+            "SELECT d.id, d.project_id, p.name AS project_name, p.repo_url, d.status, d.version, d.commit_hash, "
+            "d.environment_id, e.name AS environment_name, d.branch, d.commit_sha, d.trigger_source, "
+            "d.github_delivery_id, d.ci_required, d.ci_status, d.image_name, "
             "d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.k8s_ingress_name, "
             "d.desired_replicas, d.runtime_url, d.runtime_exposure, d.runtime_provider, d.remote_container_name, "
             "d.runtime_paused, d.runtime_snapshot::text AS runtime_snapshot, d.created_at "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id "
             "WHERE p.user_id = $1 "
             "ORDER BY d.created_at DESC",
             userId
@@ -1232,9 +1490,18 @@ void DeploymentController::listUserDeployments(
             dep["id"] = row["id"].as<std::string>();
             dep["project_id"] = row["project_id"].as<std::string>();
             dep["project_name"] = row["project_name"].as<std::string>();
+            dep["repo_url"] = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
             dep["status"] = row["status"].as<std::string>();
             dep["version"] = row["version"].as<std::string>();
             dep["commit_hash"] = row["commit_hash"].as<std::string>();
+            dep["environment_id"] = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
+            dep["environment_name"] = row["environment_name"].is_null() ? "" : row["environment_name"].as<std::string>();
+            dep["branch"] = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
+            dep["commit_sha"] = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+            dep["trigger_source"] = row["trigger_source"].is_null() ? "manual" : row["trigger_source"].as<std::string>();
+            dep["github_delivery_id"] = row["github_delivery_id"].is_null() ? "" : row["github_delivery_id"].as<std::string>();
+            dep["ci_required"] = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
+            dep["ci_status"] = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
             hydrateDeploymentRuntimeFields(dep, row);
             dep["created_at"] = row["created_at"].as<std::string>();
             deps.append(dep);
@@ -1273,9 +1540,13 @@ void DeploymentController::triggerBuild(
         pqxx::work txn(*conn);
         auto rows = txn.exec_params(
             "SELECT d.id, d.status, p.name AS project_name, p.repo_url, p.source_type, p.source_path, "
-            "p.execution_mode, p.remote_runtime_type, p.remote_connection_id, p.ssh_connection_id "
+            "COALESCE(e.execution_mode, p.execution_mode) AS execution_mode, "
+            "COALESCE(e.remote_runtime_type, p.remote_runtime_type) AS remote_runtime_type, "
+            "COALESCE(e.remote_connection_id, p.remote_connection_id) AS remote_connection_id, "
+            "p.ssh_connection_id "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId,
             userId
@@ -1582,6 +1853,8 @@ void DeploymentController::triggerBuild(
                             sourcePath,
                             version,
                             githubPat,
+                            "",
+                            "",
                             projectName,
                             3000,
                             envVars,
@@ -1618,7 +1891,7 @@ void DeploymentController::triggerBuild(
                         options.deploymentId = deploymentId;
                         options.projectName = projectName;
                         options.imageName = buildResult.imageName;
-                        options.nameSpace = "aids-apps";
+                        options.nameSpace = "dokscp-apps";
                         options.runtimeScheme = runtimeScheme;
                         options.exposureMode = options.runtimeScheme == "https" ? "ingress" : remoteK8sExposure;
                         options.replicas = 1;
@@ -1666,6 +1939,8 @@ void DeploymentController::triggerBuild(
                         repoUrl,
                         version,
                         githubPat,
+                        "",
+                        "",
                         envVars,
                         logSink
                     );
@@ -1806,7 +2081,8 @@ void DeploymentController::getDeploymentLogs(
         pqxx::work txn(*conn);
 
         auto result = txn.exec_params(
-            "SELECT d.id, d.status, d.logs, d.image_name, d.k8s_namespace, d.k8s_deployment_name, "
+            "SELECT d.id, d.status, d.version, d.commit_hash, d.branch, d.commit_sha, p.repo_url, "
+            "d.logs, d.image_name, d.k8s_namespace, d.k8s_deployment_name, "
             "d.k8s_service_name, d.k8s_ingress_name, d.desired_replicas, d.runtime_url, d.runtime_exposure, d.updated_at "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
@@ -1825,6 +2101,11 @@ void DeploymentController::getDeploymentLogs(
         Json::Value deployment;
         deployment["id"] = result[0]["id"].as<std::string>();
         deployment["status"] = result[0]["status"].as<std::string>();
+        deployment["version"] = result[0]["version"].as<std::string>();
+        deployment["commit_hash"] = result[0]["commit_hash"].as<std::string>();
+        deployment["branch"] = result[0]["branch"].is_null() ? "" : result[0]["branch"].as<std::string>();
+        deployment["commit_sha"] = result[0]["commit_sha"].is_null() ? "" : result[0]["commit_sha"].as<std::string>();
+        deployment["repo_url"] = result[0]["repo_url"].is_null() ? "" : result[0]["repo_url"].as<std::string>();
         deployment["logs"] = result[0]["logs"].as<std::string>();
         deployment["image_name"] = result[0]["image_name"].as<std::string>();
         deployment["k8s_namespace"] = result[0]["k8s_namespace"].is_null() ? "" : result[0]["k8s_namespace"].as<std::string>();
@@ -1869,26 +2150,79 @@ void DeploymentController::deleteDeployment(
             }
         }
 
+        DeploymentCleanupOptions options;
+        options.deleteDatabaseRow = true;
+        options.deleteImage = deleteRemoteImage;
+        options.deleteRemoteWorkspace = deleteRemoteImage;
+        DeploymentCleanupService cleanupService;
+        const DeploymentCleanupResult cleanup = cleanupService.cleanupDeployment(userId, deploymentId, options);
+        if (!cleanup.success) {
+            Json::Value err;
+            err["error"] = cleanup.error.empty() ? "Failed to delete deployment" : cleanup.error;
+            err["cleanup"] = cleanup.toJson();
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(cleanup.error == "Deployment not found" ? drogon::k404NotFound : drogon::k500InternalServerError);
+            callback(resp);
+            return;
+        }
+
+        Json::Value body = cleanup.toJson();
+        body["message"] = "Deployment deleted";
+        body["deployment_id"] = deploymentId;
+        Json::Value auditMeta;
+        auditMeta["delete_remote_image"] = deleteRemoteImage;
+        auditMeta["cleanup"] = cleanup.toJson();
+        AuditLogger::recordFromRequest(req, userId, "deployment.deleted", "deployment", deploymentId, auditMeta);
+        callback(drogon::HttpResponse::newHttpJsonResponse(body));
+    } catch (const std::exception& e) {
+        spdlog::error("Delete deployment error: {}", e.what());
+        Json::Value err; err["error"] = "Internal server error";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        callback(resp);
+    }
+}
+
+void DeploymentController::deployToLocalDocker(
+    const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+    const std::string& deploymentId
+) {
+    const std::string userId = extractUserId(req);
+    if (userId.empty()) {
+        Json::Value err; err["error"] = "Unauthorized";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp); return;
+    }
+
+    const std::string rateLimitKey = makeRuntimeRateLimitKey("local-docker-deploy", req, userId, deploymentId);
+    int retryAfterSeconds = 0;
+    if (isRuntimeRateLimited(rateLimitKey, retryAfterSeconds)) {
+        callback(makeRuntimeRateLimitedResponse(retryAfterSeconds));
+        return;
+    }
+
+    try {
+        auto body = req->getJsonObject();
+        const int requestedContainerPort =
+            (body && body->isMember("container_port")) ? std::clamp((*body)["container_port"].asInt(), 1, 65535) : 0;
+
         auto& db = Database::getInstance();
         auto conn = db.getConnection();
         pqxx::work txn(*conn);
         auto rows = txn.exec_params(
-            "SELECT d.id, d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.runtime_exposure, "
-            "d.runtime_provider, d.remote_container_name, d.image_name, d.runtime_snapshot::text AS runtime_snapshot, "
-            "d.source_snapshot, "
-            "p.source_type AS project_source_type, p.source_path AS project_source_path, "
-            "p.execution_mode AS project_execution_mode, "
-            "COALESCE(rs.connection_type, 'ssh') AS remote_connection_type, rs.host AS remote_host, rs.port AS remote_port, "
-            "rs.username AS remote_username, rs.auth_type AS remote_auth_type, rs.password_encrypted AS remote_password_encrypted, "
-            "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
+            "SELECT d.id, d.project_id, d.image_name, d.status, d.remote_container_name, d.runtime_snapshot::text AS runtime_snapshot, "
+            "p.name AS project_name "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
-            deploymentId, userId
+            deploymentId,
+            userId
         );
 
         if (rows.empty()) {
+            recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
             Json::Value err; err["error"] = "Deployment not found";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k404NotFound);
@@ -1896,206 +2230,122 @@ void DeploymentController::deleteDeployment(
         }
 
         const auto& row = rows[0];
-        const std::string nameSpace = row["k8s_namespace"].is_null() ? "" : row["k8s_namespace"].as<std::string>();
-        const std::string deploymentName = row["k8s_deployment_name"].is_null() ? "" : row["k8s_deployment_name"].as<std::string>();
-        const std::string serviceName = row["k8s_service_name"].is_null() ? "" : row["k8s_service_name"].as<std::string>();
-        const Json::Value runtimeSnapshotJson = parseJsonObject(
+        const Json::Value existingRuntimeSnapshot = parseJsonObject(
             row["runtime_snapshot"].is_null() ? "" : row["runtime_snapshot"].as<std::string>()
         );
-        const std::string exposureMode = jsonString(
-            runtimeSnapshotJson,
-            "exposure_mode",
-            row["runtime_exposure"].is_null() ? "" : row["runtime_exposure"].as<std::string>()
-        );
-        const std::string runtimeProvider = jsonString(
-            runtimeSnapshotJson,
-            "provider",
-            row["runtime_provider"].is_null() ? "" : row["runtime_provider"].as<std::string>()
-        );
-        const std::string remoteContainerName = row["remote_container_name"].is_null() ? "" : row["remote_container_name"].as<std::string>();
         const std::string imageName = jsonString(
-            runtimeSnapshotJson,
+            existingRuntimeSnapshot,
             "image_name",
             row["image_name"].is_null() ? "" : row["image_name"].as<std::string>()
         );
-        const Json::Value sourceSnapshot = parseJsonObject(row["source_snapshot"].is_null() ? "" : row["source_snapshot"].as<std::string>());
-        const std::string sourceType = jsonString(
-            sourceSnapshot,
-            "source_type",
-            row["project_source_type"].is_null() ? "" : row["project_source_type"].as<std::string>()
-        );
-        const std::string sourcePath = jsonString(
-            sourceSnapshot,
-            "source_path",
-            row["project_source_path"].is_null() ? "" : row["project_source_path"].as<std::string>()
-        );
-        const std::string executionMode = jsonString(
-            sourceSnapshot,
-            "execution_mode",
-            row["project_execution_mode"].is_null() ? "" : row["project_execution_mode"].as<std::string>()
-        );
-        const bool hasRemoteHost = !row["remote_host"].is_null();
-        bool dockerImageCleanupAttempted = false;
-        bool dockerImageDeleted = false;
-        bool remoteWorkspaceDeleted = false;
-        txn.commit();
-
-        spdlog::info(
-            "Deleting deployment {} runtime_provider={} exposure={} delete_image={} image={}",
-            deploymentId,
-            runtimeProvider,
-            exposureMode,
-            deleteRemoteImage ? "true" : "false",
-            imageName.empty() ? "<none>" : imageName
-        );
-
-        if ((runtimeProvider == "remote_docker" || exposureMode == "remote_docker") && !remoteContainerName.empty() && hasRemoteHost) {
-            SshService sshService;
-            const auto removal = sshService.removeDockerContainer(
-                rowToRemoteRuntimeConfig(row),
-                remoteContainerName,
-                imageName,
-                false
-            );
-            appendDeploymentLogBlock(deploymentId, removal.output);
-            if (!removal.success) {
-                Json::Value err;
-                err["error"] = removal.error.empty() ? "Failed to remove remote runtime before deleting deployment" : removal.error;
-                err["runtime"]["logs"] = removal.output;
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k500InternalServerError);
-                callback(resp);
-                return;
-            }
-        } else if (runtimeProvider == "remote_kubernetes" && !deploymentName.empty() && !serviceName.empty() && hasRemoteHost) {
-            SshService sshService;
-            KubernetesRuntimeInfo removal = sshService.removeKubernetesRuntime(
-                rowToRemoteRuntimeConfig(row),
-                nameSpace,
-                deploymentName,
-                serviceName,
-                exposureMode
-            );
-            appendDeploymentLogBlock(deploymentId, removal.logs);
-            if (!removal.success) {
-                Json::Value err;
-                err["error"] = removal.error.empty() ? "Failed to remove remote Kubernetes runtime before deleting deployment" : removal.error;
-                err["runtime"]["logs"] = removal.logs;
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k500InternalServerError);
-                callback(resp);
-                return;
-            }
-        } else if (!deploymentName.empty() && !serviceName.empty()) {
-            KubernetesService service;
-            KubernetesRuntimeInfo removal = service.remove(nameSpace, deploymentName, serviceName, exposureMode);
-            if (!removal.success) {
-                Json::Value err;
-                err["error"] = removal.error.empty() ? "Failed to remove runtime before deleting deployment" : removal.error;
-                err["runtime"]["logs"] = removal.logs;
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k500InternalServerError);
-                callback(resp);
-                return;
-            }
-        }
-
-        if (deleteRemoteImage && !imageName.empty()) {
-            dockerImageCleanupAttempted = true;
-            SshOperationResult imageRemoval;
-            if (hasRemoteHost && (runtimeProvider == "remote_docker" ||
-                                  runtimeProvider == "remote_kubernetes" ||
-                                  executionMode == "remote_host")) {
-                SshService sshService;
-                imageRemoval = sshService.removeDockerImage(rowToRemoteRuntimeConfig(row), imageName);
-                appendDeploymentLogBlock(deploymentId, imageRemoval.output);
-            } else {
-                imageRemoval = removeLocalDockerImage(imageName);
-                appendDeploymentLogBlock(deploymentId, imageRemoval.output);
-            }
-
-            if (!imageRemoval.success) {
-                Json::Value err;
-                err["error"] = imageRemoval.error.empty() ? "Failed to remove Docker image" : imageRemoval.error;
-                err["runtime"]["logs"] = imageRemoval.output;
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k500InternalServerError);
-                callback(resp);
-                return;
-            }
-            dockerImageDeleted = true;
-        }
-
-        if (deleteRemoteImage && hasRemoteHost && sourceType == "github" && executionMode == "remote_host") {
-            const std::string remoteWorkspace = joinRemotePath(
-                joinRemotePath(sourcePath.empty() ? "/tmp" : sourcePath, "aids-builds"),
-                sanitizeRemoteWorkspaceSegment(deploymentId)
-            );
-            SshService sshService;
-            const auto cleanup = sshService.runRemoteCommand(
-                rowToRemoteRuntimeConfig(row),
-                "/",
-                "rm -rf -- " + shellQuote(remoteWorkspace) + " && echo __AIDS_REMOTE_WORKSPACE_REMOVED__",
-                60
-            );
-            appendDeploymentLogBlock(deploymentId, cleanup.output);
-            if (!cleanup.success) {
-                Json::Value err;
-                err["error"] = cleanup.error.empty() ? "Failed to clean remote build workspace" : cleanup.error;
-                err["runtime"]["logs"] = cleanup.output;
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k500InternalServerError);
-                callback(resp);
-                return;
-            }
-            remoteWorkspaceDeleted = true;
-        }
-
-        auto connDelete = db.getConnection();
-        pqxx::work deleteTxn(*connDelete);
-        auto deleted = deleteTxn.exec_params(
-            "DELETE FROM deployments USING projects "
-            "WHERE deployments.project_id = projects.id "
-            "AND deployments.id = $1 "
-            "AND projects.user_id = $2 "
-            "RETURNING deployments.id",
-            deploymentId, userId
-        );
-        deleteTxn.commit();
-
-        if (deleted.empty()) {
-            Json::Value err; err["error"] = "Deployment not found";
+        if (imageName.empty()) {
+            recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
+            Json::Value err; err["error"] = "Build the image before deploying to local Docker";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k404NotFound);
+            resp->setStatusCode(drogon::k400BadRequest);
             callback(resp); return;
         }
 
-        std::error_code ec;
-        std::filesystem::remove_all(getBuildWorkspaceRoot() / deploymentId, ec);
-        if (ec) {
-            spdlog::warn("Failed to clean deployment workspace {}: {}", deploymentId, ec.message());
+        const auto deploymentEnvVars = loadDeploymentEnvVarPairs(txn, deploymentId);
+        const std::string projectName = row["project_name"].is_null() ? "deployment" : row["project_name"].as<std::string>();
+        const std::string containerName = "dokscp-local-" + sanitizeDockerContainerName(projectName) + "-" + sanitizeDockerContainerName(deploymentId).substr(0, 12);
+        txn.exec_params(
+            "UPDATE deployments SET status = 'deploying', updated_at = NOW() WHERE id = $1",
+            deploymentId
+        );
+        txn.commit();
+
+        LogWebSocketController::broadcastStatus(deploymentId, "deploying");
+        broadcastDeploymentSummary(deploymentId);
+
+        std::string output;
+        const int exitCode = runLocalCommand(
+            "timeout 120s sh -lc " + shellQuote(makeLocalDockerRunCommand(containerName, imageName, requestedContainerPort, deploymentEnvVars)),
+            output
+        );
+        appendDeploymentLogBlock(deploymentId, output);
+
+        const std::string runtimeUrl = valueFromKeyValueOutput(output, "runtime_url");
+        int containerPort = requestedContainerPort > 0 ? requestedContainerPort : 3000;
+        const std::string actualContainerPort = valueFromKeyValueOutput(output, "container_port");
+        if (!actualContainerPort.empty()) {
+            try {
+                containerPort = std::clamp(std::stoi(actualContainerPort), 1, 65535);
+            } catch (...) {
+                containerPort = requestedContainerPort > 0 ? requestedContainerPort : 3000;
+            }
+        }
+        const std::string status = valueFromKeyValueOutput(output, "status");
+        const bool running = valueFromKeyValueOutput(output, "running") == "true";
+        if (exitCode != 0 || output.find("__DOKSCP_LOCAL_DOCKER_RUNNING__") == std::string::npos || runtimeUrl.empty()) {
+            recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
+            auto connUpdate = db.getConnection();
+            pqxx::work updateTxn(*connUpdate);
+            updateTxn.exec_params(
+                "UPDATE deployments SET status = 'failed', updated_at = NOW() WHERE id = $1",
+                deploymentId
+            );
+            updateTxn.commit();
+            LogWebSocketController::broadcastStatus(deploymentId, "failed");
+            broadcastDeploymentSummary(deploymentId);
+
+            Json::Value err;
+            if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+                err["error"] = "Docker CLI is not available to the DOKSCP backend";
+            } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+                err["error"] = "Docker daemon is not reachable from the DOKSCP backend";
+            } else if (output.find("__DOKSCP_IMAGE_MISSING__") != std::string::npos) {
+                err["error"] = "Built image is missing from local Docker";
+            } else {
+                err["error"] = exitCode == 124 ? "Local Docker deploy timed out" : "Failed to start local Docker runtime";
+            }
+            err["runtime"]["logs"] = output;
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k500InternalServerError);
+            callback(resp);
+            return;
         }
 
-        LogWebSocketController::broadcastDeploymentDeleted(deploymentId);
+        const std::string persistedStatus = running ? "running" : (status.empty() ? "built" : status);
+        auto connUpdate = db.getConnection();
+        pqxx::work updateTxn(*connUpdate);
+        updateTxn.exec_params(
+            "UPDATE deployments "
+            "SET status = $1, runtime_url = $2, runtime_exposure = 'local_docker', runtime_provider = 'local_docker', "
+            "remote_container_name = $3, desired_replicas = 1, runtime_snapshot = $4::jsonb, runtime_paused = FALSE, updated_at = NOW() "
+            "WHERE id = $5",
+            persistedStatus,
+            runtimeUrl,
+            containerName,
+            compactJson(runtimeSnapshot("local_docker", imageName, runtimeUrl, "local_docker", 1, containerPort, "small", "/", "http")),
+            deploymentId
+        );
+        updateTxn.commit();
 
-        Json::Value body;
-        body["message"] = "Deployment deleted";
-        body["deployment_id"] = deploymentId;
-        body["docker_image_cleanup_attempted"] = dockerImageCleanupAttempted;
-        body["docker_image_deleted"] = dockerImageDeleted;
-        body["remote_workspace_deleted"] = remoteWorkspaceDeleted;
-        body["image_name"] = imageName;
+        clearRuntimeRateLimitState(rateLimitKey);
+        LogWebSocketController::broadcastStatus(deploymentId, persistedStatus);
+        broadcastDeploymentSummary(deploymentId);
+
+        Json::Value payload;
+        payload["message"] = "Deployment is running in local Docker";
+        payload["runtime"]["provider"] = "local_docker";
+        payload["runtime"]["status"] = persistedStatus;
+        payload["runtime"]["runtime_url"] = runtimeUrl;
+        payload["runtime"]["container_name"] = containerName;
+        payload["runtime"]["image"] = imageName;
+        payload["runtime"]["container_port"] = containerPort;
+        payload["runtime"]["published_ports"] = valueFromKeyValueOutput(output, "host_port");
+        payload["runtime"]["logs"] = remoteLogTailFromInspectOutput(output);
         Json::Value auditMeta;
-        auditMeta["delete_remote_image"] = deleteRemoteImage;
-        auditMeta["docker_image_cleanup_attempted"] = dockerImageCleanupAttempted;
-        auditMeta["docker_image_deleted"] = dockerImageDeleted;
-        auditMeta["remote_workspace_deleted"] = remoteWorkspaceDeleted;
-        auditMeta["runtime_provider"] = runtimeProvider;
+        auditMeta["provider"] = "local_docker";
+        auditMeta["container_name"] = containerName;
         auditMeta["image_name"] = imageName;
-        AuditLogger::recordFromRequest(req, userId, "deployment.deleted", "deployment", deploymentId, auditMeta);
-        callback(drogon::HttpResponse::newHttpJsonResponse(body));
+        auditMeta["runtime_url"] = runtimeUrl;
+        AuditLogger::recordFromRequest(req, userId, "runtime.local_docker.deployed", "deployment", deploymentId, auditMeta);
+        callback(drogon::HttpResponse::newHttpJsonResponse(payload));
     } catch (const std::exception& e) {
-        spdlog::error("Delete deployment error: {}", e.what());
+        recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
+        spdlog::error("Deploy to local Docker error: {}", e.what());
         Json::Value err; err["error"] = "Internal server error";
         auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
         resp->setStatusCode(drogon::k500InternalServerError);
@@ -2332,7 +2582,8 @@ void DeploymentController::scaleKubernetesDeployment(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -2505,7 +2756,8 @@ void DeploymentController::setRuntimePausedState(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -2806,7 +3058,8 @@ void DeploymentController::getDeploymentMetrics(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -2968,12 +3221,14 @@ void DeploymentController::getRuntimeHealth(
         pqxx::work txn(*conn);
         auto rows = txn.exec_params(
             "SELECT d.runtime_url, d.runtime_provider, d.runtime_exposure, d.status, d.runtime_paused, "
+            "d.remote_container_name, "
             "COALESCE(rs.connection_type, 'ssh') AS remote_connection_type, rs.host AS remote_host, rs.port AS remote_port, "
             "rs.username AS remote_username, rs.auth_type AS remote_auth_type, rs.password_encrypted AS remote_password_encrypted, "
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -2987,6 +3242,8 @@ void DeploymentController::getRuntimeHealth(
         const auto& row = rows[0];
         const std::string runtimeUrl = row["runtime_url"].is_null() ? "" : row["runtime_url"].as<std::string>();
         const std::string provider = row["runtime_provider"].is_null() ? "" : row["runtime_provider"].as<std::string>();
+        const std::string exposure = row["runtime_exposure"].is_null() ? "" : row["runtime_exposure"].as<std::string>();
+        const std::string containerName = row["remote_container_name"].is_null() ? "" : row["remote_container_name"].as<std::string>();
         const bool runtimePaused = row["runtime_paused"].is_null() ? false : row["runtime_paused"].as<bool>();
         const std::string status = row["status"].is_null() ? "" : row["status"].as<std::string>();
         if (runtimePaused || status == "paused") {
@@ -2999,6 +3256,30 @@ void DeploymentController::getRuntimeHealth(
             payload["healthy"] = false;
             payload["paused"] = true;
             payload["message"] = "Runtime is paused.";
+            payload["checked_at"] = trantor::Date::now().toFormattedString(false);
+            callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+            return;
+        }
+        if ((provider == "local_docker" || exposure == "local_docker") && !containerName.empty()) {
+            txn.commit();
+            std::string output;
+            const std::string inspectCommand =
+                "docker inspect --format 'running={{.State.Running}}\npaused={{.State.Paused}}\nstatus={{.State.Status}}' " +
+                shellQuote(containerName) + " 2>&1";
+            const int exitCode = runLocalCommand("timeout 8s sh -lc " + shellQuote(inspectCommand), output);
+            const bool running = valueFromKeyValueOutput(output, "running") == "true";
+            const bool paused = valueFromKeyValueOutput(output, "paused") == "true";
+            Json::Value payload;
+            payload["deployment_id"] = deploymentId;
+            payload["runtime_url"] = runtimeUrl;
+            payload["provider"] = "local_docker";
+            payload["available"] = exitCode == 0;
+            payload["healthy"] = exitCode == 0 && running && !paused;
+            payload["paused"] = paused;
+            payload["status"] = valueFromKeyValueOutput(output, "status");
+            payload["message"] = payload["healthy"].asBool()
+                ? "Local Docker container is running."
+                : "Local Docker container is not running.";
             payload["checked_at"] = trantor::Date::now().toFormattedString(false);
             callback(drogon::HttpResponse::newHttpJsonResponse(payload));
             return;
@@ -3103,7 +3384,8 @@ void DeploymentController::getKubernetesStatus(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -3136,6 +3418,7 @@ void DeploymentController::getKubernetesStatus(
         ));
         const std::string remoteContainerName =
             row["remote_container_name"].is_null() ? "" : row["remote_container_name"].as<std::string>();
+        const bool isLocalDocker = runtimeProvider == "local_docker" || runtimeExposure == "local_docker";
 
         if (runtimeProvider == "remote_docker" || runtimeExposure == "remote_docker") {
             Json::Value payload;
@@ -3188,6 +3471,75 @@ void DeploymentController::getKubernetesStatus(
             pqxx::work updateTxn(*connUpdate);
             updateTxn.exec_params(
                 "UPDATE deployments SET status = $1, runtime_provider = 'remote_docker', runtime_exposure = 'remote_docker', "
+                "runtime_url = $2, desired_replicas = 1, runtime_paused = $3, updated_at = NOW() WHERE id = $4",
+                paused ? "paused" : (running ? "running" : "built"),
+                runtimeUrl,
+                paused,
+                deploymentId
+            );
+            updateTxn.commit();
+            broadcastDeploymentSummary(deploymentId);
+
+            callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+            return;
+        }
+
+        if (isLocalDocker) {
+            Json::Value payload;
+            payload["runtime"]["provider"] = "local_docker";
+            payload["runtime"]["exposure_mode"] = "local_docker";
+            payload["runtime"]["desired_replicas"] = 1;
+            payload["runtime"]["runtime_url"] = runtimeUrl;
+            payload["runtime"]["runtime_scheme"] = "http";
+            payload["runtime"]["container_name"] = remoteContainerName;
+
+            if (remoteContainerName.empty()) {
+                payload["runtime"]["deployed"] = false;
+                payload["runtime"]["status"] = "not_deployed";
+                txn.commit();
+                callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+                return;
+            }
+
+            txn.commit();
+            std::string output;
+            const std::string inspectCommand =
+                "set -e; "
+                "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+                "docker inspect --format 'status={{.State.Status}}\nrunning={{.State.Running}}\npaused={{.State.Paused}}\nimage={{.Config.Image}}\nstarted_at={{.State.StartedAt}}\nfinished_at={{.State.FinishedAt}}\nrestart_count={{.RestartCount}}' " +
+                shellQuote(remoteContainerName) + "; "
+                "echo published_ports=$(docker port " + shellQuote(remoteContainerName) + " 2>/dev/null | tr '\\n' ',' | sed 's/,$//'); "
+                "echo __DOKSCP_REMOTE_LOG_TAIL__; "
+                "docker logs --tail 80 " + shellQuote(remoteContainerName) + " 2>&1 || true";
+            const int exitCode = runLocalCommand("timeout 12s sh -lc " + shellQuote(inspectCommand), output);
+            if (exitCode != 0) {
+                payload["runtime"]["deployed"] = false;
+                payload["runtime"]["status"] = "not_ready";
+                payload["runtime"]["error"] = output.empty() ? "Local Docker container is not reachable" : output;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
+                resp->setStatusCode(drogon::k200OK);
+                callback(resp);
+                return;
+            }
+
+            const std::string status = valueFromKeyValueOutput(output, "status");
+            const bool running = valueFromKeyValueOutput(output, "running") == "true";
+            const bool paused = runtimePaused || valueFromKeyValueOutput(output, "paused") == "true";
+            payload["runtime"]["deployed"] = true;
+            payload["runtime"]["paused"] = paused;
+            payload["runtime"]["status"] = paused ? "paused" : (running ? "running" : (status.empty() ? "stopped" : status));
+            payload["runtime"]["ready_replicas"] = paused ? 0 : (running ? 1 : 0);
+            payload["runtime"]["image"] = valueFromKeyValueOutput(output, "image");
+            payload["runtime"]["started_at"] = valueFromKeyValueOutput(output, "started_at");
+            payload["runtime"]["finished_at"] = valueFromKeyValueOutput(output, "finished_at");
+            payload["runtime"]["restart_count"] = valueFromKeyValueOutput(output, "restart_count");
+            payload["runtime"]["published_ports"] = valueFromKeyValueOutput(output, "published_ports");
+            payload["runtime"]["logs"] = remoteLogTailFromInspectOutput(output);
+
+            auto connUpdate = db.getConnection();
+            pqxx::work updateTxn(*connUpdate);
+            updateTxn.exec_params(
+                "UPDATE deployments SET status = $1, runtime_provider = 'local_docker', runtime_exposure = 'local_docker', "
                 "runtime_url = $2, desired_replicas = 1, runtime_paused = $3, updated_at = NOW() WHERE id = $4",
                 paused ? "paused" : (running ? "running" : "built"),
                 runtimeUrl,
@@ -3359,7 +3711,8 @@ void DeploymentController::getKubernetesEvents(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -3473,7 +3826,8 @@ void DeploymentController::rollbackKubernetesDeployment(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -3687,7 +4041,8 @@ void DeploymentController::removeKubernetesDeployment(
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
-            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, p.remote_connection_id) = rs.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(d.remote_connection_id, e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             deploymentId, userId
         );
@@ -3757,7 +4112,7 @@ void DeploymentController::removeKubernetesDeployment(
                 broadcastDeploymentSummary(deploymentId);
 
                 Json::Value payload;
-                const bool imageDeleted = deleteRemoteImage && removal.output.find("__AIDS_REMOTE_IMAGE_REMOVED__") != std::string::npos;
+                const bool imageDeleted = deleteRemoteImage && removal.output.find("__DOKSCP_REMOTE_IMAGE_REMOVED__") != std::string::npos;
                 payload["message"] = imageDeleted
                     ? "Remote Docker runtime and image removed"
                     : (deleteRemoteImage ? "Remote Docker runtime removed; image was kept" : "Remote Docker runtime removed");
@@ -3782,6 +4137,61 @@ void DeploymentController::removeKubernetesDeployment(
 
             Json::Value err;
             err["error"] = removal.error.empty() ? "Failed to remove remote Docker runtime" : removal.error;
+            err["runtime"]["logs"] = removal.output;
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k500InternalServerError);
+            callback(resp);
+            return;
+        }
+
+        if (runtimeProvider == "local_docker" || exposureMode == "local_docker") {
+            if (remoteContainerName.empty()) {
+                txn.commit();
+                recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
+                Json::Value err; err["error"] = "Local Docker runtime metadata is missing";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp); return;
+            }
+
+            txn.commit();
+            const auto removal = removeLocalDockerContainer(remoteContainerName, imageName, deleteRemoteImage);
+            appendDeploymentLogBlock(deploymentId, removal.output);
+
+            auto connUpdate = db.getConnection();
+            pqxx::work updateTxn(*connUpdate);
+            if (removal.success) {
+                updateTxn.exec_params(
+                    "UPDATE deployments SET status = 'built', runtime_url = '', desired_replicas = 1, "
+                    "runtime_exposure = '', runtime_provider = '', remote_container_name = '', runtime_paused = FALSE, updated_at = NOW() "
+                    "WHERE id = $1",
+                    deploymentId
+                );
+                updateTxn.commit();
+                clearRuntimeRateLimitState(rateLimitKey);
+                LogWebSocketController::broadcastStatus(deploymentId, "built");
+                broadcastDeploymentSummary(deploymentId);
+
+                Json::Value payload;
+                payload["message"] = deleteRemoteImage ? "Local Docker runtime removed; image cleanup attempted" : "Local Docker runtime removed";
+                payload["image_deleted"] = deleteRemoteImage && removal.output.find("__DOKSCP_LOCAL_IMAGE_REMOVE_ATTEMPTED__") != std::string::npos;
+                payload["runtime"]["status"] = "built";
+                Json::Value auditMeta;
+                auditMeta["runtime_provider"] = "local_docker";
+                auditMeta["container_name"] = remoteContainerName;
+                auditMeta["delete_image"] = deleteRemoteImage;
+                AuditLogger::recordFromRequest(req, userId, "runtime.removed", "deployment", deploymentId, auditMeta);
+                callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+                return;
+            }
+
+            updateTxn.exec_params("UPDATE deployments SET updated_at = NOW() WHERE id = $1", deploymentId);
+            updateTxn.commit();
+            recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
+            broadcastDeploymentSummary(deploymentId);
+
+            Json::Value err;
+            err["error"] = removal.error.empty() ? "Failed to remove local Docker runtime" : removal.error;
             err["runtime"]["logs"] = removal.output;
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k500InternalServerError);
@@ -3906,4 +4316,4 @@ void DeploymentController::removeKubernetesDeployment(
     }
 }
 
-} // namespace aids
+} // namespace dokscp

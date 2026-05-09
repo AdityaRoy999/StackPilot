@@ -20,7 +20,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -66,7 +66,7 @@ double envDouble(const char* key, double fallback) {
 }
 
 std::size_t maxContextBytes() {
-    return static_cast<std::size_t>(std::max(8000, envInt("AIDS_AI_MAX_CONTEXT_BYTES", 32000)));
+    return static_cast<std::size_t>(std::max(8000, envInt("DOKSCP_AI_MAX_CONTEXT_BYTES", 32000)));
 }
 
 double clampConfidence(double value) {
@@ -125,7 +125,7 @@ bool rateLimitAllows(const std::string& userId, Json::Value& error) {
     static std::mutex mutex;
     static std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> buckets;
 
-    const int limit = std::max(1, envInt("AIDS_AI_RATE_LIMIT_PER_MINUTE", 12));
+    const int limit = std::max(1, envInt("DOKSCP_AI_RATE_LIMIT_PER_MINUTE", 12));
     const auto now = std::chrono::steady_clock::now();
     const auto window = std::chrono::seconds(60);
 
@@ -145,15 +145,17 @@ bool rateLimitAllows(const std::string& userId, Json::Value& error) {
 
 Json::Value loadPreferences(pqxx::work& txn, const std::string& userId) {
     Json::Value prefs;
-    prefs["enabled"] = envBool("AIDS_AI_ENABLED", true);
-    prefs["provider"] = envOrDefault("AIDS_AI_PROVIDER", "nvidia_nim");
-    prefs["model"] = envOrDefault("AIDS_AI_MODEL", "");
+    prefs["enabled"] = envBool("DOKSCP_AI_ENABLED", true);
+    prefs["provider"] = envOrDefault("DOKSCP_AI_PROVIDER", "nvidia_nim");
+    prefs["model"] = envOrDefault("DOKSCP_AI_MODEL", "");
     prefs["openai_compatible_base_url"] = envOrDefault("OPENAI_COMPATIBLE_BASE_URL", "");
-    prefs["confidence_threshold"] = clampConfidence(envDouble("AIDS_AI_CONFIDENCE_THRESHOLD", 0.72));
+    prefs["openai_compatible_api_key"] = envOrDefault("OPENAI_COMPATIBLE_API_KEY", "");
+    prefs["confidence_threshold"] = clampConfidence(envDouble("DOKSCP_AI_CONFIDENCE_THRESHOLD", 0.72));
     prefs["history_retention_days"] = 90;
 
     const auto rows = txn.exec_params(
-        "SELECT enabled, provider, model, openai_compatible_base_url, confidence_threshold, history_retention_days "
+        "SELECT enabled, provider, model, openai_compatible_base_url, openai_compatible_api_key, "
+        "confidence_threshold, history_retention_days "
         "FROM ai_preferences WHERE user_id = $1",
         userId);
     if (!rows.empty()) {
@@ -163,6 +165,9 @@ Json::Value loadPreferences(pqxx::work& txn, const std::string& userId) {
         prefs["model"] = row["model"].is_null() ? "" : row["model"].as<std::string>();
         prefs["openai_compatible_base_url"] =
             row["openai_compatible_base_url"].is_null() ? "" : row["openai_compatible_base_url"].as<std::string>();
+        prefs["openai_compatible_api_key"] =
+            row["openai_compatible_api_key"].is_null() ? envOrDefault("OPENAI_COMPATIBLE_API_KEY", "")
+                                                       : row["openai_compatible_api_key"].as<std::string>();
         prefs["confidence_threshold"] = clampConfidence(row["confidence_threshold"].as<double>());
         prefs["history_retention_days"] = row["history_retention_days"].as<int>();
     }
@@ -247,7 +252,7 @@ std::string insertAiRun(pqxx::work& txn,
         "RETURNING id",
         userId,
         workflow,
-        response.isMember("provider") ? response["provider"].asString() : envOrDefault("AIDS_AI_PROVIDER", "nvidia_nim"),
+        response.isMember("provider") ? response["provider"].asString() : envOrDefault("DOKSCP_AI_PROVIDER", "nvidia_nim"),
         response.isMember("model") ? response["model"].asString() : "",
         status,
         confidence,
@@ -299,8 +304,27 @@ void storeArtifacts(pqxx::work& txn, const std::string& runId, const Json::Value
     }
 }
 
-Json::Value runWorkflow(const std::string& path, const Json::Value& payload) {
-    const auto result = AiServiceClient::instance().postWorkflow(path, payload);
+Json::Value providerOverrides(const Json::Value& prefs) {
+    Json::Value overrides(Json::objectValue);
+    if (prefs.isMember("provider") && prefs["provider"].asString() == "openai_compatible") {
+        if (prefs.isMember("openai_compatible_base_url") && !prefs["openai_compatible_base_url"].asString().empty()) {
+            overrides["base_url"] = prefs["openai_compatible_base_url"].asString();
+        }
+        if (prefs.isMember("openai_compatible_api_key") && !prefs["openai_compatible_api_key"].asString().empty()) {
+            overrides["api_key"] = prefs["openai_compatible_api_key"].asString();
+        }
+    }
+    return overrides;
+}
+
+Json::Value runWorkflow(const std::string& path,
+                        const Json::Value& payload,
+                        const Json::Value& overrides = Json::Value(Json::objectValue)) {
+    Json::Value requestPayload = payload;
+    if (overrides.isObject() && !overrides.empty()) {
+        requestPayload["provider_overrides"] = overrides;
+    }
+    const auto result = AiServiceClient::instance().postWorkflow(path, requestPayload);
     Json::Value body = result.body;
     if (!result.ok) {
         body["status"] = "error";
@@ -364,9 +388,11 @@ void AiController::health(const drogon::HttpRequestPtr& req,
 
     Json::Value payload;
     const auto result = AiServiceClient::instance().health();
-    payload["configured"] = envBool("AIDS_AI_ENABLED", true);
-    payload["provider"] = envOrDefault("AIDS_AI_PROVIDER", "nvidia_nim");
-    payload["model"] = envOrDefault("AIDS_AI_MODEL", envOrDefault("NVIDIA_NIM_MODEL", ""));
+    payload["configured"] = envBool("DOKSCP_AI_ENABLED", true);
+    payload["provider"] = envOrDefault("DOKSCP_AI_PROVIDER", "nvidia_nim");
+    payload["model"] = result.body.isObject() && result.body.isMember("model")
+        ? result.body["model"].asString()
+        : envOrDefault("DOKSCP_AI_MODEL", envOrDefault("NVIDIA_NIM_FAST_MODEL", envOrDefault("NVIDIA_NIM_MODEL", "")));
     payload["service_ok"] = result.ok;
     payload["service"] = result.body;
     if (!result.error.empty()) {
@@ -391,7 +417,9 @@ void AiController::getSettings(const drogon::HttpRequestPtr& req,
         payload["has_nvidia_key"] = envOrDefault("NVIDIA_API_KEY", "").empty() && envOrDefault("NVIDIA_NIM_API_KEY", "").empty()
                                         ? false
                                         : true;
-        payload["has_openai_compatible_key"] = !envOrDefault("OPENAI_COMPATIBLE_API_KEY", "").empty();
+        payload["has_openai_compatible_key"] =
+            payload.isMember("openai_compatible_api_key") && !payload["openai_compatible_api_key"].asString().empty();
+        payload.removeMember("openai_compatible_api_key");
         sendJson(callback, payload);
     } catch (const std::exception& e) {
         spdlog::error("AI settings load failed: {}", e.what());
@@ -417,9 +445,13 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
     const bool enabled = body.isMember("enabled") ? body["enabled"].asBool() : true;
     const std::string model = body.isMember("model") ? body["model"].asString() : "";
     const std::string baseUrl = body.isMember("openai_compatible_base_url") ? body["openai_compatible_base_url"].asString() : "";
+    const bool clearCompatibleKey = body.isMember("clear_openai_compatible_api_key") &&
+                                    body["clear_openai_compatible_api_key"].asBool();
+    const std::string compatibleApiKey =
+        body.isMember("openai_compatible_api_key") ? body["openai_compatible_api_key"].asString() : "";
     const double threshold = body.isMember("confidence_threshold")
                                  ? clampConfidence(body["confidence_threshold"].asDouble())
-                                 : clampConfidence(envDouble("AIDS_AI_CONFIDENCE_THRESHOLD", 0.72));
+                                 : clampConfidence(envDouble("DOKSCP_AI_CONFIDENCE_THRESHOLD", 0.72));
     const int retentionDays = body.isMember("history_retention_days")
                                   ? std::max(1, std::min(3650, body["history_retention_days"].asInt()))
                                   : 90;
@@ -429,11 +461,16 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
         pqxx::work txn(*conn);
         txn.exec_params(
             "INSERT INTO ai_preferences "
-            "(user_id, enabled, provider, model, openai_compatible_base_url, confidence_threshold, history_retention_days) "
-            "VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6, $7) "
+            "(user_id, enabled, provider, model, openai_compatible_base_url, openai_compatible_api_key, "
+            "confidence_threshold, history_retention_days) "
+            "VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7, $8) "
             "ON CONFLICT (user_id) DO UPDATE SET "
             "enabled = EXCLUDED.enabled, provider = EXCLUDED.provider, model = EXCLUDED.model, "
             "openai_compatible_base_url = EXCLUDED.openai_compatible_base_url, "
+            "openai_compatible_api_key = CASE "
+            "WHEN $9 THEN NULL "
+            "WHEN NULLIF($6, '') IS NULL THEN ai_preferences.openai_compatible_api_key "
+            "ELSE EXCLUDED.openai_compatible_api_key END, "
             "confidence_threshold = EXCLUDED.confidence_threshold, history_retention_days = EXCLUDED.history_retention_days, "
             "updated_at = NOW()",
             userId,
@@ -441,13 +478,17 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
             provider,
             model,
             baseUrl,
+            compatibleApiKey,
             threshold,
-            retentionDays);
+            retentionDays,
+            clearCompatibleKey);
         txn.commit();
 
         Json::Value audit;
         audit["provider"] = provider;
         audit["enabled"] = enabled;
+        audit["openai_compatible_key_updated"] = !compatibleApiKey.empty();
+        audit["openai_compatible_key_cleared"] = clearCompatibleKey;
         AuditLogger::recordFromRequest(req, userId, "ai.preferences.updated", "ai_preferences", userId, audit);
 
         Json::Value payload;
@@ -461,19 +502,43 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
 
 void AiController::listModels(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-    if (extractUserId(req).empty()) {
+    const std::string userId = extractUserId(req);
+    if (userId.empty()) {
         sendError(callback, drogon::k401Unauthorized, "Unauthorized");
         return;
     }
 
-    Json::Value payload;
-    const auto result = AiServiceClient::instance().get("/models");
-    payload = result.body;
-    if (!result.ok) {
+    Json::Value payload(Json::objectValue);
+    drogon::HttpStatusCode status = drogon::k200OK;
+    try {
+        auto conn = Database::getInstance().getConnection();
+        pqxx::work txn(*conn);
+        Json::Value prefs = loadPreferences(txn, userId);
+        txn.commit();
+
+        Json::Value request(Json::objectValue);
+        request["provider"] = prefs["provider"];
+        request["model"] = prefs["model"];
+        request["model_mode"] = "fast";
+        Json::Value overrides = providerOverrides(prefs);
+        if (overrides.isObject() && !overrides.empty()) {
+            request["provider_overrides"] = overrides;
+        }
+
+        const auto result = AiServiceClient::instance().postWorkflow("/models", request);
+        payload = result.body;
+        if (!result.ok) {
+            status = drogon::k503ServiceUnavailable;
+            payload["status"] = "error";
+            payload["error"] = result.error.empty() ? "AI model catalog request failed" : result.error;
+        }
+    } catch (const std::exception& e) {
+        status = drogon::k503ServiceUnavailable;
+        spdlog::error("AI model catalog request failed: {}", e.what());
         payload["status"] = "error";
-        payload["error"] = result.error.empty() ? "AI model catalog request failed" : result.error;
+        payload["error"] = "AI model catalog request failed";
     }
-    sendJson(callback, payload, result.ok ? drogon::k200OK : drogon::k503ServiceUnavailable);
+    sendJson(callback, payload, status);
 }
 
 void AiController::chatAgent(const drogon::HttpRequestPtr& req,
@@ -528,7 +593,7 @@ void AiController::chatAgent(const drogon::HttpRequestPtr& req,
         }
 
         Json::Value payload = buildPayload(prefs, body, project, deployment);
-        Json::Value result = runWorkflow("/chat/agent", payload);
+        Json::Value result = runWorkflow("/chat/agent", payload, providerOverrides(prefs));
         const std::string runId = insertAiRun(txn, userId, "agent_chat", payload, result,
                                               result.isMember("error") ? result["error"].asString() : "");
         linkAiRun(txn, runId, projectId, deploymentId);
@@ -658,7 +723,7 @@ void AiController::analyzeProject(const drogon::HttpRequestPtr& req,
             return;
         }
         Json::Value payload = buildPayload(prefs, requestBody(req), project);
-        Json::Value result = runWorkflow("/analyze/project", payload);
+        Json::Value result = runWorkflow("/analyze/project", payload, providerOverrides(prefs));
         const std::string runId = insertAiRun(txn, userId, "project_analysis", payload, result,
                                               result.isMember("error") ? result["error"].asString() : "");
         linkAiRun(txn, runId, projectId, "");
@@ -706,7 +771,7 @@ void AiController::generateDockerfile(const drogon::HttpRequestPtr& req,
             return;
         }
         Json::Value payload = buildPayload(prefs, requestBody(req), project);
-        Json::Value result = runWorkflow("/generate/dockerfile", payload);
+        Json::Value result = runWorkflow("/generate/dockerfile", payload, providerOverrides(prefs));
         const std::string runId = insertAiRun(txn, userId, "dockerfile_generation", payload, result,
                                               result.isMember("error") ? result["error"].asString() : "");
         linkAiRun(txn, runId, projectId, "");
@@ -785,7 +850,7 @@ void AiController::chatProject(const drogon::HttpRequestPtr& req,
 
         Json::Value payload = buildPayload(prefs, body, project);
         payload["session_id"] = sessionId;
-        Json::Value result = runWorkflow("/chat/project", payload);
+        Json::Value result = runWorkflow("/chat/project", payload, providerOverrides(prefs));
         const std::string runId = insertAiRun(txn, userId, "project_chat", payload, result,
                                               result.isMember("error") ? result["error"].asString() : "");
         linkAiRun(txn, runId, projectId, "");
@@ -844,7 +909,7 @@ void AiController::analyzeBuildFailure(const drogon::HttpRequestPtr& req,
         }
         Json::Value project = projectContext(txn, userId, deployment["project_id"].asString());
         Json::Value payload = buildPayload(prefs, requestBody(req), project, deployment);
-        Json::Value result = runWorkflow("/analyze/build-failure", payload);
+        Json::Value result = runWorkflow("/analyze/build-failure", payload, providerOverrides(prefs));
         const std::string runId = insertAiRun(txn, userId, "build_failure_analysis", payload, result,
                                               result.isMember("error") ? result["error"].asString() : "");
         linkAiRun(txn, runId, deployment["project_id"].asString(), deploymentId);
@@ -892,7 +957,7 @@ void AiController::analyzeRuntimeFailure(const drogon::HttpRequestPtr& req,
         }
         Json::Value project = projectContext(txn, userId, deployment["project_id"].asString());
         Json::Value payload = buildPayload(prefs, requestBody(req), project, deployment);
-        Json::Value result = runWorkflow("/analyze/runtime-failure", payload);
+        Json::Value result = runWorkflow("/analyze/runtime-failure", payload, providerOverrides(prefs));
         const std::string runId = insertAiRun(txn, userId, "runtime_troubleshooting", payload, result,
                                               result.isMember("error") ? result["error"].asString() : "");
         linkAiRun(txn, runId, deployment["project_id"].asString(), deploymentId);
@@ -911,4 +976,4 @@ void AiController::analyzeRuntimeFailure(const drogon::HttpRequestPtr& req,
     }
 }
 
-} // namespace aids
+} // namespace dokscp

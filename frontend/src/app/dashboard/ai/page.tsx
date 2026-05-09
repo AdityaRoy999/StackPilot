@@ -8,22 +8,22 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  Code2,
-  Hammer,
+  ClipboardCopy,
+  Clock,
   Loader2,
-  Rocket,
   Send,
   Settings,
-  Sparkles,
   Star,
-  Terminal,
-  Wrench,
   Zap,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import Link from "next/link";
 
 import api from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 type AiMode = "fast" | "thinking";
+type AiProvider = "nvidia_nim" | "openai_compatible";
 type Role = "user" | "assistant" | "system";
 
 interface AiModel {
@@ -44,10 +45,21 @@ interface AiModel {
 }
 
 interface AiModelsResponse {
-  provider: string;
+  provider: AiProvider;
   selected_model: string;
   source: "provider" | "provider_verified" | "fallback" | "fallback_probe_failed";
   models: AiModel[];
+}
+
+interface AiSettingsResponse {
+  enabled: boolean;
+  provider: AiProvider;
+  model?: string;
+  openai_compatible_base_url?: string;
+  has_nvidia_key?: boolean;
+  has_openai_compatible_key?: boolean;
+  confidence_threshold?: number;
+  history_retention_days?: number;
 }
 
 interface AiResponse {
@@ -91,31 +103,31 @@ interface ChatMessage {
 const commands = [
   {
     name: "/diagnose",
-    icon: Wrench,
+    icon: Star,
     usage: "/diagnose <deployment-id>",
     description: "Analyze failed builds or runtime health using logs and deployment context.",
   },
   {
     name: "/build",
-    icon: Hammer,
+    icon: Star,
     usage: "/build <deployment-id>",
     description: "Queue a real deployment build in the platform worker.",
   },
   {
     name: "/deploy",
-    icon: Rocket,
+    icon: Star,
     usage: "/deploy <deployment-id> [port]",
     description: "Deploy an already built image to Kubernetes with safe defaults.",
   },
   {
     name: "/dockerfile",
-    icon: Code2,
+    icon: Star,
     usage: "/dockerfile <project-id>",
     description: "Generate a Dockerfile plan for scripts, apps, and unknown project types.",
   },
   {
     name: "/analyze",
-    icon: Sparkles,
+    icon: Star,
     usage: "/analyze <project-id>",
     description: "Classify a project and infer runtime, entrypoint, framework, and port.",
   },
@@ -127,7 +139,7 @@ const starterMessages: ChatMessage[] = [
     role: "assistant",
     content:
       "I can reason about deployments and run real platform actions. Try /diagnose with a failed deployment, /build to queue a build, /deploy to launch Kubernetes, or ask a normal question.",
-    meta: "AIDS Agent",
+    meta: "DOKSCP Agent",
   },
 ];
 
@@ -135,6 +147,10 @@ const defaultModels: AiModel[] = [
   { id: "meta/llama-3.1-8b-instruct", label: "meta/llama-3.1-8b-instruct", mode: "fast" },
   { id: "meta/llama-3.1-70b-instruct", label: "meta/llama-3.1-70b-instruct", mode: "thinking" },
 ];
+
+function FilledStarIcon({ className }: { className?: string }) {
+  return <Star className={className} fill="currentColor" strokeWidth={2.4} />;
+}
 
 function shortId(id?: string, size = 8) {
   if (!id) return "-";
@@ -161,25 +177,109 @@ function formatAiOutput(result: AiResponse) {
   const dockerfile = output.dockerfile;
 
   if (typeof rootCause === "string" && rootCause.trim()) {
-    lines.push(`\nRoot cause: ${rootCause}`);
+    lines.push(`\n**Root cause:** ${rootCause}`);
   }
   if (Array.isArray(steps) && steps.length > 0) {
-    lines.push("\nNext steps:");
+    lines.push("\n**Next steps:**");
     steps.slice(0, 6).forEach((step, index) => {
       lines.push(`${index + 1}. ${typeof step === "string" ? step : JSON.stringify(step)}`);
     });
   }
   if (typeof dockerfile === "string" && dockerfile.trim()) {
-    lines.push(`\nDockerfile:\n\`\`\`dockerfile\n${dockerfile.trim()}\n\`\`\``);
+    lines.push(`\n**Generated Dockerfile:**\n\`\`\`dockerfile\n${dockerfile.trim()}\n\`\`\``);
   }
   if (result.warnings?.length) {
-    lines.push("\nWarnings:");
+    lines.push("\n**Warnings:**");
     result.warnings.slice(0, 4).forEach((warning) => {
       lines.push(`- ${warning}`);
     });
   }
   return lines.join("\n");
 }
+
+function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLElement>) {
+  const [copied, setCopied] = useState(false);
+  const isInline = !className;
+  const match = /language-(\w+)/.exec(className || "");
+  const lang = match ? match[1] : "";
+  const code = String(children).replace(/\n$/, "");
+
+  if (isInline) {
+    return (
+      <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono text-foreground" {...props}>
+        {children}
+      </code>
+    );
+  }
+
+  return (
+    <div className="group relative my-2 rounded-lg border border-border bg-muted/50 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-border bg-muted/80 px-3 py-1.5">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          {lang || "code"}
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard.writeText(code);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+          }}
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+        >
+          {copied ? <Check className="h-3 w-3" /> : <ClipboardCopy className="h-3 w-3" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3 text-xs leading-relaxed">
+        <code className={className} {...props}>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
+const markdownComponents = {
+  code: CodeBlock,
+  p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
+    <p className="mb-2 last:mb-0" {...props}>{children}</p>
+  ),
+  ol: ({ children, ...props }: React.OlHTMLAttributes<HTMLOListElement>) => (
+    <ol className="mb-2 ml-4 list-decimal space-y-1 last:mb-0" {...props}>{children}</ol>
+  ),
+  ul: ({ children, ...props }: React.HTMLAttributes<HTMLUListElement>) => (
+    <ul className="mb-2 ml-4 list-disc space-y-1 last:mb-0" {...props}>{children}</ul>
+  ),
+  li: ({ children, ...props }: React.LiHTMLAttributes<HTMLLIElement>) => (
+    <li className="text-sm" {...props}>{children}</li>
+  ),
+  strong: ({ children, ...props }: React.HTMLAttributes<HTMLElement>) => (
+    <strong className="font-semibold text-foreground" {...props}>{children}</strong>
+  ),
+  h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h3 className="mb-2 mt-3 text-base font-semibold first:mt-0" {...props}>{children}</h3>
+  ),
+  h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h4 className="mb-1.5 mt-2.5 text-sm font-semibold first:mt-0" {...props}>{children}</h4>
+  ),
+  h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h5 className="mb-1 mt-2 text-sm font-medium first:mt-0" {...props}>{children}</h5>
+  ),
+  blockquote: ({ children, ...props }: React.BlockquoteHTMLAttributes<HTMLQuoteElement>) => (
+    <blockquote className="border-l-2 border-primary/40 pl-3 italic text-muted-foreground" {...props}>{children}</blockquote>
+  ),
+  table: ({ children, ...props }: React.TableHTMLAttributes<HTMLTableElement>) => (
+    <div className="my-2 overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm" {...props}>{children}</table>
+    </div>
+  ),
+  th: ({ children, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) => (
+    <th className="border-b border-border bg-muted/50 px-3 py-1.5 text-left text-xs font-medium" {...props}>{children}</th>
+  ),
+  td: ({ children, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) => (
+    <td className="border-b border-border px-3 py-1.5" {...props}>{children}</td>
+  ),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+} as any;
 
 function modelLabel(model?: AiModel) {
   return model?.label || model?.id || "Select model";
@@ -213,12 +313,34 @@ export default function AiAgentPage() {
   const [showCommands, setShowCommands] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [composerModelOpen, setComposerModelOpen] = useState(false);
+  const [commandPickerOpen, setCommandPickerOpen] = useState(false);
   const [settingsModelOpen, setSettingsModelOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
   const [deploymentOpen, setDeploymentOpen] = useState(false);
-  const [agentAccessMode, setAgentAccessMode] = useState<"ask" | "auto_review" | "full_access">("ask");
-  const [remoteTerminalPermission, setRemoteTerminalPermission] = useState<"ask" | "allow">("ask");
+  const [provider, setProvider] = useState<AiProvider>("nvidia_nim");
+  const [compatibleBaseUrl, setCompatibleBaseUrl] = useState("");
+  const [compatibleApiKey, setCompatibleApiKey] = useState("");
+  const [compatibleModel, setCompatibleModel] = useState("");
+  const [agentAccessMode, setAgentAccessMode] = useState<"ask" | "auto_review" | "full_access">(() => {
+    if (typeof window === "undefined") return "ask";
+    const saved = window.localStorage.getItem("ai-agent-access-mode");
+    return saved === "ask" || saved === "auto_review" || saved === "full_access" ? saved : "ask";
+  });
+  const [remoteTerminalPermission, setRemoteTerminalPermission] = useState<"ask" | "allow">(() => {
+    if (typeof window === "undefined") return "ask";
+    const saved = window.localStorage.getItem("ai-agent-remote-terminal");
+    return saved === "ask" || saved === "allow" ? saved : "ask";
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
+  const settingsHydratedRef = useRef(false);
+
+  const settingsQuery = useQuery({
+    queryKey: ["ai-settings"],
+    queryFn: async () => {
+      const res = await api.get("/ai/settings");
+      return res.data as AiSettingsResponse;
+    },
+  });
 
   const modelsQuery = useQuery({
     queryKey: ["ai-models"],
@@ -246,7 +368,22 @@ export default function AiAgentPage() {
   });
 
   const discoveredModels = arrayFromResponse<AiModel>(modelsQuery.data?.models, []);
-  const availableModels = discoveredModels.length > 0 ? discoveredModels : defaultModels;
+  const providerFallbackModels: AiModel[] =
+    provider === "openai_compatible"
+      ? [
+          {
+            id: compatibleModel || selectedModel || "gpt-4o-mini",
+            label: compatibleModel || selectedModel || "gpt-4o-mini",
+            mode: "fast",
+          },
+          {
+            id: compatibleModel || selectedModel || "gpt-4o",
+            label: compatibleModel || selectedModel || "gpt-4o",
+            mode: "thinking",
+          },
+        ]
+      : defaultModels;
+  const availableModels = discoveredModels.length > 0 ? discoveredModels : providerFallbackModels;
   const projects = arrayFromResponse<Project>(projectsQuery.data);
   const deployments = arrayFromResponse<Deployment>(deploymentsQuery.data);
   const fastModels = availableModels.filter((model) => modelMode(model) === "fast");
@@ -273,13 +410,37 @@ export default function AiAgentPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (settingsHydratedRef.current || !settingsQuery.data) return;
+    settingsHydratedRef.current = true;
+    const handle = window.setTimeout(() => {
+      setProvider(settingsQuery.data?.provider || "nvidia_nim");
+      setCompatibleBaseUrl(settingsQuery.data?.openai_compatible_base_url || "");
+      setCompatibleModel(settingsQuery.data?.model || "");
+      if (settingsQuery.data?.model) {
+        setSelectedModel(settingsQuery.data.model);
+      }
+    }, 0);
+    return () => window.clearTimeout(handle);
+  }, [settingsQuery.data]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("ai-agent-access-mode", agentAccessMode);
+    window.localStorage.setItem("ai-agent-remote-terminal", remoteTerminalPermission);
+  }, [agentAccessMode, remoteTerminalPermission]);
+
   const chooseModel = (model: AiModel) => {
     setSelectedModel(model.id);
     setMode(modelMode(model));
+    if (provider === "openai_compatible") {
+      setCompatibleModel(model.id);
+    }
   };
 
   const closePickers = () => {
     setComposerModelOpen(false);
+    setCommandPickerOpen(false);
     setSettingsModelOpen(false);
     setProjectOpen(false);
     setDeploymentOpen(false);
@@ -350,7 +511,7 @@ export default function AiAgentPage() {
         if (!targetDeploymentId) throw new Error("Usage: /deploy <deployment-id> [port]");
         const port = Number.parseInt(secondArg || "3000", 10) || 3000;
         const res = await api.post(`/deployments/${targetDeploymentId}/kubernetes/deploy`, {
-          namespace: "aids-apps",
+          namespace: "dokscp-apps",
           exposure_mode: "ingress",
           replicas: 1,
           container_port: port,
@@ -475,10 +636,10 @@ export default function AiAgentPage() {
       }
       const triggerRes = await api.post(`/deployments/${deploymentId}/trigger`);
       return {
-        title: "Autonomous deploy started",
-        body:
-          `I created deployment ${shortId(deploymentId)} for ${project.name} and queued the build.\n\n` +
-          "During the build, the worker will inspect the source tree. If no Dockerfile exists, it will ask AI to generate one from the actual files, then fall back to the deterministic generator if AI is unavailable.\n\n" +
+          title: "Autonomous deploy started",
+          body:
+            `I created deployment ${shortId(deploymentId)} for ${project.name} and queued the build.\n\n` +
+          "During the build, the worker will inspect the source tree and use deterministic generators first. If no deterministic generator can classify the project, AI scans the actual files and creates the Dockerfile fallback.\n\n" +
           `${triggerRes.data?.message || "Build queued."}`,
       };
     },
@@ -492,6 +653,27 @@ export default function AiAgentPage() {
         content: error instanceof Error ? error.message : errorMessage(error, "Autonomous deploy failed."),
         meta: "Agent action error",
       });
+    },
+  });
+
+  const saveSettingsMutation = useMutation({
+    mutationFn: async () => {
+      const payload: Record<string, unknown> = {
+        enabled: true,
+        provider,
+        model: provider === "openai_compatible" ? compatibleModel || selectedModel : activeModelId,
+        openai_compatible_base_url: compatibleBaseUrl.trim(),
+      };
+      if (compatibleApiKey.trim()) {
+        payload.openai_compatible_api_key = compatibleApiKey.trim();
+      }
+      const res = await api.put("/ai/settings", payload);
+      return res.data as { success?: boolean };
+    },
+    onSuccess: () => {
+      setCompatibleApiKey("");
+      settingsQuery.refetch();
+      modelsQuery.refetch();
     },
   });
 
@@ -526,6 +708,21 @@ export default function AiAgentPage() {
     setShowCommands(false);
   };
 
+  const commandDraft = (name: (typeof commands)[number]["name"]) => {
+    if (name === "/diagnose") return selectedDeploymentId ? `/diagnose ${selectedDeploymentId}` : "/diagnose ";
+    if (name === "/build") return selectedDeploymentId ? `/build ${selectedDeploymentId}` : "/build ";
+    if (name === "/deploy") return selectedDeploymentId ? `/deploy ${selectedDeploymentId} ` : "/deploy ";
+    if (name === "/dockerfile") return selectedProjectId ? `/dockerfile ${selectedProjectId}` : "/dockerfile ";
+    if (name === "/analyze") return selectedProjectId ? `/analyze ${selectedProjectId}` : "/analyze ";
+    return `${name} `;
+  };
+
+  const chooseCommand = (name: (typeof commands)[number]["name"]) => {
+    setInput(commandDraft(name));
+    setShowCommands(false);
+    setCommandPickerOpen(false);
+  };
+
   const renderModelButtons = (items: AiModel[], onAfterSelect?: () => void) =>
     items.length === 0 ? (
       <div className="px-2 py-2 text-sm text-muted-foreground">No models available</div>
@@ -556,13 +753,33 @@ export default function AiAgentPage() {
     </div>
   );
 
+  const renderCommandPicker = () => (
+    <div className="max-h-80 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-xl ring-1 ring-foreground/10">
+      <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Agent commands</div>
+      {commands.map((command) => (
+        <button
+          key={command.name}
+          type="button"
+          onClick={() => chooseCommand(command.name)}
+          className="flex w-full items-start gap-3 rounded-md px-2 py-2 text-left outline-none hover:bg-accent hover:text-accent-foreground"
+        >
+          <FilledStarIcon className="mt-0.5 h-4 w-4 text-primary" />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium">{command.usage}</span>
+            <span className="block text-xs text-muted-foreground">{command.description}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <>
-      <div className="flex h-[calc(100dvh-8rem)] min-h-[42rem] flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground">
+      <div className="flex h-[calc(100dvh-8rem)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground">
         <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Star className="h-5 w-5 text-primary" />
+              <FilledStarIcon className="h-5 w-5 text-primary" />
               <h1 className="font-semibold">Agent Playground</h1>
               <Badge variant="outline">{mode === "thinking" ? "thinking" : "fast"}</Badge>
             </div>
@@ -578,6 +795,12 @@ export default function AiAgentPage() {
             <Badge variant="outline" className="hidden max-w-52 truncate md:inline-flex">
               {shortId(activeModelId, 16)}
             </Badge>
+            <Link href="/dashboard/ai/history">
+              <Button type="button" variant="ghost" size="sm" className="hidden sm:inline-flex">
+                <Clock className="h-4 w-4" />
+                History
+              </Button>
+            </Link>
             <Button
               type="button"
               variant="ghost"
@@ -618,7 +841,15 @@ export default function AiAgentPage() {
                       {message.meta}
                     </div>
                   )}
-                  <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-relaxed">{message.content}</pre>
+                  {message.role === "user" ? (
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</p>
+                  ) : (
+                    <div className="prose-ai text-sm leading-relaxed">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -631,7 +862,7 @@ export default function AiAgentPage() {
           </div>
         </div>
 
-        <div className="shrink-0 border-t border-border p-4">
+        <div className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-card p-4">
           <div className="mx-auto max-w-4xl">
             {diagnoseDeploymentPickerOpen && (
               <div className="mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl">
@@ -665,9 +896,7 @@ export default function AiAgentPage() {
 
             {showCommands && !diagnoseDeploymentPickerOpen && filteredCommands.length > 0 && (
               <div className="mb-2 overflow-hidden rounded-xl border border-border bg-popover shadow-xl">
-                {filteredCommands.map((command) => {
-                  const Icon = command.icon;
-                  return (
+                {filteredCommands.map((command) => (
                     <button
                       key={command.name}
                       type="button"
@@ -677,14 +906,13 @@ export default function AiAgentPage() {
                         setShowCommands(false);
                       }}
                     >
-                      <Icon className="mt-0.5 h-4 w-4 text-primary" />
+                      <FilledStarIcon className="mt-0.5 h-4 w-4 text-primary" />
                       <span>
                         <span className="block text-sm font-medium">{command.usage}</span>
                         <span className="text-xs text-muted-foreground">{command.description}</span>
                       </span>
                     </button>
-                  );
-                })}
+                ))}
               </div>
             )}
 
@@ -732,30 +960,29 @@ export default function AiAgentPage() {
                     )}
                   </div>
 
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setInput("/diagnose ");
-                      setShowCommands(false);
-                    }}
-                  >
-                    <Terminal className="h-4 w-4" />
-                    Diagnose
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setInput("/build ")}>
-                    <Hammer className="h-4 w-4" />
-                    Build
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setInput("/deploy ")}>
-                    <Rocket className="h-4 w-4" />
-                    Deploy
-                  </Button>
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setInput("/dockerfile ")}>
-                    <Code2 className="h-4 w-4" />
-                    Dockerfile
-                  </Button>
+                  <div className="relative">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setCommandPickerOpen((open) => !open);
+                        setComposerModelOpen(false);
+                        setSettingsModelOpen(false);
+                        setProjectOpen(false);
+                        setDeploymentOpen(false);
+                      }}
+                    >
+                      <FilledStarIcon className="h-4 w-4" />
+                      Commands
+                      <ChevronDown className="ml-1 h-3.5 w-3.5" />
+                    </Button>
+                    {commandPickerOpen && (
+                      <div className="absolute bottom-full left-0 z-50 mb-2 w-96 max-w-[calc(100vw-3rem)]">
+                        {renderCommandPicker()}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <Button type="button" onClick={submit} disabled={!input.trim() || isRunning}>
                   {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
@@ -778,13 +1005,13 @@ export default function AiAgentPage() {
           if (!open) closePickers();
         }}
       >
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Agent Settings</DialogTitle>
-            <DialogDescription>Configure model, reasoning mode, project context, and deployment context.</DialogDescription>
+            <DialogDescription>Configure provider keys, model, reasoning mode, project context, and deployment context.</DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-5">
+          <div className="grid gap-3">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Mode</Label>
@@ -816,11 +1043,91 @@ export default function AiAgentPage() {
 
               <div className="space-y-2">
                 <Label>Provider</Label>
-                <div className="flex h-10 items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 text-sm">
-                  <Badge variant="outline">{modelsQuery.data?.provider || "nvidia_nim"}</Badge>
-                  <Badge variant="outline">{modelsQuery.data?.source || "loading"}</Badge>
+                <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-muted/30 p-1">
+                  <Button
+                    type="button"
+                    variant={provider === "nvidia_nim" ? "default" : "ghost"}
+                    onClick={() => setProvider("nvidia_nim")}
+                  >
+                    NVIDIA
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={provider === "openai_compatible" ? "default" : "ghost"}
+                    onClick={() => setProvider("openai_compatible")}
+                  >
+                    Compatible
+                  </Button>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{modelsQuery.data?.provider || provider}</Badge>
+                <Badge variant="outline">{modelsQuery.data?.source || "loading"}</Badge>
+                <Badge variant={settingsQuery.data?.has_nvidia_key ? "default" : "outline"}>
+                  NVIDIA {settingsQuery.data?.has_nvidia_key ? "key detected" : "env key missing"}
+                </Badge>
+                {provider === "openai_compatible" && (
+                  <Badge variant={settingsQuery.data?.has_openai_compatible_key ? "default" : "outline"}>
+                    Compatible {settingsQuery.data?.has_openai_compatible_key ? "key saved" : "key not saved"}
+                  </Badge>
+                )}
+              </div>
+
+              {provider === "openai_compatible" && (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>OpenAI-compatible base URL</Label>
+                    <Input
+                      value={compatibleBaseUrl}
+                      onChange={(event) => setCompatibleBaseUrl(event.target.value)}
+                      placeholder="https://api.openai.com/v1 or provider /v1 endpoint"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Model ID</Label>
+                    <Input
+                      value={compatibleModel}
+                      onChange={(event) => {
+                        setCompatibleModel(event.target.value);
+                        setSelectedModel(event.target.value);
+                      }}
+                      placeholder="gpt-4o-mini, claude..., gemini..."
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>API key</Label>
+                    <Input
+                      type="password"
+                      value={compatibleApiKey}
+                      onChange={(event) => setCompatibleApiKey(event.target.value)}
+                      placeholder={
+                        settingsQuery.data?.has_openai_compatible_key
+                          ? "Leave blank to keep saved key"
+                          : "Paste API key"
+                      }
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  onClick={() => saveSettingsMutation.mutate()}
+                  disabled={saveSettingsMutation.isPending}
+                >
+                  {saveSettingsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  Save AI settings
+                </Button>
+              </div>
+              {saveSettingsMutation.isError && (
+                <p className="text-xs text-destructive">
+                  {errorMessage(saveSettingsMutation.error, "Failed to save AI settings.")}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -956,15 +1263,15 @@ export default function AiAgentPage() {
               </div>
             </div>
 
-            <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+            <div className="rounded-lg border border-border bg-muted/30 p-2.5 text-xs text-muted-foreground">
               Fast mode is for low-latency chat and simple commands. Thinking mode is for diagnosis, Dockerfile planning, and safer deployment reasoning.
             </div>
 
-            <div className="space-y-3 rounded-lg border border-border p-3">
+            <div className="space-y-2 rounded-lg border border-border p-3">
               <div>
                 <Label>Agent Permissions</Label>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  These permissions are sent with agent context so deployment workflows can decide when to ask before doing real work.
+                  These permissions are persisted locally, sent with agent context, and used to gate natural-language deploy actions.
                 </p>
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
@@ -1006,6 +1313,11 @@ export default function AiAgentPage() {
                   Allow remote terminal
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">
+                {agentAccessMode === "full_access"
+                  ? "Full access lets natural-language deploy requests create deployments and queue builds."
+                  : "Ask first and Auto review prepare the action plan, then require your explicit approval before real deploy work."}
+              </p>
             </div>
           </div>
         </DialogContent>

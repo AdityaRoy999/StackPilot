@@ -13,7 +13,7 @@ ALTER TABLE deployments
 ALTER TABLE projects
     DROP CONSTRAINT IF EXISTS projects_source_type_check,
     ADD CONSTRAINT projects_source_type_check
-        CHECK (source_type IN ('github', 'ssh', 'local'));
+        CHECK (source_type IN ('github', 'ssh', 'local', 'artifact'));
 
 ALTER TABLE projects
     DROP CONSTRAINT IF EXISTS projects_execution_mode_check,

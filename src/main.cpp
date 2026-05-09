@@ -24,9 +24,11 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -90,8 +92,113 @@ bool startsWith(const std::string& value, const std::string& prefix) {
     return value.rfind(prefix, 0) == 0;
 }
 
+std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(c);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+std::string runCommandCapture(const std::string& command) {
+    std::string output;
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        return output;
+    }
+    char buffer[512];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+    pclose(pipe);
+    return output;
+}
+
+std::string portFromDockerPortOutput(const std::string& output) {
+    std::istringstream stream(output);
+    std::string line;
+    while (std::getline(stream, line)) {
+        line = trim(line);
+        if (line.empty()) {
+            continue;
+        }
+        const auto colon = line.rfind(':');
+        return colon == std::string::npos ? line : line.substr(colon + 1);
+    }
+    return "";
+}
+
+void reconcileLocalDockerRuntimeUrls() {
+    try {
+        auto conn = dokscp::Database::getInstance().getConnection();
+        pqxx::work txn(*conn);
+        auto rows = txn.exec(
+            "SELECT id, remote_container_name, runtime_url "
+            "FROM deployments "
+            "WHERE status = 'running' "
+            "AND runtime_provider = 'local_docker' "
+            "AND COALESCE(remote_container_name, '') <> ''"
+        );
+        for (const auto& row : rows) {
+            const std::string deploymentId = row["id"].as<std::string>();
+            const std::string containerName = row["remote_container_name"].as<std::string>();
+            const std::string currentUrl = row["runtime_url"].is_null() ? "" : row["runtime_url"].as<std::string>();
+            const std::string running = trim(runCommandCapture(
+                "docker inspect --format '{{.State.Running}}' " + shellQuote(containerName) + " 2>/dev/null"
+            ));
+            if (running != "true") {
+                txn.exec_params(
+                    "UPDATE deployments "
+                    "SET status = 'built', runtime_url = '', "
+                    "logs = COALESCE(logs, '') || E'Local Docker runtime was not found during backend startup reconciliation. Rebuild or start the runtime again.\\n', "
+                    "updated_at = NOW() "
+                    "WHERE id = $1",
+                    deploymentId
+                );
+                continue;
+            }
+
+            std::string port = portFromDockerPortOutput(runCommandCapture(
+                "docker port " + shellQuote(containerName) + " 3000/tcp 2>/dev/null"
+            ));
+            if (port.empty()) {
+                port = portFromDockerPortOutput(runCommandCapture(
+                    "docker port " + shellQuote(containerName) + " 2>/dev/null"
+                ));
+            }
+            if (port.empty()) {
+                continue;
+            }
+            const std::string nextUrl = "http://localhost:" + port;
+            if (nextUrl != currentUrl) {
+                txn.exec_params(
+                    "UPDATE deployments "
+                    "SET runtime_url = $2, "
+                    "runtime_snapshot = jsonb_set(COALESCE(runtime_snapshot, '{}'::jsonb), '{runtime_url}', to_jsonb($2::text), true), "
+                    "logs = COALESCE(logs, '') || $3 || E'\\n', updated_at = NOW() "
+                    "WHERE id = $1",
+                    deploymentId,
+                    nextUrl,
+                    "Local Docker runtime URL reconciled after backend restart: " + nextUrl
+                );
+            }
+        }
+        txn.commit();
+        if (!rows.empty()) {
+            spdlog::info("Reconciled {} local Docker runtime deployment(s)", rows.size());
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("Local Docker runtime reconciliation skipped: {}", e.what());
+    }
+}
+
 bool isProductionEnv() {
-    const std::string env = getEnvOrDefault("AIDS_ENV", getEnvOrDefault("NODE_ENV", "development"));
+    const std::string env = getEnvOrDefault("DOKSCP_ENV", getEnvOrDefault("NODE_ENV", "development"));
     return env == "production";
 }
 
@@ -127,8 +234,13 @@ bool hasAuthCookie(const drogon::HttpRequestPtr& req) {
 }
 
 bool hasCsrfHeader(const drogon::HttpRequestPtr& req) {
-    const std::string header = req->getHeader("X-AIDS-CSRF");
-    return header == "1" || header == "true";
+    const std::string header = req->getHeader("X-DOKSCP-CSRF");
+    const std::string mcpHeader = req->getHeader("X-DOKSCP-MCP");
+    return header == "1" || header == "true" || mcpHeader == "1" || mcpHeader == "true";
+}
+
+bool isTrustedWebhookPath(const drogon::HttpRequestPtr& req) {
+    return req->path() == "/api/v1/github/webhooks";
 }
 
 bool isTrustedBrowserOrigin(const drogon::HttpRequestPtr& req,
@@ -220,7 +332,7 @@ void validateProductionConfiguration(const std::string& jwtSecret,
         tokenKey.find("local-development") != std::string::npos) {
         errors.push_back("JWT_SECRET and TOKEN_ENCRYPTION_KEY must be replaced with high-entropy production secrets");
     }
-    if (getEnvOrDefault("DB_PASSWORD", "").find("aids_secret") != std::string::npos) {
+    if (getEnvOrDefault("DB_PASSWORD", "").find("dokscp_secret") != std::string::npos) {
         errors.push_back("DB_PASSWORD must be changed from the local default in production");
     }
 
@@ -248,7 +360,7 @@ int main() {
     // ─── Step 1: Setup logging ──────────────────────────────
     // spdlog is a fast C++ logging library
     // "info" level means we see INFO, WARN, ERROR (not DEBUG)
-    auto console = spdlog::stdout_color_mt("aids");
+    auto console = spdlog::stdout_color_mt("dokscp");
     spdlog::set_default_logger(console);
     spdlog::set_level(spdlog::level::info);
     const std::string frontendPublicUrl = getEnvOrDefault("FRONTEND_PUBLIC_URL", "http://localhost:3000");
@@ -269,19 +381,19 @@ int main() {
         return 1;
     }
     spdlog::info("===========================================");
-    spdlog::info("  AIDS Platform — Starting up...");
+    spdlog::info("  DOKSCP Platform — Starting up...");
     spdlog::info("===========================================");
 
     // ─── Step 2: Initialize database connection ─────────────
     // We connect to PostgreSQL before starting the HTTP server
     // so that all controllers can use the DB immediately
     try {
-        auto& db = aids::Database::getInstance();
+        auto& db = dokscp::Database::getInstance();
         db.initialize(
             getEnvOrDefault("DB_HOST", "localhost"),
             getEnvIntOrDefault("DB_PORT", 5433),
-            getEnvOrDefault("DB_NAME", "aids_platform"),
-            getEnvOrDefault("DB_USER", "aids_admin"),
+            getEnvOrDefault("DB_NAME", "dokscp_platform"),
+            getEnvOrDefault("DB_USER", "dokscp_admin"),
             getEnvOrDefault("DB_PASSWORD", "")
         );
         spdlog::info("Database connection initialized successfully");
@@ -306,6 +418,7 @@ int main() {
         } catch (const std::exception& e) {
             spdlog::warn("Interrupted deployment recovery skipped: {}", e.what());
         }
+        reconcileLocalDockerRuntimeUrls();
         
     } catch (const std::exception& e) {
         spdlog::error("Failed to initialize database: {}", e.what());
@@ -318,7 +431,7 @@ int main() {
     // using the METHOD_LIST macros. You don't need to manually
     // register routes — just define controllers and they work.
 
-    aids::JobQueueService::getInstance().start();
+    dokscp::JobQueueService::getInstance().start();
 
     auto& app = drogon::app();
     const std::vector<std::string> allowedOrigins = splitCsv(
@@ -326,9 +439,9 @@ int main() {
     );
     const std::string backendPublicUrl = getEnvOrDefault("BACKEND_PUBLIC_URL", "http://localhost:8090");
     const bool backendUsesHttps = startsWith(backendPublicUrl, "https://");
-    const bool requireHttps = getEnvBoolOrDefault("AIDS_REQUIRE_HTTPS", isProductionEnv());
-    const bool trustProxyHeaders = getEnvBoolOrDefault("AIDS_TRUST_PROXY_HEADERS", isProductionEnv());
-    const int apiRateLimitPerMinute = getEnvIntOrDefault("AIDS_API_RATE_LIMIT_PER_MINUTE", isProductionEnv() ? 240 : 0);
+    const bool requireHttps = getEnvBoolOrDefault("DOKSCP_REQUIRE_HTTPS", isProductionEnv());
+    const bool trustProxyHeaders = getEnvBoolOrDefault("DOKSCP_TRUST_PROXY_HEADERS", isProductionEnv());
+    const int apiRateLimitPerMinute = getEnvIntOrDefault("DOKSCP_API_RATE_LIMIT_PER_MINUTE", isProductionEnv() ? 240 : 0);
 
     // Load config from file
     app.loadConfigFile("config.json");
@@ -346,7 +459,7 @@ int main() {
                 resp->addHeader("Access-Control-Allow-Origin", corsOrigin);
                 resp->addHeader("Access-Control-Allow-Credentials", "true");
                 resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-AIDS-CSRF");
+                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-DOKSCP-CSRF, X-DOKSCP-MCP, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery");
                 resp->addHeader("Access-Control-Max-Age", "86400");
                 callback(resp);
                 return;
@@ -378,7 +491,7 @@ int main() {
                 }
             }
 
-            if (isMutatingMethod(req->method()) && !hasBearerToken(req) &&
+            if (isMutatingMethod(req->method()) && !isTrustedWebhookPath(req) && !hasBearerToken(req) &&
                 (!isTrustedBrowserOrigin(req, allowedOrigins) || !hasCsrfHeader(req))) {
                 Json::Value err;
                 err["error"] = "Untrusted request origin";
@@ -400,7 +513,7 @@ int main() {
             resp->addHeader("Access-Control-Allow-Origin", chooseCorsOrigin(req, allowedOrigins));
             resp->addHeader("Access-Control-Allow-Credentials", "true");
             resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-AIDS-CSRF");
+            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-DOKSCP-CSRF, X-DOKSCP-MCP, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery");
             resp->addHeader("Vary", "Origin");
             resp->addHeader("X-Content-Type-Options", "nosniff");
             resp->addHeader("X-Frame-Options", "DENY");

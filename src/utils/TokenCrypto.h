@@ -6,7 +6,7 @@
 
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 class TokenCrypto {
 public:
@@ -15,4 +15,4 @@ public:
     static bool isConfigured(const std::string& storedValue);
 };
 
-} // namespace aids
+} // namespace dokscp

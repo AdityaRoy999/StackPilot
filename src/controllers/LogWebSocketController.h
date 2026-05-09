@@ -10,7 +10,7 @@
 #include <set>
 #include <mutex>
 
-namespace aids {
+namespace dokscp {
 
 class LogWebSocketController : public drogon::WebSocketController<LogWebSocketController> {
 public:
@@ -38,4 +38,4 @@ private:
     static std::mutex subscribersMutex_;
 };
 
-} // namespace aids
+} // namespace dokscp

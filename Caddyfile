@@ -2,7 +2,7 @@
 	email {$ACME_EMAIL}
 }
 
-{$AIDS_DOMAIN} {
+{$DOKSCP_DOMAIN} {
 	encode zstd gzip
 
 	header {

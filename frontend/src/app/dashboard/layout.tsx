@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 
 export const metadata: Metadata = {
-  title: "Dashboard | AIDS Platform",
+  title: "Dashboard | DOKSCP Platform",
   description: "Manage your AI-Native deployments.",
 };
 

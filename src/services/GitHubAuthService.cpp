@@ -13,7 +13,7 @@
 #include <memory>
 #include <sstream>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -143,13 +143,33 @@ std::string GitHubAuthService::getCallbackUrl() const {
     return backendBase + "/api/v1/auth/github/callback";
 }
 
+std::string GitHubAuthService::getExplicitOAuthRedirectUrl() const {
+    const std::string explicitOAuthUrl = getEnvOrDefault("GITHUB_OAUTH_REDIRECT_URL");
+    if (!explicitOAuthUrl.empty()) {
+        return explicitOAuthUrl;
+    }
+
+    const std::string forceLegacyRedirect = getEnvOrDefault("GITHUB_FORCE_REDIRECT_URI");
+    if (forceLegacyRedirect == "1" ||
+        forceLegacyRedirect == "true" ||
+        forceLegacyRedirect == "yes" ||
+        forceLegacyRedirect == "on") {
+        return getCallbackUrl();
+    }
+
+    return "";
+}
+
 std::string GitHubAuthService::buildAuthorizationUrl(const std::string& state) const {
+    const std::string explicitRedirectUrl = getExplicitOAuthRedirectUrl();
     std::ostringstream url;
     url << "https://github.com/login/oauth/authorize"
         << "?client_id=" << drogon::utils::urlEncode(getClientId())
-        << "&redirect_uri=" << drogon::utils::urlEncode(getCallbackUrl())
-        << "&scope=" << drogon::utils::urlEncode("read:user user:email read:org repo")
+        << "&scope=" << drogon::utils::urlEncode("read:user user:email read:org repo admin:repo_hook")
         << "&state=" << drogon::utils::urlEncode(state);
+    if (!explicitRedirectUrl.empty()) {
+        url << "&redirect_uri=" << drogon::utils::urlEncode(explicitRedirectUrl);
+    }
     return url.str();
 }
 
@@ -169,13 +189,17 @@ void GitHubAuthService::exchangeCode(const std::string& code,
     auto githubClient = drogon::HttpClient::newHttpClient("https://github.com");
     auto tokenReq = drogon::HttpRequest::newHttpRequest();
     tokenReq->setMethod(drogon::Post);
-    tokenReq->setPath(
+    std::string tokenPath =
         "/login/oauth/access_token?client_id=" + drogon::utils::urlEncode(getClientId()) +
         "&client_secret=" + drogon::utils::urlEncode(getClientSecret()) +
-        "&code=" + drogon::utils::urlEncode(code)
-    );
+        "&code=" + drogon::utils::urlEncode(code);
+    const std::string explicitRedirectUrl = getExplicitOAuthRedirectUrl();
+    if (!explicitRedirectUrl.empty()) {
+        tokenPath += "&redirect_uri=" + drogon::utils::urlEncode(explicitRedirectUrl);
+    }
+    tokenReq->setPath(tokenPath);
     tokenReq->addHeader("Accept", "application/json");
-    tokenReq->addHeader("User-Agent", "AIDS-Platform");
+    tokenReq->addHeader("User-Agent", "DOKSCP-Platform");
 
     githubClient->sendRequest(
         tokenReq,
@@ -209,7 +233,7 @@ void GitHubAuthService::exchangeCode(const std::string& code,
             userReq->setMethod(drogon::Get);
             userReq->setPath("/user");
             userReq->addHeader("Authorization", "Bearer " + accessToken);
-            userReq->addHeader("User-Agent", "AIDS-Platform");
+            userReq->addHeader("User-Agent", "DOKSCP-Platform");
             userReq->addHeader("Accept", "application/vnd.github+json");
 
             apiClient->sendRequest(
@@ -247,7 +271,7 @@ void GitHubAuthService::exchangeCode(const std::string& code,
                     emailsReq->setMethod(drogon::Get);
                     emailsReq->setPath("/user/emails");
                     emailsReq->addHeader("Authorization", "Bearer " + identity->accessToken);
-                    emailsReq->addHeader("User-Agent", "AIDS-Platform");
+                    emailsReq->addHeader("User-Agent", "DOKSCP-Platform");
                     emailsReq->addHeader("Accept", "application/vnd.github+json");
 
                     apiClient->sendRequest(
@@ -276,4 +300,4 @@ void GitHubAuthService::exchangeCode(const std::string& code,
     );
 }
 
-} // namespace aids
+} // namespace dokscp

@@ -16,7 +16,7 @@
 #include <sys/wait.h>
 #include <unordered_set>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -66,6 +66,15 @@ bool envFlag(const char* name, bool fallback) {
     return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
 }
 
+bool looksLikeGitCommitSha(const std::string& value) {
+    if (value.size() < 7 || value.size() > 64) {
+        return false;
+    }
+    return std::all_of(value.begin(), value.end(), [](unsigned char c) {
+        return std::isxdigit(c) != 0;
+    });
+}
+
 bool shouldSkipContextPath(const std::filesystem::path& path) {
     static const std::unordered_set<std::string> skipped = {
         ".git", ".next", ".venv", "venv", "env", "__pycache__", "node_modules",
@@ -91,6 +100,25 @@ bool shouldIncludeExcerpt(const std::filesystem::path& relativePath) {
         return true;
     }
     return ext == ".py" || ext == ".js" || ext == ".ts" || ext == ".tsx";
+}
+
+bool isSafeTarEntryName(const std::string& rawName) {
+    std::string name = rawName;
+    while (!name.empty() && (name.back() == '\r' || name.back() == '\n')) {
+        name.pop_back();
+    }
+    if (name.empty() || name.front() == '/' || name.find('\\') != std::string::npos ||
+        name.find('\0') != std::string::npos) {
+        return false;
+    }
+    std::stringstream stream(name);
+    std::string part;
+    while (std::getline(stream, part, '/')) {
+        if (part.empty() || part == "." || part == "..") {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool isValidDockerfileText(const std::string& dockerfile) {
@@ -462,6 +490,8 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
                                               const std::string& repoUrl,
                                               const std::string& version,
                                               const std::string& githubPat,
+                                              const std::string& branch,
+                                              const std::string& commitSha,
                                               const std::vector<BuildEnvVar>& envVars,
                                               LogCallback onLogLine) const {
     BuildResult result;
@@ -483,14 +513,23 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
     }
     std::filesystem::create_directories(deploymentDir, ec);
 
+    const std::string checkoutCommit = looksLikeGitCommitSha(commitSha) ? commitSha : "";
     {
         std::string line1 = "Starting build for deployment " + deploymentId;
         std::string line2 = "Repository: " + repoUrl;
         std::ofstream logOut(logFile, std::ios::trunc);
         logOut << line1 << "\n" << line2 << "\n\n";
+        if (!branch.empty()) {
+            logOut << "Branch: " << branch << "\n";
+        }
+        if (!checkoutCommit.empty()) {
+            logOut << "Commit: " << checkoutCommit << "\n";
+        }
         if (onLogLine) {
             onLogLine(line1);
             onLogLine(line2);
+            if (!branch.empty()) onLogLine("Branch: " + branch);
+            if (!checkoutCommit.empty()) onLogLine("Commit: " + checkoutCommit);
             onLogLine(""); // Empty line for spacing
         }
     }
@@ -509,6 +548,13 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
     std::filesystem::path askPassPath;
     std::filesystem::path tokenPath;
     std::string credentialPrefix;
+    if (!commitSha.empty() && checkoutCommit.empty()) {
+        appendLogLine(
+            logFile,
+            "Ignoring non-SHA commit selector '" + commitSha + "'. Building the selected branch or default branch instead.",
+            onLogLine
+        );
+    }
     if (!githubPat.empty() && isGitHubHttps) {
         if (!writeGitAskPassFiles(deploymentDir, githubPat, askPassPath, tokenPath)) {
             result.error = "Unable to prepare secure GitHub credentials for clone";
@@ -521,17 +567,13 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
             " GIT_TERMINAL_PROMPT=0 ";
     }
 
+    const std::string branchArg = branch.empty() ? "" : (" --branch " + shellQuote(branch));
     const std::string cloneCmd =
         credentialPrefix +
         "GIT_TERMINAL_PROMPT=0 " +
-        "git -c credential.helper= clone --depth 1 " +
+        "git -c credential.helper= clone --depth 1" + branchArg + " " +
         shellQuote(repoUrl) + " " + shellQuote(sourceDir.string());
     int cloneExit = runCommandCapture(cloneCmd, logFile, true, cloneTimeoutSeconds_, onLogLine);
-    if (!askPassPath.empty()) {
-        std::error_code cleanupEc;
-        std::filesystem::remove(askPassPath, cleanupEc);
-        std::filesystem::remove(tokenPath, cleanupEc);
-    }
     if (cloneExit != 0 && !githubPat.empty() && isGitHubHttps && looksLikeGitHubAuthFailure(readFileBounded(logFile))) {
         appendLogLine(
             logFile,
@@ -541,11 +583,16 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
         std::error_code cleanupEc;
         std::filesystem::remove_all(sourceDir, cleanupEc);
         const std::string publicCloneCmd =
-            "GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone --depth 1 " +
+            "GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone --depth 1" + branchArg + " " +
             shellQuote(repoUrl) + " " + shellQuote(sourceDir.string());
         cloneExit = runCommandCapture(publicCloneCmd, logFile, true, cloneTimeoutSeconds_, onLogLine);
     }
     if (cloneExit != 0) {
+        if (!askPassPath.empty()) {
+            std::error_code cleanupEc;
+            std::filesystem::remove(askPassPath, cleanupEc);
+            std::filesystem::remove(tokenPath, cleanupEc);
+        }
         result.error = "git clone failed";
         appendLogLine(logFile,
                       "git clone failed with exit code " + std::to_string(cloneExit),
@@ -566,6 +613,44 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
         }
         result.logs = readFileBounded(logFile);
         return result;
+    }
+
+    if (!checkoutCommit.empty()) {
+        appendLogLine(logFile, "Checking out commit " + checkoutCommit, onLogLine);
+        std::string checkoutCmd =
+            "GIT_TERMINAL_PROMPT=0 git -C " + shellQuote(sourceDir.string()) +
+            " checkout --detach " + shellQuote(checkoutCommit);
+        int checkoutExit = runCommandCapture(checkoutCmd, logFile, true, cloneTimeoutSeconds_, onLogLine);
+        if (checkoutExit != 0) {
+            appendLogLine(logFile, "Commit was not present in the shallow clone. Fetching exact commit.", onLogLine);
+            const std::string fetchPrefix =
+                (!githubPat.empty() && isGitHubHttps && !askPassPath.empty())
+                    ? ("GIT_ASKPASS=" + shellQuote(askPassPath.string()) + " GIT_TERMINAL_PROMPT=0 ")
+                    : "GIT_TERMINAL_PROMPT=0 ";
+            const std::string fetchCmd =
+                fetchPrefix + "git -C " + shellQuote(sourceDir.string()) +
+                " fetch --depth 1 origin " + shellQuote(checkoutCommit);
+            const int fetchExit = runCommandCapture(fetchCmd, logFile, true, cloneTimeoutSeconds_, onLogLine);
+            if (fetchExit == 0) {
+                checkoutExit = runCommandCapture(checkoutCmd, logFile, true, cloneTimeoutSeconds_, onLogLine);
+            }
+        }
+        if (checkoutExit != 0) {
+            if (!askPassPath.empty()) {
+                std::error_code cleanupEc;
+                std::filesystem::remove(askPassPath, cleanupEc);
+                std::filesystem::remove(tokenPath, cleanupEc);
+            }
+            result.error = "git checkout failed";
+            appendLogLine(logFile, "Unable to checkout requested commit " + checkoutCommit, onLogLine);
+            result.logs = readFileBounded(logFile);
+            return result;
+        }
+    }
+    if (!askPassPath.empty()) {
+        std::error_code cleanupEc;
+        std::filesystem::remove(askPassPath, cleanupEc);
+        std::filesystem::remove(tokenPath, cleanupEc);
     }
 
     return buildFromPreparedSource(deploymentId, sourceDir, logFile, version, envVars, onLogLine);
@@ -672,6 +757,69 @@ BuildResult BuildService::buildFromLocalSource(const std::string& deploymentId,
     return buildFromPreparedSource(deploymentId, sourceDir, logFile, version, envVars, onLogLine);
 }
 
+BuildResult BuildService::buildFromArtifact(const std::string& deploymentId,
+                                            const std::string& artifactPath,
+                                            const std::string& version,
+                                            const std::vector<BuildEnvVar>& envVars,
+                                            LogCallback onLogLine) const {
+    BuildResult result;
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    const fs::path archive = fs::weakly_canonical(artifactPath, ec);
+    if (ec || !fs::exists(archive, ec) || !fs::is_regular_file(archive, ec)) {
+        result.error = "Source artifact is missing or unreadable";
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    const fs::path deploymentDir = workspaceRoot_ / deploymentId;
+    const fs::path sourceDir = deploymentDir / "source";
+    const fs::path logFile = deploymentDir / "build.log";
+    if (fs::exists(deploymentDir, ec)) {
+        fs::remove_all(deploymentDir, ec);
+    }
+    fs::create_directories(sourceDir, ec);
+    if (ec) {
+        result.error = "Unable to create artifact build workspace";
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    {
+        std::ofstream logOut(logFile, std::ios::trunc);
+        logOut << "Starting build for deployment " << deploymentId << "\n"
+               << "Source artifact: " << archive.string() << "\n\n";
+    }
+    if (onLogLine) {
+        onLogLine("Starting build for deployment " + deploymentId);
+        onLogLine("Source artifact: " + archive.string());
+    }
+
+    std::string archiveValidationError;
+    if (!validateTarArchive(archive, archiveValidationError)) {
+        result.error = archiveValidationError;
+        result.logs += "\n" + archiveValidationError + "\n";
+        if (onLogLine) onLogLine(archiveValidationError);
+        return result;
+    }
+
+    const std::string extractCommand =
+        "tar --no-same-owner --no-same-permissions --delay-directory-restore -xf " +
+        shellQuote(archive.string()) + " -C " + shellQuote(sourceDir.string());
+    const int extractExit = runCommandCapture(extractCommand, logFile, true, cloneTimeoutSeconds_, onLogLine);
+    if (extractExit != 0) {
+        result.error = extractExit == 124 ? "Source artifact extraction timed out" : "Source artifact extraction failed";
+        appendLogLine(logFile, result.error, onLogLine);
+        result.logs = readFileBounded(logFile);
+        return result;
+    }
+
+    return buildFromPreparedSource(deploymentId, sourceDir, logFile, version, envVars, onLogLine);
+}
+
 BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymentId,
                                                     const SshConnectionConfig& sshConfig,
                                                     const std::string& remotePath,
@@ -681,8 +829,8 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
                                                     const std::vector<BuildEnvVar>& envVars,
                                                     LogCallback onLogLine) const {
     BuildResult result;
-    const std::string imageName = "aids/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
-    const std::string containerName = "aids-" + sanitizeName(projectName) + "-" + sanitizeName(deploymentId).substr(0, 8);
+    const std::string imageName = "dokscp/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string containerName = "dokscp-" + sanitizeName(projectName) + "-" + sanitizeName(deploymentId).substr(0, 8);
 
     std::vector<std::pair<std::string, std::string>> sshEnvVars;
     for (const auto& envVar : envVars) {
@@ -722,8 +870,8 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     std::istringstream stream(remoteResult.output);
     std::string line;
     while (std::getline(stream, line)) {
-        if (line.rfind("__AIDS_REMOTE_PORT__=", 0) == 0) {
-            publishedPort = line.substr(std::string("__AIDS_REMOTE_PORT__=").size());
+        if (line.rfind("__DOKSCP_REMOTE_PORT__=", 0) == 0) {
+            publishedPort = line.substr(std::string("__DOKSCP_REMOTE_PORT__=").size());
         }
     }
 
@@ -735,12 +883,106 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     return result;
 }
 
+BuildResult BuildService::buildArtifactAndRunOnRemoteDocker(const std::string& deploymentId,
+                                                            const SshConnectionConfig& sshConfig,
+                                                            const std::string& artifactPath,
+                                                            const std::string& remoteWorkspacePath,
+                                                            const std::string& version,
+                                                            const std::string& projectName,
+                                                            int containerPort,
+                                                            const std::vector<BuildEnvVar>& envVars,
+                                                            LogCallback onLogLine) const {
+    BuildResult result;
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    const fs::path archive = fs::weakly_canonical(artifactPath, ec);
+    if (ec || !fs::exists(archive, ec) || !fs::is_regular_file(archive, ec)) {
+        result.error = "Source artifact is missing or unreadable";
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    const std::string safeDeployment = sanitizeName(deploymentId);
+    const std::string baseWorkspace = remoteWorkspacePath.empty() ? "/tmp" : remoteWorkspacePath;
+    const std::string remoteBase = baseWorkspace + "/dokscp-builds/" + safeDeployment;
+    const std::string remoteArchive = remoteBase + "/source.tar";
+    const std::string remoteSourcePath = remoteBase + "/source";
+
+    if (onLogLine) {
+        onLogLine("Starting remote artifact build for deployment " + deploymentId);
+        onLogLine("Remote host: " + sshConfig.username + "@" + sshConfig.host);
+        onLogLine("Preparing remote build workspace: " + remoteBase);
+    }
+
+    std::string archiveValidationError;
+    if (!validateTarArchive(archive, archiveValidationError)) {
+        result.error = archiveValidationError;
+        result.logs += "\n" + archiveValidationError + "\n";
+        if (onLogLine) onLogLine(archiveValidationError);
+        return result;
+    }
+
+    SshService sshService;
+    const std::string prepareCommand =
+        "rm -rf " + shellQuote(remoteBase) + " && mkdir -p " + shellQuote(remoteBase);
+    auto prepareResult = sshService.runRemoteCommand(sshConfig, "/", prepareCommand, 60);
+    if (!prepareResult.success) {
+        result.error = prepareResult.error.empty() ? "Unable to prepare remote build workspace" : prepareResult.error;
+        result.logs = prepareResult.output;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    if (onLogLine) onLogLine("Uploading source artifact to remote host...");
+    auto uploadResult = sshService.uploadFile(
+        sshConfig,
+        archive.string(),
+        remoteArchive,
+        std::max(120, cloneTimeoutSeconds_),
+        onLogLine
+    );
+    if (!uploadResult.success) {
+        result.error = uploadResult.error.empty() ? "Unable to upload source artifact" : uploadResult.error;
+        result.logs = uploadResult.output;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    if (onLogLine) onLogLine("Extracting source artifact on remote host...");
+    const std::string extractCommand =
+        "set -e; mkdir -p " + shellQuote(remoteSourcePath) +
+        " && tar --no-same-owner --no-same-permissions --delay-directory-restore -xf " +
+        shellQuote(remoteArchive) + " -C " + shellQuote(remoteSourcePath) +
+        " && echo __DOKSCP_ARTIFACT_EXTRACTED__";
+    auto extractResult = sshService.runRemoteCommand(sshConfig, "/", extractCommand, 120);
+    if (!extractResult.success || extractResult.output.find("__DOKSCP_ARTIFACT_EXTRACTED__") == std::string::npos) {
+        result.error = extractResult.error.empty() ? "Unable to extract source artifact on remote host" : extractResult.error;
+        result.logs = extractResult.output;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    return buildAndRunOnRemoteDocker(
+        deploymentId,
+        sshConfig,
+        remoteSourcePath,
+        projectName,
+        version,
+        containerPort,
+        envVars,
+        onLogLine
+    );
+}
+
 BuildResult BuildService::buildRepositoryAndRunOnRemoteDocker(const std::string& deploymentId,
                                                               const SshConnectionConfig& sshConfig,
                                                               const std::string& repoUrl,
                                                               const std::string& remoteWorkspacePath,
                                                               const std::string& version,
                                                               const std::string& githubPat,
+                                                              const std::string& branch,
+                                                              const std::string& commitSha,
                                                               const std::string& projectName,
                                                               int containerPort,
                                                               const std::vector<BuildEnvVar>& envVars,
@@ -756,12 +998,14 @@ BuildResult BuildService::buildRepositoryAndRunOnRemoteDocker(const std::string&
 
     const std::string safeDeployment = sanitizeName(deploymentId);
     const std::string baseWorkspace = remoteWorkspacePath.empty() ? "/tmp" : remoteWorkspacePath;
-    const std::string remoteBase = baseWorkspace + "/aids-builds/" + safeDeployment;
+    const std::string remoteBase = baseWorkspace + "/dokscp-builds/" + safeDeployment;
     const std::string remoteSourcePath = remoteBase + "/source";
 
     if (onLogLine) {
         onLogLine("Starting remote repository build for deployment " + deploymentId);
         onLogLine("Repository: " + repoUrl);
+        if (!branch.empty()) onLogLine("Branch: " + branch);
+        if (!commitSha.empty()) onLogLine("Commit: " + commitSha);
         onLogLine("Remote host: " + sshConfig.username + "@" + sshConfig.host);
         onLogLine("Preparing remote build workspace: " + remoteBase);
     }
@@ -788,7 +1032,9 @@ BuildResult BuildService::buildRepositoryAndRunOnRemoteDocker(const std::string&
         repoUrl,
         "source",
         cloneTimeoutSeconds_,
-        githubPat
+        githubPat,
+        branch,
+        commitSha
     );
     if (!cloneResult.output.empty() && onLogLine) {
         std::istringstream stream(cloneResult.output);
@@ -844,7 +1090,7 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         return result;
     }
 
-    const std::string imageName = "aids/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string imageName = "dokscp/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
     const std::string buildCmd = "docker build --pull=false --memory \"" + dockerMemoryLimit_ +
                                  "\" -t \"" + imageName + "\" \"" + sourceDir.string() + "\"";
 
@@ -1079,6 +1325,72 @@ bool BuildService::copyLocalSourceTree(const std::filesystem::path& source,
     return true;
 }
 
+bool BuildService::validateTarArchive(const std::filesystem::path& archivePath,
+                                      std::string& reason) const {
+    if (!std::filesystem::exists(archivePath)) {
+        reason = "Source artifact archive does not exist";
+        return false;
+    }
+
+    const auto tempBase = std::filesystem::temp_directory_path() /
+        ("dokscp-tar-check-" + sanitizeName(archivePath.filename().string()) + "-" + std::to_string(std::rand()));
+    const auto namesFile = tempBase.string() + ".names";
+    const auto verboseFile = tempBase.string() + ".verbose";
+
+    const std::string listCommand =
+        "tar -tf " + shellQuote(archivePath.string()) + " > " + shellQuote(namesFile) + " 2>&1";
+    if (std::system(listCommand.c_str()) != 0) {
+        reason = "Source artifact is not a readable tar archive";
+        std::filesystem::remove(namesFile);
+        return false;
+    }
+
+    {
+        std::ifstream names(namesFile);
+        std::string entry;
+        bool sawEntry = false;
+        while (std::getline(names, entry)) {
+            sawEntry = true;
+            if (!isSafeTarEntryName(entry)) {
+                reason = "Source artifact contains an unsafe path: " + entry;
+                std::filesystem::remove(namesFile);
+                return false;
+            }
+        }
+        if (!sawEntry) {
+            reason = "Source artifact archive is empty";
+            std::filesystem::remove(namesFile);
+            return false;
+        }
+    }
+    std::filesystem::remove(namesFile);
+
+    const std::string verboseCommand =
+        "tar -tvf " + shellQuote(archivePath.string()) + " > " + shellQuote(verboseFile) + " 2>&1";
+    if (std::system(verboseCommand.c_str()) != 0) {
+        reason = "Source artifact metadata could not be inspected";
+        std::filesystem::remove(verboseFile);
+        return false;
+    }
+    {
+        std::ifstream verbose(verboseFile);
+        std::string line;
+        while (std::getline(verbose, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            const char type = line.front();
+            if (type != '-' && type != 'd') {
+                reason = "Source artifact contains unsupported tar entry types such as symlinks, hardlinks, or devices";
+                std::filesystem::remove(verboseFile);
+                return false;
+            }
+        }
+    }
+    std::filesystem::remove(verboseFile);
+    return true;
+}
+
 int BuildService::runCommandCapture(const std::string& command,
                                     const std::filesystem::path& outputFile,
                                     bool append,
@@ -1174,13 +1486,13 @@ bool BuildService::tryGenerateDockerfileWithAi(const std::filesystem::path& sour
                                                const std::filesystem::path& logFile,
                                                std::string& reason,
                                                LogCallback onLogLine) const {
-    if (!envFlag("AIDS_AI_DOCKERFILE_ENABLED", true)) {
+    if (!envFlag("DOKSCP_AI_DOCKERFILE_ENABLED", true)) {
         reason = "AI Dockerfile generation is disabled";
         return false;
     }
 
     Json::Value payload(Json::objectValue);
-    payload["provider"] = std::getenv("AIDS_AI_PROVIDER") ? std::getenv("AIDS_AI_PROVIDER") : "nvidia_nim";
+    payload["provider"] = std::getenv("DOKSCP_AI_PROVIDER") ? std::getenv("DOKSCP_AI_PROVIDER") : "nvidia_nim";
     payload["model_mode"] = "thinking";
     payload["workflow_type"] = "generate_dockerfile";
     payload["project"]["name"] = sourceDir.filename().string();
@@ -1188,7 +1500,15 @@ bool BuildService::tryGenerateDockerfileWithAi(const std::filesystem::path& sour
     payload["message"] =
         "Read the actual project file tree and excerpts, choose the correct entrypoint, and generate a Dockerfile. "
         "If there are multiple Python files, infer the most likely runnable entrypoint from names, imports, and README/package context. "
-        "Prefer a deterministic Dockerfile that runs the app or script without requiring manual edits.";
+        "Prefer a deterministic Dockerfile that runs the app or script without requiring manual edits. "
+        "IMPORTANT: The platform will route traffic to port 3000. Your Dockerfile MUST EXPOSE port 3000 and ensure the app listens on port 3000. "
+        "If using nginx, you MUST include a RUN command to change the default port, e.g., RUN sed -i 's/80/3000/g' /etc/nginx/conf.d/default.conf "
+        "CRITICAL ARCHITECTURE RULE: NEVER copy files individually using multiple COPY commands (e.g., do not write 'COPY index.html ...'). "
+        "You MUST copy the entire directory at once using 'COPY . /usr/share/nginx/html/' (for nginx) or 'COPY . /app/' (for Python/Node). "
+        "This is strictly required to prevent Docker build crashes caused by spaces in individual filenames. "
+        "CRITICAL SECURITY RULE: The platform runs all containers as a non-root user (UID 10001). "
+        "If using nginx, you MUST grant non-root permissions by adding this exact command: "
+        "RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp && chmod -R 777 /var/cache/nginx /var/run /var/log/nginx /etc/nginx";
 
     appendLogLine(logFile, "AI Dockerfile generation: scanning source tree and asking AI for a Dockerfile plan...", onLogLine);
     const auto aiResult = AiServiceClient::instance().postWorkflow("/generate/dockerfile", payload);
@@ -1269,16 +1589,16 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
                 "COPY requirements.txt ./\n"
                 "RUN pip install --no-cache-dir -r requirements.txt\n"
                 "COPY . .\n"
-                "EXPOSE 8000\n"
-                "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(ls app.py main.py *.py 2>/dev/null | head -n1); exec streamlit run ${f:-app.py} --server.address=0.0.0.0 --server.port=8000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen exec uvicorn app:app --host 0.0.0.0 --port 8000; else f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec python \\\"$f\\\"; fi\"]\n";
+                "EXPOSE 3000\n"
+                "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec streamlit run \\\"$f\\\" --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); [ -n \\\"$m\\\" ] || { echo 'No Python module found'; exit 1; }; exec uvicorn \\\"${m}:app\\\" --host 0.0.0.0 --port=3000; else f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec python \\\"$f\\\"; fi\"]\n";
         } else {
             generated =
                 "FROM python:3.12-slim\n"
                 "WORKDIR /app\n"
                 "COPY . .\n"
                 "RUN if [ -f pyproject.toml ]; then pip install --no-cache-dir .; fi\n"
-                "EXPOSE 8000\n"
-                "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(ls app.py main.py *.py 2>/dev/null | head -n1); exec streamlit run ${f:-app.py} --server.address=0.0.0.0 --server.port=8000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen exec uvicorn app:app --host 0.0.0.0 --port 8000; else f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec python \\\"$f\\\"; fi\"]\n";
+                "EXPOSE 3000\n"
+                "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec streamlit run \\\"$f\\\" --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); [ -n \\\"$m\\\" ] || { echo 'No Python module found'; exit 1; }; exec uvicorn \\\"${m}:app\\\" --host 0.0.0.0 --port=3000; else f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec python \\\"$f\\\"; fi\"]\n";
         }
     } else if (hasFile(sourceDir, "go.mod")) {
         generated =
@@ -1291,7 +1611,8 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
             "FROM alpine:3.20\n"
             "WORKDIR /app\n"
             "COPY --from=build /app/server ./server\n"
-            "EXPOSE 8080\n"
+            "ENV PORT=3000\n"
+            "EXPOSE 3000\n"
             "CMD [\"./server\"]\n";
     } else if (hasFile(sourceDir, "CMakeLists.txt")) {
         generated =
@@ -1300,6 +1621,8 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
             "WORKDIR /app\n"
             "COPY . .\n"
             "RUN cmake -S . -B build && cmake --build build --config Release\n"
+            "ENV PORT=3000\n"
+            "EXPOSE 3000\n"
             "CMD [\"/bin/sh\", \"-c\", \"exe=$(find build -maxdepth 4 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No executable found after CMake build'; exit 1; }; exec \\\"$exe\\\"\"]\n";
     } else if (hasFile(sourceDir, "Cargo.toml")) {
         generated =
@@ -1310,7 +1633,8 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
             "FROM debian:bookworm-slim\n"
             "WORKDIR /app\n"
             "COPY --from=build /src/target/release /app/bin\n"
-            "EXPOSE 8080\n"
+            "ENV PORT=3000\n"
+            "EXPOSE 3000\n"
             "CMD [\"/bin/sh\", \"-c\", \"exe=$(find /app/bin -maxdepth 1 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No Rust release binary found'; exit 1; }; exec \\\"$exe\\\"\"]\n";
     } else if (hasFile(sourceDir, "pom.xml") || hasFile(sourceDir, "build.gradle") ||
                hasFile(sourceDir, "build.gradle.kts") || hasFile(sourceDir, "gradlew")) {
@@ -1322,7 +1646,9 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
             "FROM eclipse-temurin:21-jre\n"
             "WORKDIR /app\n"
             "COPY --from=build /src .\n"
-            "EXPOSE 8080\n"
+            "ENV PORT=3000\n"
+            "ENV SERVER_PORT=3000\n"
+            "EXPOSE 3000\n"
             "CMD [\"/bin/sh\", \"-c\", \"jar=$(find . -path '*/target/*.jar' -o -path '*/build/libs/*.jar' | grep -v plain | head -n1); [ -n \\\"$jar\\\" ] || { echo 'No runnable jar found'; exit 1; }; exec java -jar \\\"$jar\\\"\"]\n";
     } else {
         appendLogLine(logFile, "Deterministic generator could not classify this source tree. Trying AI Dockerfile fallback.", onLogLine);
@@ -1345,4 +1671,4 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
     return true;
 }
 
-} // namespace aids
+} // namespace dokscp

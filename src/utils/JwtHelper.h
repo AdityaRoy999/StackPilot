@@ -8,7 +8,7 @@
 #include <string>
 #include <json/json.h>
 
-namespace aids {
+namespace dokscp {
 
 class JwtHelper {
 public:
@@ -17,6 +17,7 @@ public:
     static Json::Value verifyToken(const std::string& token);
     static std::string extractTokenFromRequest(const drogon::HttpRequestPtr& req);
     static Json::Value verifyRequestToken(const drogon::HttpRequestPtr& req);
+    static Json::Value verifyMcpToken(const std::string& token);
     static bool isExpired(const Json::Value& payload);
 
 private:
@@ -28,4 +29,4 @@ private:
     static std::string hmacSha256(const std::string& key, const std::string& data);
 };
 
-} // namespace aids
+} // namespace dokscp

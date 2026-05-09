@@ -12,7 +12,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace aids {
+namespace dokscp {
 namespace {
 
 std::string trim(const std::string& value) {
@@ -113,7 +113,7 @@ std::string EmailService::getFromEmail() {
 }
 
 std::string EmailService::getFromName() {
-    return collapseWhitespace(getEnvOrDefault("SMTP_FROM_NAME", "AIDS Platform"));
+    return collapseWhitespace(getEnvOrDefault("SMTP_FROM_NAME", "DOKSCP Platform"));
 }
 
 bool EmailService::isConfigured() {
@@ -144,11 +144,11 @@ void EmailService::sendPasswordResetOtp(const std::string& toEmail,
     std::ostringstream body;
     body << "From: " << fromName << " <" << fromEmail << ">\r\n"
          << "To: " << (safeName.empty() ? toEmail : safeName + " <" + toEmail + ">") << "\r\n"
-         << "Subject: AIDS password reset code\r\n"
+         << "Subject: DOKSCP password reset code\r\n"
          << "MIME-Version: 1.0\r\n"
          << "Content-Type: text/plain; charset=UTF-8\r\n"
          << "\r\n"
-         << "We received a request to reset your AIDS account password.\r\n"
+         << "We received a request to reset your DOKSCP account password.\r\n"
          << "\r\n"
          << "Your verification code is: " << otpCode << "\r\n"
          << "\r\n"
@@ -193,4 +193,4 @@ void EmailService::sendPasswordResetOtp(const std::string& toEmail,
     }
 }
 
-} // namespace aids
+} // namespace dokscp

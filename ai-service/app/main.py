@@ -14,10 +14,10 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-MAX_TEXT = int(os.getenv("AIDS_AI_MAX_TEXT_BYTES", "24000"))
-DEFAULT_TIMEOUT = float(os.getenv("AIDS_AI_REQUEST_TIMEOUT_SECONDS", "45"))
-MODEL_PROBE_TIMEOUT = float(os.getenv("NVIDIA_NIM_MODEL_PROBE_TIMEOUT_SECONDS", "20"))
-MODEL_PROBE_LIMIT = int(os.getenv("NVIDIA_NIM_MODEL_PROBE_LIMIT", "100"))
+MAX_TEXT = int(os.getenv("DOKSCP_AI_MAX_TEXT_BYTES", "24000"))
+DEFAULT_TIMEOUT = float(os.getenv("DOKSCP_AI_REQUEST_TIMEOUT_SECONDS", "30"))
+MODEL_PROBE_TIMEOUT = float(os.getenv("NVIDIA_NIM_MODEL_PROBE_TIMEOUT_SECONDS", "8"))
+MODEL_PROBE_LIMIT = int(os.getenv("NVIDIA_NIM_MODEL_PROBE_LIMIT", "30"))
 MODEL_PROBE_CACHE_TTL = float(os.getenv("NVIDIA_NIM_MODEL_PROBE_CACHE_SECONDS", "3600"))
 MODEL_PROBE_CACHE: Dict[str, Any] = {"expires_at": 0.0, "models": []}
 
@@ -35,6 +35,7 @@ class AgentRequest(BaseModel):
     source: Dict[str, Any] = Field(default_factory=dict)
     logs: str = ""
     runtime: Dict[str, Any] = Field(default_factory=dict)
+    provider_overrides: Dict[str, Any] = Field(default_factory=dict)
     message: str = ""
     command: str = ""
     model_mode: Literal["fast", "thinking"] = "fast"
@@ -74,7 +75,7 @@ class AgentState(TypedDict, total=False):
     warnings: List[str]
 
 
-app = FastAPI(title="AIDS AI Service", version="0.1.0")
+app = FastAPI(title="DOKSCP AI Service", version="0.1.0")
 
 
 SECRET_PATTERNS = [
@@ -114,16 +115,31 @@ def safe_json(value: Any) -> Any:
     return value
 
 
-def provider_config(provider: Optional[str], model: Optional[str], model_mode: str = "fast") -> tuple[str, str, str, str]:
-    selected = (provider or os.getenv("AIDS_AI_PROVIDER") or "nvidia_nim").strip()
+def provider_config(
+    provider: Optional[str],
+    model: Optional[str],
+    model_mode: str = "fast",
+    overrides: Optional[Dict[str, Any]] = None,
+) -> tuple[str, str, str, str]:
+    overrides = overrides or {}
+    selected = (provider or os.getenv("DOKSCP_AI_PROVIDER") or "nvidia_nim").strip()
     if selected == "openai_compatible":
-        base_url = os.getenv("OPENAI_COMPATIBLE_BASE_URL", "").rstrip("/")
-        api_key = os.getenv("OPENAI_COMPATIBLE_API_KEY", "")
+        base_url = str(
+            overrides.get("base_url")
+            or overrides.get("openai_compatible_base_url")
+            or os.getenv("OPENAI_COMPATIBLE_BASE_URL", "")
+        ).rstrip("/")
+        api_key = str(
+            overrides.get("api_key")
+            or overrides.get("openai_compatible_api_key")
+            or os.getenv("OPENAI_COMPATIBLE_API_KEY", "")
+        )
         selected_model = (
             model
+            or str(overrides.get("model") or "")
             or (os.getenv("OPENAI_COMPATIBLE_THINKING_MODEL") if model_mode == "thinking" else "")
             or os.getenv("OPENAI_COMPATIBLE_MODEL")
-            or os.getenv("AIDS_AI_MODEL")
+            or os.getenv("DOKSCP_AI_MODEL")
             or "gpt-4o-mini"
         )
     else:
@@ -134,7 +150,7 @@ def provider_config(provider: Optional[str], model: Optional[str], model_mode: s
             model
             or (os.getenv("NVIDIA_NIM_THINKING_MODEL") if model_mode == "thinking" else "")
             or (os.getenv("NVIDIA_NIM_FAST_MODEL") if model_mode == "fast" else "")
-            or os.getenv("AIDS_AI_MODEL")
+            or os.getenv("DOKSCP_AI_MODEL")
             or os.getenv("NVIDIA_NIM_MODEL")
             or "meta/llama-3.1-70b-instruct"
         )
@@ -445,7 +461,7 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
     }
     base = {
         "analyze_project": (
-            "You are the AIDS build intelligence agent. Classify the project, infer runtime, "
+            "You are the DOKSCP build intelligence agent. Classify the project, infer runtime, "
             "entrypoint, framework, exposed port, confidence, and whether deterministic support already applies."
         ),
         "generate_dockerfile": (
@@ -464,13 +480,22 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
             "Answer the user's project question using only the supplied context. Be concise, practical, and flag uncertainty."
         ),
         "agent_chat": (
-            "You are the AIDS platform agent, a production DevOps copilot. Interpret slash commands and natural language. "
+            "You are the DOKSCP platform agent, a production DevOps copilot. Interpret slash commands and natural language. "
             "You may recommend builds, deployments, Dockerfile changes, and diagnosis steps, but you do not claim to have "
             "executed platform actions unless the caller says an action result is present in runtime. Explain the why, what it means, "
             "and the next safe action. For errors, include likely cause, evidence from context, and concrete fixes. Do not give a one-line answer unless the user asks for one. "
             "When permissions indicate full access, describe the exact platform actions you would execute or have been asked to execute; otherwise ask for confirmation before destructive or remote-terminal actions."
         ),
     }.get(workflow, "Analyze this deployment context safely.")
+    if workflow == "agent_chat" and req.command in {"explain_failure", "explain_build_failure"}:
+        return (
+            "You are a fast deployment failure explainer for the DOKSCP platform. "
+            "Use the supplied log excerpt and deployment context to explain the issue clearly for a developer. "
+            "Return markdown with these short sections: What happened, Why it happened, How to fix it, Next action. "
+            "Use concrete evidence from the log. Avoid vague advice, avoid JSON, and keep it under 220 words."
+            + "\nContext:\n"
+            + json.dumps(payload, ensure_ascii=False)
+        )
     if workflow in {"agent_chat", "chat_project"}:
         return (
             base
@@ -484,7 +509,12 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
 
 async def call_model(req: AgentRequest, prompt: str) -> AgentResponse:
     trace_id = str(uuid.uuid4())
-    provider, base_url, api_key, model = provider_config(req.provider, req.model, req.model_mode)
+    provider, base_url, api_key, model = provider_config(
+        req.provider,
+        req.model,
+        req.model_mode,
+        req.provider_overrides,
+    )
     start = time.perf_counter()
 
     if req.model_mode == "fast" and (req.workflow_type or "") == "agent_chat":
@@ -519,6 +549,10 @@ async def call_model(req: AgentRequest, prompt: str) -> AgentResponse:
             error="provider_not_configured",
         )
 
+    fast_explanation = (req.workflow_type or "") == "agent_chat" and req.command in {
+        "explain_failure",
+        "explain_build_failure",
+    }
     try:
         timeout = httpx.Timeout(DEFAULT_TIMEOUT, connect=10.0, read=DEFAULT_TIMEOUT, write=10.0, pool=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -528,10 +562,10 @@ async def call_model(req: AgentRequest, prompt: str) -> AgentResponse:
                 api_key,
                 model,
                 prompt,
-                temperature=0.1 if req.model_mode == "thinking" else 0.25,
+                temperature=0.15 if fast_explanation else (0.1 if req.model_mode == "thinking" else 0.25),
                 model_mode=req.model_mode,
                 prefer_json=req.workflow_type not in {"agent_chat", "chat_project"},
-                max_tokens=4096 if req.model_mode == "thinking" else 1536,
+                max_tokens=700 if fast_explanation else (4096 if req.model_mode == "thinking" else 1536),
             )
         content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
         try:
@@ -562,6 +596,7 @@ async def call_model(req: AgentRequest, prompt: str) -> AgentResponse:
             req.provider,
             None,
             req.model_mode,
+            req.provider_overrides,
         )
         if req.model and fallback_model and fallback_model != model and fallback_base_url and fallback_api_key:
             try:
@@ -573,10 +608,10 @@ async def call_model(req: AgentRequest, prompt: str) -> AgentResponse:
                         fallback_api_key,
                         fallback_model,
                         prompt,
-                        temperature=0.1 if req.model_mode == "thinking" else 0.25,
+                        temperature=0.15 if fast_explanation else (0.1 if req.model_mode == "thinking" else 0.25),
                         model_mode=req.model_mode,
                         prefer_json=req.workflow_type not in {"agent_chat", "chat_project"},
-                        max_tokens=4096 if req.model_mode == "thinking" else 1536,
+                        max_tokens=700 if fast_explanation else (4096 if req.model_mode == "thinking" else 1536),
                     )
                 content = payload.get("choices", [{}])[0].get("message", {}).get("content", "{}")
                 try:
@@ -696,24 +731,22 @@ async def health() -> Dict[str, Any]:
     provider, base_url, api_key, model = provider_config(None, None)
     return {
         "status": "ok",
-        "service": "aids-ai-service",
+        "service": "dokscp-ai-service",
         "provider": provider,
         "model": model,
         "configured": bool(base_url and api_key),
     }
 
 
-def fallback_models(provider: str) -> List[Dict[str, Any]]:
+def fallback_models(provider: str, selected_model: str = "") -> List[Dict[str, Any]]:
     if provider == "openai_compatible":
+        fast = selected_model or os.getenv("OPENAI_COMPATIBLE_MODEL") or "gpt-4o-mini"
+        thinking = os.getenv("OPENAI_COMPATIBLE_THINKING_MODEL") or selected_model or os.getenv("OPENAI_COMPATIBLE_MODEL") or "gpt-4o"
         return [
-            {"id": os.getenv("OPENAI_COMPATIBLE_MODEL") or "gpt-4o-mini", "label": "Compatible fast", "mode": "fast"},
-            {
-                "id": os.getenv("OPENAI_COMPATIBLE_THINKING_MODEL") or os.getenv("OPENAI_COMPATIBLE_MODEL") or "gpt-4o",
-                "label": "Compatible thinking",
-                "mode": "thinking",
-            },
+            {"id": fast, "label": fast, "mode": "fast"},
+            {"id": thinking, "label": thinking, "mode": "thinking"},
         ]
-    fast_model = os.getenv("NVIDIA_NIM_FAST_MODEL") or os.getenv("AIDS_AI_MODEL") or os.getenv("NVIDIA_NIM_MODEL") or "meta/llama-3.1-70b-instruct"
+    fast_model = os.getenv("NVIDIA_NIM_FAST_MODEL") or os.getenv("DOKSCP_AI_MODEL") or os.getenv("NVIDIA_NIM_MODEL") or "meta/llama-3.1-70b-instruct"
     thinking_model = os.getenv("NVIDIA_NIM_THINKING_MODEL") or os.getenv("NVIDIA_NIM_MODEL") or fast_model
     allowed_raw = os.getenv("NVIDIA_NIM_ALLOWED_MODELS", "")
     allowed = [item.strip() for item in allowed_raw.split(",") if item.strip()]
@@ -723,6 +756,19 @@ def fallback_models(provider: str) -> List[Dict[str, Any]]:
             models.append({"id": model_id, "label": model_id, "mode": "fast"})
         if model_id == thinking_model and not any(item["id"] == model_id and item["mode"] == "thinking" for item in models):
             models.append({"id": model_id, "label": model_id, "mode": "thinking"})
+    return models
+
+
+def ensure_mode_coverage(models: List[Dict[str, Any]], selected_model: str = "") -> List[Dict[str, Any]]:
+    if not models:
+        return models
+    has_fast = any(item.get("mode") == "fast" for item in models)
+    has_thinking = any(item.get("mode") == "thinking" for item in models)
+    preferred = selected_model or str(models[0].get("id") or "")
+    if preferred and not has_fast:
+        models.insert(0, {"id": preferred, "label": preferred, "mode": "fast"})
+    if preferred and not has_thinking:
+        models.append({"id": preferred, "label": preferred, "mode": "thinking"})
     return models
 
 
@@ -817,7 +863,7 @@ async def filter_working_models(
         return candidates[:MODEL_PROBE_LIMIT]
 
     now = time.time()
-    if MODEL_PROBE_CACHE["expires_at"] > now and MODEL_PROBE_CACHE["models"]:
+    if MODEL_PROBE_CACHE["expires_at"] > now:
         return MODEL_PROBE_CACHE["models"]
 
     unique: List[Dict[str, Any]] = []
@@ -831,8 +877,8 @@ async def filter_working_models(
         if len(unique) >= MODEL_PROBE_LIMIT:
             break
 
-    timeout = httpx.Timeout(MODEL_PROBE_TIMEOUT, connect=8.0, read=MODEL_PROBE_TIMEOUT, write=8.0, pool=8.0)
-    semaphore = asyncio.Semaphore(int(os.getenv("NVIDIA_NIM_MODEL_PROBE_CONCURRENCY", "6")))
+    timeout = httpx.Timeout(MODEL_PROBE_TIMEOUT, connect=5.0, read=MODEL_PROBE_TIMEOUT, write=5.0, pool=5.0)
+    semaphore = asyncio.Semaphore(int(os.getenv("NVIDIA_NIM_MODEL_PROBE_CONCURRENCY", "10")))
     async with httpx.AsyncClient(timeout=timeout) as client:
         async def run(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             async with semaphore:
@@ -845,16 +891,13 @@ async def filter_working_models(
         results = await asyncio.gather(*(run(item) for item in unique))
 
     working = [item for item in results if item is not None]
-    if working:
-        MODEL_PROBE_CACHE["models"] = working
-        MODEL_PROBE_CACHE["expires_at"] = now + MODEL_PROBE_CACHE_TTL
+    MODEL_PROBE_CACHE["models"] = working
+    MODEL_PROBE_CACHE["expires_at"] = now + (MODEL_PROBE_CACHE_TTL if working else min(300.0, MODEL_PROBE_CACHE_TTL))
     return working
 
 
-@app.get("/models")
-async def models() -> Dict[str, Any]:
-    provider, base_url, api_key, selected_model = provider_config(None, None)
-    models_out = fallback_models(provider)
+async def model_catalog(provider: str, base_url: str, api_key: str, selected_model: str) -> Dict[str, Any]:
+    models_out = fallback_models(provider, selected_model)
     source = "fallback"
 
     if provider == "nvidia_nim" and base_url and api_key and env_flag("NVIDIA_NIM_DISCOVER_MODELS", True):
@@ -879,17 +922,38 @@ async def models() -> Dict[str, Any]:
                 preferred = {
                     os.getenv("NVIDIA_NIM_FAST_MODEL") or "meta/llama-3.1-8b-instruct": 0,
                     os.getenv("NVIDIA_NIM_MODEL") or "meta/llama-3.1-70b-instruct": 1,
-                    os.getenv("AIDS_AI_MODEL") or "": 2,
+                    os.getenv("DOKSCP_AI_MODEL") or "": 2,
                 }
                 discovered.sort(key=lambda item: (preferred.get(item["id"], 50), item["mode"] != "fast", item["id"]))
                 working = await filter_working_models(base_url, api_key, discovered)
                 if working:
-                    models_out = working
+                    models_out = ensure_mode_coverage(working, selected_model)
                     source = "provider_verified"
                 else:
                     source = "fallback_probe_failed"
         except Exception as exc:
-            models_out = fallback_models(provider)
+            models_out = fallback_models(provider, selected_model)
+            source = "fallback"
+    elif provider == "openai_compatible" and base_url and api_key:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(f"{base_url}/models", headers={"Authorization": f"Bearer {api_key}"})
+            response.raise_for_status()
+            payload = response.json()
+            data = payload.get("data", []) if isinstance(payload, dict) else []
+            discovered = []
+            seen = set()
+            for item in data:
+                model_id = item.get("id") if isinstance(item, dict) else None
+                if isinstance(model_id, str) and model_id and model_id not in seen:
+                    seen.add(model_id)
+                    discovered.append({"id": model_id, "label": model_id, "mode": model_mode_for(model_id)})
+            if discovered:
+                discovered.sort(key=lambda item: (item["mode"] != "fast", item["id"]))
+                models_out = ensure_mode_coverage(discovered[:100], selected_model)
+                source = "provider"
+        except Exception:
+            models_out = fallback_models(provider, selected_model)
             source = "fallback"
 
     return {
@@ -903,6 +967,23 @@ async def models() -> Dict[str, Any]:
             {"id": "thinking", "label": "Thinking", "description": "Deeper diagnosis and deployment planning."},
         ],
     }
+
+
+@app.get("/models")
+async def models() -> Dict[str, Any]:
+    provider, base_url, api_key, selected_model = provider_config(None, None)
+    return await model_catalog(provider, base_url, api_key, selected_model)
+
+
+@app.post("/models")
+async def models_for_request(request: AgentRequest) -> Dict[str, Any]:
+    provider, base_url, api_key, selected_model = provider_config(
+        request.provider,
+        request.model,
+        request.model_mode,
+        request.provider_overrides,
+    )
+    return await model_catalog(provider, base_url, api_key, selected_model)
 
 
 @app.post("/analyze/project", response_model=AgentResponse)

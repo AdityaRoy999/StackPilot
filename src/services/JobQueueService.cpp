@@ -8,6 +8,7 @@
 #include "../db/Database.h"
 #include "../utils/TokenCrypto.h"
 #include "BuildService.h"
+#include "DeploymentCleanupService.h"
 #include "KubernetesService.h"
 #include "SshService.h"
 
@@ -16,18 +17,22 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <pqxx/pqxx>
 #include <sstream>
 #include <spdlog/spdlog.h>
 #include <stdexcept>
+#include <unordered_map>
 #ifndef _WIN32
+#include <sys/wait.h>
 #include <unistd.h>
 #else
 #include <process.h>
 #endif
 
-namespace aids {
+namespace dokscp {
 namespace {
 
 std::mutex deploymentLogMutex;
@@ -66,6 +71,33 @@ std::string toLower(std::string value) {
     return value;
 }
 
+std::string githubFullNameFromUrl(std::string value) {
+    value = trim(value);
+    if (value.empty()) {
+        return "";
+    }
+    if (value.rfind("git@github.com:", 0) == 0) {
+        value = value.substr(std::string("git@github.com:").size());
+    } else {
+        const std::string marker = "github.com/";
+        const auto pos = toLower(value).find(marker);
+        if (pos != std::string::npos) {
+            value = value.substr(pos + marker.size());
+        }
+    }
+    while (!value.empty() && value.front() == '/') value.erase(value.begin());
+    const auto queryPos = value.find_first_of("?#");
+    if (queryPos != std::string::npos) value = value.substr(0, queryPos);
+    if (value.size() > 4 && value.substr(value.size() - 4) == ".git") value.resize(value.size() - 4);
+    while (!value.empty() && value.back() == '/') value.pop_back();
+    const auto slash = value.find('/');
+    if (slash == std::string::npos || slash == 0 || slash == value.size() - 1) return "";
+    if (value.find('/', slash + 1) != std::string::npos) {
+        value = value.substr(0, value.find('/', slash + 1));
+    }
+    return value;
+}
+
 std::string normalizeRuntimeScheme(const std::string& value) {
     return toLower(trim(value)) == "https" ? "https" : "http";
 }
@@ -82,6 +114,11 @@ std::string compactJson(const Json::Value& value) {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
     return Json::writeString(builder, value.isNull() ? Json::Value(Json::objectValue) : value);
+}
+
+bool shouldSkipDeploymentJob(const std::string& status) {
+    return status == "superseded" || status == "canceled" || status == "cancelled" ||
+           status == "failed_ci" || status == "retired";
 }
 
 Json::Value deploymentSourceSnapshot(const std::string& sourceType,
@@ -179,6 +216,247 @@ std::string runCommandCapture(const std::string& command) {
     return output;
 }
 
+int runCommandCaptureExit(const std::string& command, std::string& output) {
+    output.clear();
+#ifdef _WIN32
+    FILE* pipe = _popen(command.c_str(), "r");
+#else
+    FILE* pipe = popen(command.c_str(), "r");
+#endif
+    if (!pipe) {
+        output = "Failed to start local command";
+        return 1;
+    }
+
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+#ifdef _WIN32
+    return _pclose(pipe);
+#else
+    const int status = pclose(pipe);
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return status;
+#endif
+}
+
+std::string valueFromKeyValueOutput(const std::string& output, const std::string& key) {
+    std::istringstream stream(output);
+    std::string line;
+    const std::string prefix = key + "=";
+    while (std::getline(stream, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            return trim(line.substr(prefix.size()));
+        }
+    }
+    return "";
+}
+
+std::string logTailFromLocalDockerOutput(const std::string& output) {
+    const std::string marker = "__DOKSCP_LOCAL_LOG_TAIL__";
+    const auto pos = output.find(marker);
+    if (pos == std::string::npos) {
+        return "";
+    }
+    return trim(output.substr(pos + marker.size()));
+}
+
+std::string sanitizeDockerContainerName(const std::string& raw) {
+    std::string cleaned;
+    cleaned.reserve(std::min<size_t>(raw.size(), 96));
+    for (char c : raw) {
+        const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
+        cleaned.push_back(ok ? static_cast<char>(std::tolower(static_cast<unsigned char>(c))) : '-');
+        if (cleaned.size() >= 96) {
+            break;
+        }
+    }
+    while (!cleaned.empty() && cleaned.front() == '-') {
+        cleaned.erase(cleaned.begin());
+    }
+    while (!cleaned.empty() && cleaned.back() == '-') {
+        cleaned.pop_back();
+    }
+    return cleaned.empty() ? "deployment" : cleaned;
+}
+
+bool isValidRuntimeEnvKey(const std::string& key) {
+    if (key.empty()) {
+        return false;
+    }
+    if (!(std::isalpha(static_cast<unsigned char>(key.front())) || key.front() == '_')) {
+        return false;
+    }
+    for (char c : key) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string makeLocalDockerRunCommand(const std::string& containerName,
+                                      const std::string& imageName,
+                                      int containerPort,
+                                      const std::vector<BuildEnvVar>& envVars) {
+    std::string envArgs;
+    for (const auto& envVar : envVars) {
+        if (!isValidRuntimeEnvKey(envVar.key)) {
+            continue;
+        }
+        std::string value = envVar.value;
+        std::replace(value.begin(), value.end(), '\n', ' ');
+        envArgs += " --env " + shellQuote(envVar.key + "=" + value);
+    }
+
+    const std::string container = shellQuote(containerName);
+    const std::string image = shellQuote(imageName);
+    const std::string requestedPort = std::to_string(std::clamp(containerPort, 0, 65535));
+    return
+        "set -e; "
+        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __DOKSCP_IMAGE_MISSING__; exit 12; }; "
+        "requested_port=" + requestedPort + "; "
+        "if [ \"$requested_port\" -gt 0 ]; then "
+        "container_port=\"$requested_port\"; "
+        "else "
+        "container_port=$(docker image inspect --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' " + image + " 2>/dev/null | sed -n 's#/tcp$##p' | head -n 1); "
+        "[ -n \"$container_port\" ] || container_port=3000; "
+        "fi; "
+        "docker rm -f " + container + " >/dev/null 2>&1 || true; "
+        "docker run -d --restart unless-stopped --name " + container + envArgs +
+        " -p 127.0.0.1::$container_port " + image + " >/tmp/dokscp-local-container-id; "
+        "host_port=$(docker port " + container + " $container_port/tcp 2>/dev/null | awk -F: 'NF {print $NF; exit}'); "
+        "[ -n \"$host_port\" ] || { echo __DOKSCP_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
+        "status=$(docker inspect --format '{{.State.Status}}' " + container + "); "
+        "running=$(docker inspect --format '{{.State.Running}}' " + container + "); "
+        "echo __DOKSCP_LOCAL_DOCKER_RUNNING__; "
+        "echo container_name=" + containerName + "; "
+        "echo container_port=$container_port; "
+        "echo host_port=$host_port; "
+        "echo runtime_url=http://localhost:$host_port; "
+        "echo status=$status; "
+        "echo running=$running; "
+        "echo image=" + imageName + "; "
+        "echo __DOKSCP_LOCAL_LOG_TAIL__; "
+        "docker logs --tail 80 " + container + " 2>&1 || true";
+}
+
+struct GitHubCheckProbe {
+    bool queried = false;
+    bool hasChecks = false;
+    bool pending = false;
+    bool passed = false;
+    bool failed = false;
+    std::string detail;
+};
+
+std::string jsonEscapeForCurlConfig(const std::string& value) {
+    std::string out;
+    for (char c : value) {
+        if (c == '\\' || c == '"') {
+            out.push_back('\\');
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+GitHubCheckProbe queryGitHubCheckRuns(const std::string& repoUrl,
+                                      const std::string& commitSha,
+                                      const std::string& token) {
+    GitHubCheckProbe probe;
+    const std::string fullName = githubFullNameFromUrl(repoUrl);
+    if (fullName.empty() || commitSha.empty()) {
+        probe.detail = "Repository or commit could not be parsed for GitHub check lookup.";
+        return probe;
+    }
+
+    const auto configPath = std::filesystem::temp_directory_path() /
+        ("dokscp-github-checks-" + std::to_string(std::rand()) + ".curl");
+    {
+        std::ofstream cfg(configPath, std::ios::trunc);
+        if (!cfg.is_open()) {
+            probe.detail = "Unable to create temporary GitHub check query config.";
+            return probe;
+        }
+        cfg << "silent\n";
+        cfg << "show-error\n";
+        cfg << "fail\n";
+        cfg << "location\n";
+        cfg << "url = \"https://api.github.com/repos/" << jsonEscapeForCurlConfig(fullName)
+            << "/commits/" << jsonEscapeForCurlConfig(commitSha) << "/check-runs?per_page=100\"\n";
+        cfg << "header = \"Accept: application/vnd.github+json\"\n";
+        cfg << "header = \"X-GitHub-Api-Version: 2022-11-28\"\n";
+        cfg << "header = \"User-Agent: DOKSCP-Platform\"\n";
+        if (!token.empty()) {
+            cfg << "header = \"Authorization: Bearer " << jsonEscapeForCurlConfig(token) << "\"\n";
+        }
+    }
+    std::error_code permissionError;
+    std::filesystem::permissions(
+        configPath,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace,
+        permissionError
+    );
+
+    const std::string output = runCommandCapture("curl --config " + shellQuote(configPath.string()) + " 2>/dev/null");
+    std::filesystem::remove(configPath);
+    if (output.empty()) {
+        probe.detail = "GitHub check lookup returned no response.";
+        return probe;
+    }
+
+    Json::Value payload;
+    Json::CharReaderBuilder builder;
+    builder["collectComments"] = false;
+    std::string errors;
+    std::istringstream stream(output);
+    if (!Json::parseFromStream(builder, stream, &payload, &errors) || !payload.isObject()) {
+        probe.detail = "GitHub check lookup returned an invalid payload.";
+        return probe;
+    }
+
+    probe.queried = true;
+    const int totalCount = payload.get("total_count", 0).asInt();
+    const Json::Value runs = payload["check_runs"];
+    if (totalCount <= 0 || !runs.isArray() || runs.empty()) {
+        probe.hasChecks = false;
+        probe.passed = true;
+        probe.detail = "No GitHub check runs exist for this commit.";
+        return probe;
+    }
+
+    probe.hasChecks = true;
+    bool anyPending = false;
+    bool anyFailed = false;
+    for (const auto& run : runs) {
+        const std::string status = toLower(run.get("status", "").asString());
+        const std::string conclusion = toLower(run.get("conclusion", "").asString());
+        if (status != "completed") {
+            anyPending = true;
+            continue;
+        }
+        if (!(conclusion == "success" || conclusion == "skipped" || conclusion == "neutral")) {
+            anyFailed = true;
+        }
+    }
+    probe.pending = anyPending;
+    probe.failed = anyFailed;
+    probe.passed = !anyPending && !anyFailed;
+    probe.detail = probe.passed ? "GitHub check runs passed." :
+        (probe.failed ? "One or more GitHub check runs failed." : "GitHub check runs are still pending.");
+    return probe;
+}
+
 void appendDeploymentLog(const std::string& deploymentId, const std::string& line) {
     std::lock_guard<std::mutex> lock(deploymentLogMutex);
     try {
@@ -201,11 +479,14 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     auto conn = Database::getInstance().getConnection();
     pqxx::work txn(*conn);
     auto rows = txn.exec_params(
-        "SELECT d.id, d.project_id, p.name AS project_name, d.status, d.version, d.commit_hash, d.image_name, "
+        "SELECT d.id, d.project_id, p.name AS project_name, p.repo_url, d.status, d.version, d.commit_hash, "
+        "d.environment_id, e.name AS environment_name, d.branch, d.commit_sha, d.trigger_source, d.github_delivery_id, "
+        "d.ci_required, d.ci_status, d.image_name, "
         "d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.k8s_ingress_name, "
         "d.desired_replicas, d.runtime_url, d.runtime_exposure, d.runtime_provider, d.remote_container_name, d.created_at "
         "FROM deployments d "
         "JOIN projects p ON d.project_id = p.id "
+        "LEFT JOIN project_environments e ON d.environment_id = e.id "
         "WHERE d.id = $1",
         deploymentId
     );
@@ -220,9 +501,18 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     dep["id"] = row["id"].as<std::string>();
     dep["project_id"] = row["project_id"].as<std::string>();
     dep["project_name"] = row["project_name"].as<std::string>();
+    dep["repo_url"] = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
     dep["status"] = row["status"].as<std::string>();
     dep["version"] = row["version"].as<std::string>();
     dep["commit_hash"] = row["commit_hash"].as<std::string>();
+    dep["environment_id"] = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
+    dep["environment_name"] = row["environment_name"].is_null() ? "" : row["environment_name"].as<std::string>();
+    dep["branch"] = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
+    dep["commit_sha"] = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+    dep["trigger_source"] = row["trigger_source"].is_null() ? "manual" : row["trigger_source"].as<std::string>();
+    dep["github_delivery_id"] = row["github_delivery_id"].is_null() ? "" : row["github_delivery_id"].as<std::string>();
+    dep["ci_required"] = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
+    dep["ci_status"] = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
     dep["image_name"] = row["image_name"].is_null() ? "" : row["image_name"].as<std::string>();
     dep["k8s_namespace"] = row["k8s_namespace"].is_null() ? "" : row["k8s_namespace"].as<std::string>();
     dep["k8s_deployment_name"] = row["k8s_deployment_name"].is_null() ? "" : row["k8s_deployment_name"].as<std::string>();
@@ -275,13 +565,13 @@ JobQueueService& JobQueueService::getInstance() {
 }
 
 JobQueueService::JobQueueService()
-    : workerId_(getEnvOrDefault("HOSTNAME", "aids-backend") + "-" + std::to_string(::getpid())),
+    : workerId_(getEnvOrDefault("HOSTNAME", "dokscp-backend") + "-" + std::to_string(::getpid())),
       redisHost_(getEnvOrDefault("REDIS_HOST", "redis")),
       redisPort_(getEnvIntOrDefault("REDIS_PORT", 6379)),
       redisPassword_(getEnvOrDefault("REDIS_PASSWORD", "")),
-      queueName_(getEnvOrDefault("AIDS_REDIS_QUEUE", "aids:jobs:deployment")),
-      workerCount_(std::max(1, getEnvIntOrDefault("AIDS_JOB_WORKERS", 2))),
-      maxAttempts_(std::clamp(getEnvIntOrDefault("AIDS_JOB_MAX_ATTEMPTS", 3), 1, 10)) {}
+      queueName_(getEnvOrDefault("DOKSCP_REDIS_QUEUE", "dokscp:jobs:deployment")),
+      workerCount_(std::max(1, getEnvIntOrDefault("DOKSCP_JOB_WORKERS", 2))),
+      maxAttempts_(std::clamp(getEnvIntOrDefault("DOKSCP_JOB_MAX_ATTEMPTS", 3), 1, 10)) {}
 
 JobQueueService::~JobQueueService() {
     stop();
@@ -558,8 +848,17 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         auto conn = Database::getInstance().getConnection();
         pqxx::work txn(*conn);
         auto deploymentRows = txn.exec_params(
-            "SELECT d.id, d.version, d.status, p.name AS project_name, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
-            "p.execution_mode, p.remote_runtime_type, p.remote_k8s_exposure, p.remote_connection_id, p.runtime_scheme, p.local_https_enabled, "
+            "SELECT d.id, d.version, d.status, d.environment_id, d.source_artifact_id, d.branch, d.commit_sha, "
+            "d.trigger_source, d.ci_required, d.ci_status, d.created_at AS deployment_created_at, "
+            "EXTRACT(EPOCH FROM (NOW() - d.created_at))::int AS deployment_age_seconds, "
+            "e.cleanup_previous_on_success, e.current_deployment_id AS previous_current_deployment_id, "
+            "sa.storage_path AS artifact_storage_path, "
+            "p.name AS project_name, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
+            "COALESCE(e.execution_mode, p.execution_mode) AS execution_mode, "
+            "COALESCE(e.remote_runtime_type, p.remote_runtime_type) AS remote_runtime_type, "
+            "COALESCE(e.remote_k8s_exposure, p.remote_k8s_exposure) AS remote_k8s_exposure, "
+            "COALESCE(e.remote_connection_id, p.remote_connection_id) AS remote_connection_id, "
+            "COALESCE(e.runtime_scheme, p.runtime_scheme) AS runtime_scheme, p.local_https_enabled, "
             "u.github_access_token, COALESCE(s.connection_type, 'ssh') AS connection_type, s.host, s.port, s.username, s.auth_type, "
             "s.password_encrypted, s.private_key_encrypted, s.known_hosts_entry, "
             "COALESCE(rs.connection_type, 'ssh') AS remote_connection_type, rs.host AS remote_host, rs.port AS remote_port, rs.username AS remote_username, "
@@ -568,8 +867,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             "FROM deployments d "
             "JOIN projects p ON d.project_id = p.id "
             "JOIN users u ON p.user_id = u.id "
+            "LEFT JOIN project_environments e ON d.environment_id = e.id AND e.project_id = p.id "
+            "LEFT JOIN source_artifacts sa ON d.source_artifact_id = sa.id AND sa.user_id = p.user_id "
             "LEFT JOIN ssh_connections s ON p.ssh_connection_id = s.id "
-            "LEFT JOIN ssh_connections rs ON p.remote_connection_id = rs.id "
+            "LEFT JOIN ssh_connections rs ON COALESCE(e.remote_connection_id, p.remote_connection_id) = rs.id "
             "WHERE d.id = $1 AND p.user_id = $2",
             job.deploymentId,
             job.userId
@@ -582,21 +883,189 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         }
 
         const auto& row = deploymentRows[0];
+        const std::string deploymentStatus = row["status"].as<std::string>();
+        const std::string environmentId = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
+        const bool ciRequired = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
+        const std::string ciStatus = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
+        const std::string triggerSource = row["trigger_source"].is_null() ? "manual" : row["trigger_source"].as<std::string>();
+        const int deploymentAgeSeconds = row["deployment_age_seconds"].is_null() ? 0 : row["deployment_age_seconds"].as<int>();
+        const bool cleanupPreviousOnSuccess =
+            row["cleanup_previous_on_success"].is_null() ? false : row["cleanup_previous_on_success"].as<bool>();
+        const std::string previousCurrentDeploymentId =
+            row["previous_current_deployment_id"].is_null() ? "" : row["previous_current_deployment_id"].as<std::string>();
+        const std::string repoUrlForCi = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
+        const std::string commitShaForCi = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+        const std::string sourceTypeForCi = row["source_type"].is_null() ? "github" : row["source_type"].as<std::string>();
+        const std::string projectTokenForCi = row["github_pat"].is_null() ? "" : TokenCrypto::decrypt(row["github_pat"].as<std::string>());
+        const std::string linkedGitHubTokenForCi = row["github_access_token"].is_null() ? "" : TokenCrypto::decrypt(row["github_access_token"].as<std::string>());
+        const std::string githubTokenForCi = !projectTokenForCi.empty() ? projectTokenForCi : linkedGitHubTokenForCi;
+        if (shouldSkipDeploymentJob(deploymentStatus)) {
+            txn.commit();
+            appendDeploymentLog(job.deploymentId, "Deployment job skipped because this deployment is " + deploymentStatus + ".");
+            completeJob(job);
+            broadcastDeploymentSummary(job.deploymentId);
+            return;
+        }
+        if (ciRequired && ciStatus == "pending" &&
+            (triggerSource != "github_push" || sourceTypeForCi != "github" || repoUrlForCi.empty() || commitShaForCi.empty())) {
+            txn.exec_params(
+                "UPDATE deployments "
+                "SET ci_status = 'not_required', "
+                "ci_details = ci_details || '{\"ci_bypassed_for_non_github_push\":true}'::jsonb, "
+                "logs = COALESCE(logs, '') || E'CI gate skipped because this deployment was not triggered by a GitHub push with a commit SHA.\\n', "
+                "updated_at = NOW() "
+                "WHERE id = $1",
+                job.deploymentId
+            );
+        }
+        if (ciRequired && ciStatus == "pending" &&
+            triggerSource == "github_push" && sourceTypeForCi == "github" && !repoUrlForCi.empty() && !commitShaForCi.empty()) {
+            const int graceSeconds = std::max(15, getEnvIntOrDefault("DOKSCP_CI_NO_CHECKS_GRACE_SECONDS", 90));
+            if (triggerSource == "github_push" && deploymentAgeSeconds >= graceSeconds) {
+                const auto probe = queryGitHubCheckRuns(repoUrlForCi, commitShaForCi, githubTokenForCi);
+                if (!probe.queried) {
+                    txn.exec_params(
+                        "UPDATE deployments "
+                        "SET status = 'blocked', logs = COALESCE(logs, '') || $2 || E' Build remains blocked because CI is required.\\n', updated_at = NOW() "
+                        "WHERE id = $1",
+                        job.deploymentId,
+                        probe.detail.empty() ? "GitHub check lookup did not complete." : probe.detail
+                    );
+                    txn.exec_params(
+                        "UPDATE deployment_jobs "
+                        "SET status = 'retrying', last_error = 'Unable to verify GitHub checks', locked_by = '', locked_at = NULL, "
+                        "next_run_at = NOW() + interval '60 seconds', updated_at = NOW() "
+                        "WHERE id = $1",
+                        job.id
+                    );
+                    txn.commit();
+                    LogWebSocketController::broadcastStatus(job.deploymentId, "blocked");
+                    broadcastDeploymentSummary(job.deploymentId);
+                    return;
+                }
+                if (probe.hasChecks) {
+                    if (probe.failed) {
+                        txn.exec_params(
+                            "UPDATE deployments "
+                            "SET ci_status = 'failed', status = 'failed_ci', "
+                            "ci_details = ci_details || '{\"checks_api\":\"failed\"}'::jsonb, "
+                            "logs = COALESCE(logs, '') || $2 || E'\\n', updated_at = NOW() "
+                            "WHERE id = $1",
+                            job.deploymentId,
+                            probe.detail
+                        );
+                        txn.commit();
+                        failJob(job, "GitHub checks failed", false);
+                        LogWebSocketController::broadcastStatus(job.deploymentId, "failed_ci");
+                        broadcastDeploymentSummary(job.deploymentId);
+                        return;
+                    }
+                    if (probe.pending) {
+                        txn.exec_params(
+                            "UPDATE deployments "
+                            "SET status = 'blocked', logs = COALESCE(logs, '') || $2 || E'\\n', updated_at = NOW() "
+                            "WHERE id = $1",
+                            job.deploymentId,
+                            probe.detail
+                        );
+                        txn.exec_params(
+                            "UPDATE deployment_jobs "
+                            "SET status = 'retrying', last_error = 'Waiting for GitHub checks', locked_by = '', locked_at = NULL, "
+                            "next_run_at = NOW() + interval '30 seconds', updated_at = NOW() "
+                            "WHERE id = $1",
+                            job.id
+                        );
+                        txn.commit();
+                        LogWebSocketController::broadcastStatus(job.deploymentId, "blocked");
+                        broadcastDeploymentSummary(job.deploymentId);
+                        return;
+                    }
+                    txn.exec_params(
+                        "UPDATE deployments "
+                        "SET ci_status = 'passed', status = 'pending', "
+                        "ci_details = ci_details || '{\"checks_api\":\"passed\"}'::jsonb, "
+                        "logs = COALESCE(logs, '') || E'GitHub checks passed from the Checks API. Deployment continuing.\\n', "
+                        "updated_at = NOW() "
+                        "WHERE id = $1",
+                        job.deploymentId
+                    );
+                } else {
+                    txn.exec_params(
+                        "UPDATE deployments "
+                        "SET ci_status = 'not_required', ci_details = ci_details || '{\"no_checks_found\":true}'::jsonb, "
+                        "logs = COALESCE(logs, '') || E'No GitHub check runs were found for this commit. Continuing because this repository may not define CI workflows.\\n', "
+                        "updated_at = NOW() "
+                        "WHERE id = $1",
+                        job.deploymentId
+                    );
+                }
+            } else {
+                const int retryDelay = std::min(30, std::max(5, graceSeconds - deploymentAgeSeconds));
+                txn.exec_params(
+                    "UPDATE deployments "
+                    "SET status = 'blocked', logs = COALESCE(logs, '') || E'GitHub checks are still pending. Build remains blocked until CI passes or no checks are found.\\n', updated_at = NOW() "
+                    "WHERE id = $1",
+                    job.deploymentId
+                );
+                txn.exec_params(
+                    "UPDATE deployment_jobs "
+                    "SET status = 'retrying', last_error = 'Waiting for GitHub checks', locked_by = '', locked_at = NULL, "
+                    "next_run_at = NOW() + ($2::text || ' seconds')::interval, updated_at = NOW() "
+                    "WHERE id = $1",
+                    job.id,
+                    retryDelay
+                );
+                txn.commit();
+                LogWebSocketController::broadcastStatus(job.deploymentId, "blocked");
+                broadcastDeploymentSummary(job.deploymentId);
+                return;
+            }
+        }
+        if (!environmentId.empty()) {
+            auto newerRows = txn.exec_params(
+                "SELECT id FROM deployments "
+                "WHERE environment_id = $1 AND id <> $2 "
+                "AND created_at > (SELECT created_at FROM deployments WHERE id = $2) "
+                "AND status NOT IN ('failed', 'failed_ci', 'superseded', 'canceled', 'cancelled', 'retired') "
+                "ORDER BY created_at DESC LIMIT 1",
+                environmentId,
+                job.deploymentId
+            );
+            if (!newerRows.empty()) {
+                txn.exec_params(
+                    "UPDATE deployments "
+                    "SET status = 'superseded', logs = COALESCE(logs, '') || E'Skipped build because a newer commit is already the deployment candidate for this environment.\\n', updated_at = NOW() "
+                    "WHERE id = $1",
+                    job.deploymentId
+                );
+                txn.commit();
+                completeJob(job);
+                LogWebSocketController::broadcastStatus(job.deploymentId, "superseded");
+                broadcastDeploymentSummary(job.deploymentId);
+                return;
+            }
+        }
+
         const std::string version = row["version"].as<std::string>();
         const std::string projectName = row["project_name"].as<std::string>();
         const std::string sourceType = row["source_type"].is_null() ? "github" : row["source_type"].as<std::string>();
         const std::string executionMode = row["execution_mode"].is_null() ? "local" : row["execution_mode"].as<std::string>();
         const std::string remoteRuntimeType = row["remote_runtime_type"].is_null() ? "docker" : row["remote_runtime_type"].as<std::string>();
         const std::string remoteK8sExposure = row["remote_k8s_exposure"].is_null() ? "nodeport" : row["remote_k8s_exposure"].as<std::string>();
+        const std::string remoteConnectionId = row["remote_connection_id"].is_null() ? "" : row["remote_connection_id"].as<std::string>();
         const std::string runtimeScheme = normalizeRuntimeScheme(row["runtime_scheme"].is_null() ? "http" : row["runtime_scheme"].as<std::string>());
         const bool localHttpsEnabled = row["local_https_enabled"].is_null() ? false : row["local_https_enabled"].as<bool>();
         const std::string repoUrl = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
+        const std::string branch = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
+        const std::string commitSha = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
         const std::string sourcePath = row["source_path"].is_null() ? "" : row["source_path"].as<std::string>();
+        const std::string sourceArtifactId = row["source_artifact_id"].is_null() ? "" : row["source_artifact_id"].as<std::string>();
+        const std::string artifactStoragePath = row["artifact_storage_path"].is_null() ? "" : row["artifact_storage_path"].as<std::string>();
         const std::string projectToken = row["github_pat"].is_null() ? "" : TokenCrypto::decrypt(row["github_pat"].as<std::string>());
         const std::string linkedGitHubToken = row["github_access_token"].is_null() ? "" : TokenCrypto::decrypt(row["github_access_token"].as<std::string>());
         const std::string githubPat = !projectToken.empty() ? projectToken : linkedGitHubToken;
 
-        std::vector<BuildEnvVar> envVars;
+        std::unordered_map<std::string, std::string> mergedEnvVars;
         auto envRows = txn.exec_params(
             "SELECT key, value_encrypted FROM project_env_vars "
             "WHERE project_id = (SELECT project_id FROM deployments WHERE id = $1) "
@@ -604,11 +1073,28 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             job.deploymentId
         );
         for (const auto& envRow : envRows) {
-            envVars.push_back({
-                envRow["key"].as<std::string>(),
-                TokenCrypto::decrypt(envRow["value_encrypted"].as<std::string>())
-            });
+            mergedEnvVars[envRow["key"].as<std::string>()] =
+                TokenCrypto::decrypt(envRow["value_encrypted"].as<std::string>());
         }
+        if (!environmentId.empty()) {
+            auto environmentEnvRows = txn.exec_params(
+                "SELECT key, value_encrypted FROM project_environment_env_vars "
+                "WHERE environment_id = $1 ORDER BY key ASC",
+                environmentId
+            );
+            for (const auto& envRow : environmentEnvRows) {
+                mergedEnvVars[envRow["key"].as<std::string>()] =
+                    TokenCrypto::decrypt(envRow["value_encrypted"].as<std::string>());
+            }
+        }
+        std::vector<BuildEnvVar> envVars;
+        envVars.reserve(mergedEnvVars.size());
+        for (const auto& item : mergedEnvVars) {
+            envVars.push_back({item.first, item.second});
+        }
+        std::sort(envVars.begin(), envVars.end(), [](const BuildEnvVar& left, const BuildEnvVar& right) {
+            return left.key < right.key;
+        });
 
         if (sourceType == "github" && repoUrl.empty()) {
             txn.commit();
@@ -617,6 +1103,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         if ((sourceType == "ssh" || sourceType == "local") && sourcePath.empty()) {
             txn.commit();
             throw std::runtime_error("Project source path is required before triggering a build");
+        }
+        if (sourceType == "artifact" && (sourceArtifactId.empty() || artifactStoragePath.empty())) {
+            txn.commit();
+            throw std::runtime_error("Deployment source artifact is missing or no longer available");
         }
 
         SshConnectionConfig sshConfig;
@@ -653,17 +1143,25 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             );
         }
 
+        Json::Value sourceSnapshot = deploymentSourceSnapshot(
+            sourceType, repoUrl, sourcePath, executionMode, remoteRuntimeType, remoteK8sExposure,
+            runtimeScheme, localHttpsEnabled, version, projectName
+        );
+        if (!sourceArtifactId.empty()) {
+            sourceSnapshot["source_artifact_id"] = sourceArtifactId;
+        }
+        if (!remoteConnectionId.empty()) {
+            sourceSnapshot["remote_connection_id"] = remoteConnectionId;
+        }
         txn.exec_params(
             "UPDATE deployments "
             "SET status = 'building', logs = '', source_snapshot = $2::jsonb, env_snapshot = $3::jsonb, "
-            "artifact_available = FALSE, updated_at = NOW() "
+            "remote_connection_id = NULLIF($4, '')::uuid, artifact_available = FALSE, updated_at = NOW() "
             "WHERE id = $1",
             job.deploymentId,
-            compactJson(deploymentSourceSnapshot(
-                sourceType, repoUrl, sourcePath, executionMode, remoteRuntimeType, remoteK8sExposure,
-                runtimeScheme, localHttpsEnabled, version, projectName
-            )),
-            compactJson(envKeySnapshot(envVars))
+            compactJson(sourceSnapshot),
+            compactJson(envKeySnapshot(envVars)),
+            remoteConnectionId
         );
         txn.commit();
 
@@ -690,6 +1188,20 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     sourcePath,
                     version,
                     githubPat,
+                    branch,
+                    commitSha,
+                    projectName,
+                    3000,
+                    envVars,
+                    logSink
+                );
+            } else if (sourceType == "artifact") {
+                buildResult = buildService.buildArtifactAndRunOnRemoteDocker(
+                    job.deploymentId,
+                    remoteExecutionConfig,
+                    artifactStoragePath,
+                    sourcePath.empty() ? "/tmp" : sourcePath,
+                    version,
                     projectName,
                     3000,
                     envVars,
@@ -726,7 +1238,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 options.deploymentId = job.deploymentId;
                 options.projectName = projectName;
                 options.imageName = buildResult.imageName;
-                options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "aids-apps");
+                options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
                 options.runtimeScheme = runtimeScheme;
                 options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                 options.replicas = 1;
@@ -768,15 +1280,58 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 envVars,
                 logSink
             );
+        } else if (sourceType == "artifact") {
+            buildResult = buildService.buildFromArtifact(
+                job.deploymentId,
+                artifactStoragePath,
+                version,
+                envVars,
+                logSink
+            );
         } else {
             buildResult = buildService.buildFromRepository(
                 job.deploymentId,
                 repoUrl,
                 version,
                 githubPat,
+                branch,
+                commitSha,
                 envVars,
                 logSink
             );
+        }
+
+        if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "docker") {
+            const std::string containerName =
+                "dokscp-local-" + sanitizeDockerContainerName(projectName) + "-" +
+                sanitizeDockerContainerName(job.deploymentId).substr(0, 12);
+            logSink("Deploying image to local Docker...");
+            std::string dockerOutput;
+            const int dockerExit = runCommandCaptureExit(
+                "timeout 120s sh -lc " + shellQuote(makeLocalDockerRunCommand(containerName, buildResult.imageName, 3000, envVars)),
+                dockerOutput
+            );
+            buildResult.logs += "\n" + dockerOutput;
+            if (dockerExit != 0 || dockerOutput.find("__DOKSCP_LOCAL_DOCKER_RUNNING__") == std::string::npos) {
+                buildResult.success = false;
+                if (dockerOutput.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+                    buildResult.error = "Docker is not installed in the DOKSCP backend environment";
+                } else if (dockerOutput.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+                    buildResult.error = "Docker daemon is not reachable from the DOKSCP backend";
+                } else if (dockerOutput.find("__DOKSCP_IMAGE_MISSING__") != std::string::npos) {
+                    buildResult.error = "Built image is missing from local Docker";
+                } else if (dockerExit == 124) {
+                    buildResult.error = "Local Docker deploy timed out";
+                } else {
+                    buildResult.error = "Failed to start local Docker runtime";
+                }
+                logSink(buildResult.error);
+            } else {
+                buildResult.runtimeProvider = "local_docker";
+                buildResult.runtimeUrl = valueFromKeyValueOutput(dockerOutput, "runtime_url");
+                buildResult.remoteContainerName = containerName;
+                logSink("Runtime URL: " + buildResult.runtimeUrl);
+            }
         }
 
         if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "kubernetes") {
@@ -784,7 +1339,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             options.deploymentId = job.deploymentId;
             options.projectName = projectName;
             options.imageName = buildResult.imageName;
-            options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "aids-apps");
+            options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
             options.runtimeScheme = runtimeScheme;
             options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
             options.replicas = 1;
@@ -812,6 +1367,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
 
         auto connUpdate = Database::getInstance().getConnection();
         pqxx::work updateTxn(*connUpdate);
+        std::string deploymentToRetire;
+        bool cleanupPreviousDeployment = false;
         if (buildResult.success) {
             if (buildResult.runtimeProvider == "remote_kubernetes" && hasRemoteK8sRuntime) {
                 updateTxn.exec_params(
@@ -893,6 +1450,22 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, "running");
+            } else if (buildResult.runtimeProvider == "local_docker") {
+                int containerPort = 3000;
+                updateTxn.exec_params(
+                    "UPDATE deployments "
+                    "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'local_docker', "
+                    "runtime_provider = 'local_docker', remote_container_name = $4, desired_replicas = 1, runtime_paused = FALSE, "
+                    "runtime_snapshot = $5::jsonb, artifact_available = TRUE, updated_at = NOW() "
+                    "WHERE id = $6",
+                    buildResult.logs,
+                    buildResult.imageName,
+                    buildResult.runtimeUrl,
+                    buildResult.remoteContainerName,
+                    compactJson(runtimeSnapshot("local_docker", buildResult.imageName, buildResult.runtimeUrl, "local_docker", 1, containerPort, "small", "/", localHttpsEnabled ? "https" : "http")),
+                    job.deploymentId
+                );
+                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
             } else {
                 updateTxn.exec_params(
                     "UPDATE deployments "
@@ -906,6 +1479,68 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, "built");
             }
+            if (!environmentId.empty()) {
+                auto newerRows = updateTxn.exec_params(
+                    "SELECT id FROM deployments "
+                    "WHERE environment_id = $1 AND id <> $2 "
+                    "AND created_at > (SELECT created_at FROM deployments WHERE id = $2) "
+                    "AND status NOT IN ('failed', 'failed_ci', 'superseded', 'canceled', 'cancelled', 'retired') "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    environmentId,
+                    job.deploymentId
+                );
+                if (!newerRows.empty()) {
+                    updateTxn.exec_params(
+                        "UPDATE deployments "
+                        "SET status = 'superseded', logs = COALESCE(logs, '') || E'Build succeeded, but a newer commit arrived before promotion. Cleaning up this superseded runtime.\\n', "
+                        "ci_status = CASE WHEN ci_required = TRUE THEN 'passed' ELSE ci_status END, updated_at = NOW() "
+                        "WHERE id = $1",
+                        job.deploymentId
+                    );
+                    updateTxn.commit();
+
+                    DeploymentCleanupOptions cleanupOptions;
+                    cleanupOptions.deleteDatabaseRow = false;
+                    cleanupOptions.deleteImage = true;
+                    cleanupOptions.deleteRemoteWorkspace = true;
+                    DeploymentCleanupService cleanupService;
+                    const auto cleanup = cleanupService.cleanupDeployment(job.userId, job.deploymentId, cleanupOptions);
+                    if (!cleanup.success) {
+                        appendDeploymentLog(job.deploymentId, "Superseded runtime cleanup failed: " + cleanup.error);
+                    }
+                    completeJob(job);
+                    LogWebSocketController::broadcastStatus(job.deploymentId, "superseded");
+                    broadcastDeploymentSummary(job.deploymentId);
+                    return;
+                }
+
+                auto envRows = updateTxn.exec_params(
+                    "SELECT current_deployment_id, cleanup_previous_on_success "
+                    "FROM project_environments WHERE id = $1 FOR UPDATE",
+                    environmentId
+                );
+                if (!envRows.empty()) {
+                    deploymentToRetire = envRows[0]["current_deployment_id"].is_null()
+                        ? previousCurrentDeploymentId
+                        : envRows[0]["current_deployment_id"].as<std::string>();
+                    cleanupPreviousDeployment = envRows[0]["cleanup_previous_on_success"].is_null()
+                        ? cleanupPreviousOnSuccess
+                        : envRows[0]["cleanup_previous_on_success"].as<bool>();
+                }
+                updateTxn.exec_params(
+                    "UPDATE project_environments e "
+                    "SET current_deployment_id = d.id, updated_at = NOW() "
+                    "FROM deployments d "
+                    "WHERE d.id = $1 AND d.environment_id = e.id AND d.project_id = e.project_id",
+                    job.deploymentId
+                );
+            }
+            updateTxn.exec_params(
+                "UPDATE deployments "
+                "SET ci_status = CASE WHEN ci_required = TRUE AND ci_status = 'pending' THEN 'passed' ELSE ci_status END "
+                "WHERE id = $1",
+                job.deploymentId
+            );
         } else {
             std::string failureLogs = buildResult.logs.empty() ? buildResult.error : buildResult.logs;
             if (!buildResult.error.empty() && failureLogs.find(buildResult.error) == std::string::npos) {
@@ -924,6 +1559,38 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         broadcastDeploymentSummary(job.deploymentId);
 
         if (buildResult.success) {
+            if (cleanupPreviousDeployment && !deploymentToRetire.empty() && deploymentToRetire != job.deploymentId) {
+                DeploymentCleanupOptions cleanupOptions;
+                cleanupOptions.deleteDatabaseRow = false;
+                cleanupOptions.deleteImage = true;
+                cleanupOptions.deleteRemoteWorkspace = true;
+                DeploymentCleanupService cleanupService;
+                const auto cleanup = cleanupService.cleanupDeployment(job.userId, deploymentToRetire, cleanupOptions);
+                try {
+                    auto cleanupConn = Database::getInstance().getConnection();
+                    pqxx::work cleanupTxn(*cleanupConn);
+                    if (cleanup.success) {
+                        cleanupTxn.exec_params(
+                            "UPDATE deployments "
+                            "SET status = 'retired', logs = COALESCE(logs, '') || E'Environment superseded by a newer successful commit; runtime and image were cleaned up.\\n', updated_at = NOW() "
+                            "WHERE id = $1",
+                            deploymentToRetire
+                        );
+                    } else {
+                        cleanupTxn.exec_params(
+                            "UPDATE deployments "
+                            "SET logs = COALESCE(logs, '') || $2 || E'\\n', updated_at = NOW() "
+                            "WHERE id = $1",
+                            deploymentToRetire,
+                            "Cleanup after successful replacement failed: " + cleanup.error
+                        );
+                    }
+                    cleanupTxn.commit();
+                    broadcastDeploymentSummary(deploymentToRetire);
+                } catch (const std::exception& cleanupDbError) {
+                    spdlog::warn("Failed to persist replacement cleanup result for {}: {}", deploymentToRetire, cleanupDbError.what());
+                }
+            }
             completeJob(job);
         } else {
             failJob(job, buildResult.error.empty() ? "Deployment build failed" : buildResult.error, false);
@@ -948,4 +1615,4 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
     }
 }
 
-} // namespace aids
+} // namespace dokscp

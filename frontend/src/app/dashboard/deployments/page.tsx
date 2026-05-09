@@ -5,7 +5,7 @@ import api from "@/lib/api";
 import { AxiosError } from "axios";
 import { Card, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Bot, Cpu, HardDrive, Loader2, Terminal, RefreshCw, CheckCircle, XCircle, Server, Maximize2, Minimize2, Pause, Play, Trash2, AlertTriangle, RotateCcw, Globe, Thermometer, Gauge, Search, SlidersHorizontal, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { Activity, Bot, Cpu, HardDrive, Loader2, Terminal, RefreshCw, CheckCircle, XCircle, Server, Maximize2, Minimize2, Pause, Play, Trash2, AlertTriangle, RotateCcw, Globe, Thermometer, Gauge, Search, SlidersHorizontal, ChevronLeft, ChevronRight, X, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
@@ -44,9 +44,16 @@ interface Deployment {
   id: string;
   project_id: string;
   project_name: string;
+  repo_url?: string;
   status: string;
   version: string;
   commit_hash: string;
+  environment_id?: string;
+  environment_name?: string;
+  branch?: string;
+  commit_sha?: string;
+  trigger_source?: string;
+  github_delivery_id?: string;
   image_name: string;
   k8s_namespace: string;
   k8s_deployment_name: string;
@@ -228,7 +235,21 @@ function upsertDeployment(list: Deployment[], nextDeployment: Deployment) {
   const nextList = [...list];
   const index = nextList.findIndex((deployment) => deployment.id === nextDeployment.id);
   if (index >= 0) {
-    nextList[index] = nextDeployment;
+    const previous = nextList[index];
+    nextList[index] = {
+      ...previous,
+      ...nextDeployment,
+      project_name: nextDeployment.project_name || previous.project_name,
+      repo_url: nextDeployment.repo_url || previous.repo_url,
+      environment_id: nextDeployment.environment_id || previous.environment_id,
+      environment_name: nextDeployment.environment_name || previous.environment_name,
+      branch: nextDeployment.branch || previous.branch,
+      commit_hash: nextDeployment.commit_hash || previous.commit_hash,
+      commit_sha: nextDeployment.commit_sha || previous.commit_sha,
+      trigger_source: nextDeployment.trigger_source || previous.trigger_source,
+      github_delivery_id: nextDeployment.github_delivery_id || previous.github_delivery_id,
+      created_at: nextDeployment.created_at || previous.created_at,
+    };
   } else {
     nextList.unshift(nextDeployment);
   }
@@ -247,6 +268,37 @@ function formatRuntimeStatus(status: string | undefined) {
     .split("_")
     .join(" ")
     .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function normalizeGitHubRepoUrl(repoUrl: string | undefined) {
+  if (!repoUrl) {
+    return "";
+  }
+
+  const trimmed = repoUrl.trim().replace(/\.git$/, "").replace(/\/$/, "");
+  if (trimmed.startsWith("git@github.com:")) {
+    return `https://github.com/${trimmed.slice("git@github.com:".length)}`;
+  }
+
+  return trimmed;
+}
+
+function realCommitSha(deployment: Partial<Deployment>) {
+  const candidate = (deployment.commit_sha || deployment.commit_hash || "").trim();
+  return /^[0-9a-f]{7,40}$/i.test(candidate) ? candidate : "";
+}
+
+function githubCommitUrl(deployment: Partial<Deployment>) {
+  const sha = realCommitSha(deployment);
+  const repoUrl = normalizeGitHubRepoUrl(deployment.repo_url);
+  if (!sha || !repoUrl.includes("github.com/")) {
+    return "";
+  }
+  return `${repoUrl}/commit/${sha}`;
+}
+
+function shortCommit(sha: string) {
+  return sha ? sha.slice(0, 7) : "-";
 }
 
 function normalizeRuntimeExposureMode(value: string | undefined): RuntimeExposureMode {
@@ -433,8 +485,11 @@ export default function DeploymentsPage() {
         normalizedSearchQuery.length === 0 ||
         [
           deployment.project_name,
+          deployment.environment_name,
+          deployment.branch,
           deployment.version,
           deployment.commit_hash,
+          deployment.commit_sha,
           deployment.image_name,
           deployment.runtime_url,
           deployment.runtime_provider,
@@ -564,10 +619,15 @@ export default function DeploymentsPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "built":
-      case "running":
         return (
           <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1">
             <CheckCircle className="w-3 h-3" /> Built
+          </Badge>
+        );
+      case "running":
+        return (
+          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1">
+            <CheckCircle className="w-3 h-3" /> Running
           </Badge>
         );
       case "failed":
@@ -713,38 +773,65 @@ export default function DeploymentsPage() {
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Project</TableHead>
                 <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</TableHead>
+                <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Branch</TableHead>
+                <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Commit</TableHead>
                 <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Version</TableHead>
                 <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Date</TableHead>
-                <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-right">Actions</TableHead>
+                <TableHead className="w-px whitespace-nowrap px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-                {visibleDeployments.map((dep) => (
+                {visibleDeployments.map((dep) => {
+                  const commitSha = realCommitSha(dep);
+                  const commitUrl = githubCommitUrl(dep);
+                  return (
                   <TableRow key={dep.id} className="hover:bg-muted/30 transition-colors group">
                     <TableCell className="px-6 py-4">
                       <div className="font-medium text-foreground">{dep.project_name}</div>
-                      {dep.commit_hash && (
-                        <div className="text-xs text-muted-foreground font-mono mt-0.5">
-                          {dep.commit_hash.substring(0, 7)}
+                      {dep.environment_name && (
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {dep.environment_name}
                         </div>
                       )}
                     </TableCell>
                     <TableCell className="px-6 py-4">{getStatusBadge(dep.status)}</TableCell>
+                    <TableCell className="px-6 py-4">
+                      <div className="font-mono text-sm text-foreground">{dep.branch || "-"}</div>
+                    </TableCell>
+                    <TableCell className="px-6 py-4">
+                      {commitUrl ? (
+                        <a
+                          href={commitUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 font-mono text-sm text-primary hover:underline"
+                          title={commitSha}
+                        >
+                          {shortCommit(commitSha)}
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
+                      ) : (
+                        <span className="font-mono text-sm text-muted-foreground">
+                          {commitSha ? shortCommit(commitSha) : "-"}
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="px-6 py-4">
                       <span className="text-sm text-muted-foreground">{dep.version}</span>
                     </TableCell>
                     <TableCell className="px-6 py-4 text-sm text-muted-foreground">
                       {new Date(dep.created_at).toLocaleDateString()}
                     </TableCell>
-                    <TableCell className="px-6 py-4">
-                      <div className="flex justify-end gap-2">
+                    <TableCell className="px-6 py-4 whitespace-nowrap">
+                      <div className="ml-auto w-max max-w-full overflow-x-auto">
+                        <div className="flex w-max items-center justify-end gap-2 whitespace-nowrap pb-1">
                         {(dep.status === "pending" || dep.status === "failed") && (
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => triggerBuildMutation.mutate(dep.id)}
                             disabled={triggerBuildMutation.isPending}
-                            className="gap-2"
+                            className="shrink-0 gap-2"
                           >
                             {triggerBuildMutation.isPending ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -758,7 +845,7 @@ export default function DeploymentsPage() {
                           variant="ghost" 
                           size="sm" 
                           onClick={() => setSelectedDeployment(dep.id)}
-                          className="text-muted-foreground hover:text-foreground hover:bg-muted"
+                          className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
                         >
                           <Terminal className="w-4 h-4 mr-2" />
                           Logs
@@ -768,7 +855,7 @@ export default function DeploymentsPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => setRuntimeDeployment(dep)}
-                            className="text-muted-foreground hover:text-foreground hover:bg-muted"
+                            className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
                           >
                             <Server className="w-4 h-4 mr-2" />
                             Runtime
@@ -779,7 +866,7 @@ export default function DeploymentsPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => setMetricsDeployment(dep)}
-                            className="text-muted-foreground hover:text-foreground hover:bg-muted"
+                            className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
                           >
                             <Activity className="w-4 h-4 mr-2" />
                             Metrics
@@ -789,15 +876,17 @@ export default function DeploymentsPage() {
                           variant="ghost"
                           size="sm"
                           onClick={() => setDeleteDeployment(dep)}
-                          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                         >
                           <Trash2 className="w-4 h-4 mr-2" />
                           Delete
                         </Button>
+                        </div>
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+                })}
             </TableBody>
           </Table>
 
@@ -1034,6 +1123,9 @@ function DeploymentLogsDialog({
   });
 
   const initialLogs = initialData?.deployment?.logs || "";
+  const initialDeployment = initialData?.deployment as Partial<Deployment> | undefined;
+  const logCommitSha = initialDeployment ? realCommitSha(initialDeployment) : "";
+  const logCommitUrl = initialDeployment ? githubCommitUrl(initialDeployment) : "";
   const hasCapturedFailureReason =
     initialLogs.includes("failed with exit code") ||
     initialLogs.includes("timed out after") ||
@@ -1041,14 +1133,41 @@ function DeploymentLogsDialog({
     initialLogs.includes("Command exited with status");
   const displayLogs = liveLogs && liveLogs.length >= initialLogs.length ? liveLogs : initialLogs;
   const displayStatus = liveStatus ?? initialData?.deployment?.status ?? "loading";
+  const displayLogTail = displayLogs.length > 5000 ? displayLogs.slice(-5000) : displayLogs;
+  const buildFailureExplainPrompt = [
+    "Explain this Docker/deployment build failure clearly and helpfully.",
+    "",
+    `Deployment ID: ${deploymentId}`,
+    `Status: ${displayStatus}`,
+    "",
+    "Use these sections:",
+    "## What happened",
+    "## Why it happened",
+    "## How to fix it",
+    "## Next action",
+    "",
+    "Log excerpt:",
+    "```text",
+    displayLogTail,
+    "```",
+  ].join("\n");
   const buildAnalysisMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post(`/deployments/${deploymentId}/ai/analyze-build-failure`, {
-        runtime: {
-          status: displayStatus,
+      const res = await api.post(
+        "/ai/chat",
+        {
+          message: buildFailureExplainPrompt,
+          command: "explain_build_failure",
+          model: "",
+          model_mode: "fast",
+          deployment_id: deploymentId,
+          runtime: {
+            status: displayStatus,
+            source: "deployment_build_logs_dialog",
+          },
         },
-        logs: displayLogs,
-      });
+        { timeout: 60000 }
+      );
       return res.data as AiAnalysisResult;
     },
     onSuccess: (result) => {
@@ -1143,8 +1262,26 @@ function DeploymentLogsDialog({
                 <Terminal className="w-5 h-5 text-primary" />
                 Build Logs
               </DialogTitle>
-              <DialogDescription className="text-muted-foreground font-medium flex items-center gap-2">
+              <DialogDescription className="text-muted-foreground font-medium flex flex-wrap items-center gap-2">
                 Deployment ID: <span className="font-mono text-xs">{deploymentId}</span>
+                <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+                Branch: <span className="font-mono text-xs">{initialDeployment?.branch || "-"}</span>
+                <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+                Commit:{" "}
+                {logCommitUrl ? (
+                  <a
+                    href={logCommitUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline"
+                    title={logCommitSha}
+                  >
+                    {shortCommit(logCommitSha)}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                ) : (
+                  <span className="font-mono text-xs">{logCommitSha ? shortCommit(logCommitSha) : "-"}</span>
+                )}
                 <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
                 Status: 
                 <span className={cn(
@@ -1206,9 +1343,9 @@ function DeploymentLogsDialog({
                     <Bot className="h-4 w-4 text-primary" />
                     AI build diagnosis
                   </div>
-                  <p className="mt-1 text-sm text-muted-foreground">
+                  <pre className="mt-1 whitespace-pre-wrap font-sans text-sm text-muted-foreground">
                     {buildAnalysis.summary || buildAnalysis.error || "No summary returned."}
-                  </p>
+                  </pre>
                 </div>
                 <Badge variant={buildAnalysis.status === "error" ? "destructive" : "outline"}>
                   {Math.round((buildAnalysis.confidence || 0) * 100)}% confidence
@@ -1285,7 +1422,7 @@ function RuntimeDialog({
   onViewLogs: (deploymentId: string) => void;
   onChanged: () => void;
 }) {
-  const [namespaceInput, setNamespaceInput] = useState(deployment.k8s_namespace || "aids-apps");
+  const [namespaceInput, setNamespaceInput] = useState(deployment.k8s_namespace || "dokscp-apps");
   const [replicasDraft, setReplicasDraft] = useState<string | null>(null);
   const [portInput, setPortInput] = useState("3000");
   const [resourcePreset, setResourcePreset] = useState<RuntimeResourcePreset>("small");
@@ -1296,6 +1433,11 @@ function RuntimeDialog({
   );
   const socketRef = useRef<WebSocket | null>(null);
   const queryClient = useQueryClient();
+  const wantsLocalDocker =
+    deployment.runtime_provider === "local_docker" ||
+    deployment.runtime_exposure === "local_docker" ||
+    deployment.runtime_snapshot?.provider === "local_docker" ||
+    deployment.runtime_snapshot?.exposure_mode === "local_docker";
 
   const runtimeQuery = useQuery({
     queryKey: ["kubernetes-status", deployment.id],
@@ -1327,27 +1469,32 @@ function RuntimeDialog({
 
   const deployMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post(`/deployments/${deployment.id}/kubernetes/deploy`, {
-        namespace: namespaceInput.trim(),
-        exposure_mode: exposureMode,
-        replicas: requestedReplicas,
-        container_port: Number.parseInt(portInput, 10) || 3000,
-        resource_preset: resourcePreset,
-        health_path: healthPath.trim() || "/",
-      });
+      const containerPort = Number.parseInt(portInput, 10) || 3000;
+      const res = wantsLocalDocker
+        ? await api.post(`/deployments/${deployment.id}/docker/deploy`, {
+            container_port: containerPort,
+          })
+        : await api.post(`/deployments/${deployment.id}/kubernetes/deploy`, {
+            namespace: namespaceInput.trim(),
+            exposure_mode: exposureMode,
+            replicas: requestedReplicas,
+            container_port: containerPort,
+            resource_preset: resourcePreset,
+            health_path: healthPath.trim() || "/",
+          });
       return res.data;
     },
     onSuccess: () => {
       setReplicasDraft(null);
-      toast.success("Kubernetes deployment started");
+      toast.success(wantsLocalDocker ? "Local Docker runtime started" : "Kubernetes deployment started");
       runtimeQuery.refetch();
       onChanged();
     },
     onError: (error: unknown) => {
       const message =
         error instanceof AxiosError
-          ? (error.response?.data as { error?: string } | undefined)?.error || "Failed to deploy to Kubernetes"
-          : "Failed to deploy to Kubernetes";
+          ? (error.response?.data as { error?: string } | undefined)?.error || "Failed to deploy runtime"
+          : "Failed to deploy runtime";
       toast.error(message);
     },
   });
@@ -1421,6 +1568,11 @@ function RuntimeDialog({
     runtime?.provider === "remote_docker" ||
     deployment.runtime_provider === "remote_docker" ||
     deployment.runtime_exposure === "remote_docker";
+  const isLocalDocker =
+    runtime?.provider === "local_docker" ||
+    deployment.runtime_provider === "local_docker" ||
+    deployment.runtime_exposure === "local_docker" ||
+    wantsLocalDocker;
   const isPaused = Boolean(
     runtime?.paused ||
     deployment.runtime_paused ||
@@ -1481,6 +1633,8 @@ function RuntimeDialog({
     "steps",
     "recommendations",
   ]);
+  const commitSha = realCommitSha(deployment);
+  const commitUrl = githubCommitUrl(deployment);
 
   useEffect(() => {
     const wsBaseUrl = getWebSocketBaseUrl();
@@ -1516,11 +1670,13 @@ function RuntimeDialog({
             <div className="min-w-0">
               <DialogTitle className="flex items-center gap-2">
                 <Server className="h-5 w-5 text-primary" />
-                {isRemoteDocker ? "Remote Runtime" : "Kubernetes Runtime"}
+                {isRemoteDocker ? "Remote Runtime" : isLocalDocker ? "Local Docker Runtime" : "Kubernetes Runtime"}
               </DialogTitle>
               <DialogDescription className="mt-2">
                 {isRemoteDocker
                   ? `Monitor the live remote Docker runtime for ${deployment.project_name}.`
+                  : isLocalDocker
+                    ? `Run and monitor the local Docker container for ${deployment.project_name}.`
                   : `Manage the live runtime for ${deployment.project_name}.`}
               </DialogDescription>
             </div>
@@ -1532,7 +1688,7 @@ function RuntimeDialog({
         </DialogHeader>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-0">
-          {!isRemoteDocker && (
+          {!isRemoteDocker && !isLocalDocker && (
             <>
               <div className="grid shrink-0 gap-4 md:grid-cols-3">
                 <div className="min-w-0 space-y-2">
@@ -1636,6 +1792,35 @@ function RuntimeDialog({
             <div className="grid gap-4">
               <div className="min-w-0 rounded-xl border border-border bg-muted/30 p-4 text-sm">
                 <div className="grid gap-3.5">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="min-w-0">
+                      <span className="text-muted-foreground">Branch</span>
+                      <div className="font-mono text-xs text-foreground">{deployment.branch || "-"}</div>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="text-muted-foreground">Commit</span>
+                      <div className="min-w-0 break-all">
+                        {commitUrl ? (
+                          <a
+                            href={commitUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline"
+                            title={commitSha}
+                          >
+                            {shortCommit(commitSha)}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : (
+                          <span className="font-mono text-xs text-foreground">{commitSha ? shortCommit(commitSha) : "-"}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-muted-foreground">Version</span>
+                    <div className="break-all font-mono text-xs text-foreground">{deployment.version || "-"}</div>
+                  </div>
                   <div className="min-w-0">
                     <span className="text-muted-foreground">Build image</span>
                     <div className="break-all font-mono text-xs text-foreground">{deployment.image_name || "-"}</div>
@@ -1670,55 +1855,55 @@ function RuntimeDialog({
                     <span className="text-muted-foreground">{isRemoteDocker ? "Runtime provider" : "Exposure"}</span>
                     <div className="flex items-center gap-2 text-foreground">
                       <Globe className="h-3.5 w-3.5 text-primary" />
-                      {formatRuntimeStatus(isRemoteDocker ? "remote_docker" : activeExposureMode)}
+                      {formatRuntimeStatus(isRemoteDocker ? "remote_docker" : isLocalDocker ? "local_docker" : activeExposureMode)}
                     </div>
                   </div>
-                  {!isRemoteDocker && (
+                  {!isRemoteDocker && !isLocalDocker && (
                     <div className="min-w-0">
                       <span className="text-muted-foreground">Deployment</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime?.deployment_name || deployment.k8s_deployment_name || "-"}</div>
                     </div>
                   )}
-                  {!isRemoteDocker && (
+                  {!isRemoteDocker && !isLocalDocker && (
                     <div className="min-w-0">
                       <span className="text-muted-foreground">Service</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime?.service_name || deployment.k8s_service_name || "-"}</div>
                     </div>
                   )}
-                  {!isRemoteDocker && (runtime?.ingress_name || deployment.k8s_ingress_name) && (
+                  {!isRemoteDocker && !isLocalDocker && (runtime?.ingress_name || deployment.k8s_ingress_name) && (
                     <div className="min-w-0">
                       <span className="text-muted-foreground">Ingress</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime?.ingress_name || deployment.k8s_ingress_name}</div>
                     </div>
                   )}
-                  {!isRemoteDocker && runtime?.ingress_host && (
+                  {!isRemoteDocker && !isLocalDocker && runtime?.ingress_host && (
                     <div className="min-w-0">
                       <span className="text-muted-foreground">Ingress host</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime.ingress_host}</div>
                     </div>
                   )}
-                  {isRemoteDocker && (
+                  {(isRemoteDocker || isLocalDocker) && (
                     <div className="min-w-0">
                       <span className="text-muted-foreground">Container</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime?.container_name || deployment.remote_container_name || "-"}</div>
                     </div>
                   )}
-                  {isRemoteDocker && runtime?.image && (
+                  {(isRemoteDocker || isLocalDocker) && runtime?.image && (
                     <div className="min-w-0">
-                      <span className="text-muted-foreground">Remote image</span>
+                      <span className="text-muted-foreground">{isLocalDocker ? "Local image" : "Remote image"}</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime.image}</div>
                     </div>
                   )}
-                  {isRemoteDocker && runtime?.published_ports && (
+                  {(isRemoteDocker || isLocalDocker) && runtime?.published_ports && (
                     <div className="min-w-0">
                       <span className="text-muted-foreground">Published ports</span>
                       <div className="break-all font-mono text-xs text-foreground">{runtime.published_ports}</div>
                     </div>
                   )}
                   <div className="min-w-0">
-                    <span className="text-muted-foreground">{isRemoteDocker ? "Container health" : "Ready replicas"}</span>
+                    <span className="text-muted-foreground">{isRemoteDocker || isLocalDocker ? "Container health" : "Ready replicas"}</span>
                     <div className="text-foreground">
-                      {isRemoteDocker
+                      {isRemoteDocker || isLocalDocker
                         ? isPaused
                           ? "paused"
                           : `${runtime?.status === "running" ? "running" : "not ready"}`
@@ -1784,7 +1969,7 @@ function RuntimeDialog({
                     )}
                   </div>
                 )}
-                {!isRemoteDocker && isDeployed && (
+                {!isRemoteDocker && !isLocalDocker && isDeployed && (
                   <div className="mt-4 rounded-lg border border-border bg-background/60 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
@@ -1809,7 +1994,7 @@ function RuntimeDialog({
                 )}
                 <div className="mt-4 rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
                   {isRemoteDocker
-                    ? "This runtime is running on the connected remote host. The container lifecycle is managed over SSH/Tailscale, while build and deployment logs still stay visible in AIDS."
+                    ? "This runtime is running on the connected remote host. The container lifecycle is managed over SSH/Tailscale, while build and deployment logs still stay visible in DOKSCP."
                     : `Current target: ${currentDesiredReplicas} replica${currentDesiredReplicas === 1 ? "" : "s"}.${isDeployed ? ` Ready now: ${currentReadyReplicas}.` : ""} ${activeExposureMode === "ingress" ? "Requests should flow through the ingress layer." : "Requests are currently exposed directly through the Kubernetes service."}`}
                 </div>
               </div>
@@ -1862,10 +2047,10 @@ function RuntimeDialog({
               disabled={deployMutation.isPending || !deployment.image_name}
             >
               {deployMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
-              Deploy to Kubernetes
+              {wantsLocalDocker ? "Deploy to Docker" : "Deploy to Kubernetes"}
             </Button>
           )}
-          {!isRemoteDocker && isDeployed && (
+          {!isRemoteDocker && !isLocalDocker && isDeployed && (
             <>
               <Button
                 type="button"

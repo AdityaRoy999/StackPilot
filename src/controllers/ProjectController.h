@@ -17,7 +17,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace aids {
+namespace dokscp {
 
 class ProjectController : public drogon::HttpController<ProjectController> {
 public:
@@ -29,6 +29,7 @@ public:
     ADD_METHOD_TO(ProjectController::deleteProject, "/api/v1/projects/{id}", drogon::Delete);
     ADD_METHOD_TO(ProjectController::listGitHubRepos, "/api/v1/github/repos", drogon::Get);
     ADD_METHOD_TO(ProjectController::listGitHubRepos, "/api/v1/github/repos", drogon::Post);
+    ADD_METHOD_TO(ProjectController::listGitHubBranches, "/api/v1/github/branches", drogon::Post);
     ADD_METHOD_TO(ProjectController::browseLocalSources, "/api/v1/local/sources/browse", drogon::Post);
     METHOD_LIST_END
 
@@ -47,6 +48,8 @@ public:
                        const std::string& id);
     void listGitHubRepos(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+    void listGitHubBranches(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void browseLocalSources(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback);
 
@@ -55,4 +58,4 @@ private:
     std::string extractUserId(const drogon::HttpRequestPtr& req);
 };
 
-} // namespace aids
+} // namespace dokscp

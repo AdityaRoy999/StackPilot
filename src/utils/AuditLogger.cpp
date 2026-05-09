@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cctype>
 
-namespace aids {
+namespace dokscp {
 namespace {
 
 std::string trim(const std::string& value) {
@@ -105,4 +105,4 @@ void AuditLogger::recordFromRequest(const drogon::HttpRequestPtr& req,
     record(userId, action, targetType, targetId, clientIp(req), userAgent(req), metadata);
 }
 
-} // namespace aids
+} // namespace dokscp

@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 class AiRedaction {
 public:
@@ -17,4 +17,4 @@ private:
     static bool isSensitiveKey(const std::string& key);
 };
 
-} // namespace aids
+} // namespace dokscp

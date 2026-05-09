@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     -- Build/deploy logs (will be large in production, consider separate table later)
     logs        TEXT DEFAULT '',
 
-    -- Container image name once built (e.g., "aids-platform/myapp:v1")
+    -- Container image name once built (e.g., "dokscp-platform/myapp:v1")
     image_name  VARCHAR(255) DEFAULT '',
 
     created_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

@@ -10,7 +10,7 @@
 #include <functional>
 #include <vector>
 
-namespace aids {
+namespace dokscp {
 
 struct SshConnectionConfig;
 struct BuildEnvVar {
@@ -38,6 +38,8 @@ public:
                                     const std::string& repoUrl,
                                     const std::string& version,
                                     const std::string& githubPat = "",
+                                    const std::string& branch = "",
+                                    const std::string& commitSha = "",
                                     const std::vector<BuildEnvVar>& envVars = {},
                                     LogCallback onLogLine = nullptr) const;
     BuildResult buildFromSshSource(const std::string& deploymentId,
@@ -51,6 +53,11 @@ public:
                                      const std::string& version,
                                      const std::vector<BuildEnvVar>& envVars = {},
                                      LogCallback onLogLine = nullptr) const;
+    BuildResult buildFromArtifact(const std::string& deploymentId,
+                                  const std::string& artifactPath,
+                                  const std::string& version,
+                                  const std::vector<BuildEnvVar>& envVars = {},
+                                  LogCallback onLogLine = nullptr) const;
     BuildResult buildAndRunOnRemoteDocker(const std::string& deploymentId,
                                           const SshConnectionConfig& sshConfig,
                                           const std::string& remotePath,
@@ -65,10 +72,21 @@ public:
                                                     const std::string& remoteWorkspacePath,
                                                     const std::string& version,
                                                     const std::string& githubPat,
+                                                    const std::string& branch,
+                                                    const std::string& commitSha,
                                                     const std::string& projectName,
                                                     int containerPort,
                                                     const std::vector<BuildEnvVar>& envVars = {},
                                                     LogCallback onLogLine = nullptr) const;
+    BuildResult buildArtifactAndRunOnRemoteDocker(const std::string& deploymentId,
+                                                  const SshConnectionConfig& sshConfig,
+                                                  const std::string& artifactPath,
+                                                  const std::string& remoteWorkspacePath,
+                                                  const std::string& version,
+                                                  const std::string& projectName,
+                                                  int containerPort,
+                                                  const std::vector<BuildEnvVar>& envVars = {},
+                                                  LogCallback onLogLine = nullptr) const;
 
 private:
     std::filesystem::path workspaceRoot_;
@@ -85,6 +103,8 @@ private:
     bool copyLocalSourceTree(const std::filesystem::path& source,
                              const std::filesystem::path& destination,
                              std::string& reason) const;
+    bool validateTarArchive(const std::filesystem::path& archivePath,
+                            std::string& reason) const;
 
     int runCommandCapture(const std::string& command,
                           const std::filesystem::path& outputFile,
@@ -109,4 +129,4 @@ private:
                                         LogCallback onLogLine) const;
 };
 
-} // namespace aids
+} // namespace dokscp

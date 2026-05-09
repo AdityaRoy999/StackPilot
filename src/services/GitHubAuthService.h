@@ -7,7 +7,7 @@
 #include <functional>
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 struct GitHubIdentity {
     std::string id;
@@ -25,6 +25,7 @@ public:
     bool isConfigured() const;
     std::string buildAuthorizationUrl(const std::string& state) const;
     std::string getCallbackUrl() const;
+    std::string getExplicitOAuthRedirectUrl() const;
 
     void exchangeCode(const std::string& code,
                       SuccessCallback onSuccess,
@@ -35,4 +36,4 @@ private:
     std::string getClientSecret() const;
 };
 
-} // namespace aids
+} // namespace dokscp

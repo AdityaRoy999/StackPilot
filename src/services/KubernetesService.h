@@ -1,5 +1,5 @@
 // ============================================================
-// KubernetesService.h - Phase 4 Kubernetes deployment engine
+// KubernetesService.h - Kubernetes deployment engine
 // ============================================================
 
 #pragma once
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace aids {
+namespace dokscp {
 
 struct KubernetesDeployOptions {
     std::string deploymentId;
@@ -132,4 +132,4 @@ private:
     bool runJsonCommand(const std::string& command, Json::Value& output, std::string& rawOutput) const;
 };
 
-} // namespace aids
+} // namespace dokscp

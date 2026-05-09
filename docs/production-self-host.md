@@ -1,6 +1,6 @@
-# AIDS Production Self-Host Guide
+# DOKSCP Production Self-Host Guide
 
-This guide is for running AIDS on a VPS with a real domain. The same code still works locally with the normal `docker-compose.yml`.
+This guide is for running DOKSCP on a VPS with a real domain. The same code still works locally with the normal `docker-compose.yml`.
 
 ## What Production Mode Adds
 
@@ -26,18 +26,18 @@ This guide is for running AIDS on a VPS with a real domain. The same code still 
 1. Clone the repo on the VPS.
 
    ```bash
-   git clone https://github.com/your-org/aids.git
-   cd aids
+   git clone https://github.com/your-org/dokscp.git
+   cd dokscp
    ```
 
 2. Generate a production `.env`.
 
    ```bash
    chmod +x scripts/new-production-env.sh
-   ./scripts/new-production-env.sh aids.example.com admin@example.com
+   ./scripts/new-production-env.sh dokscp.example.com admin@example.com
    ```
 
-   Replace `aids.example.com` with your real domain.
+   Replace `dokscp.example.com` with your real domain.
 
 3. Fill OAuth values in `.env` if you want Google/GitHub sign-in.
 
@@ -71,7 +71,7 @@ Local mode can keep HTTP, localhost CORS, relaxed rate limits, and your Docker D
 
 ## Security Notes
 
-AIDS controls Docker, SSH, env vars, and Kubernetes. Those are powerful permissions. For production:
+DOKSCP controls Docker, SSH, env vars, and Kubernetes. Those are powerful permissions. For production:
 
 - Use HTTPS only.
 - Use strong random `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, and `DB_PASSWORD`.
@@ -87,7 +87,7 @@ AIDS controls Docker, SSH, env vars, and Kubernetes. Those are powerful permissi
 
 For local or single-node testing, NodePort is fine. For a production-like domain, Ingress is better.
 
-If you want AIDS to control a Kubernetes cluster from the backend container, set:
+If you want DOKSCP to control a Kubernetes cluster from the backend container, set:
 
 ```env
 KUBECONFIG_HOST_PATH=/absolute/path/to/kubeconfig
@@ -103,13 +103,13 @@ The production compose file mounts `KUBECONFIG_HOST_PATH` to `/root/.kube/config
 Create a Postgres backup:
 
 ```bash
-docker exec aids-postgres pg_dump -U "$DB_USER" "$DB_NAME" > aids-backup.sql
+docker exec dokscp-postgres pg_dump -U "$DB_USER" "$DB_NAME" > dokscp-backup.sql
 ```
 
 Restore into a fresh database:
 
 ```bash
-cat aids-backup.sql | docker exec -i aids-postgres psql -U "$DB_USER" "$DB_NAME"
+cat dokscp-backup.sql | docker exec -i dokscp-postgres psql -U "$DB_USER" "$DB_NAME"
 ```
 
 ## Updating

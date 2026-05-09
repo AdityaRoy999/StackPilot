@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace aids {
+namespace dokscp {
 
 struct SshConnectionConfig {
     std::string connectionType = "ssh";
@@ -52,18 +52,34 @@ public:
                                      int timeoutSeconds,
                                      SshLogCallback onLogLine = nullptr) const;
     SshOperationResult probeHost(const SshConnectionConfig& config) const;
-    SshOperationResult provisionDockerHost(const SshConnectionConfig& config) const;
-    SshOperationResult provisionLightweightKubernetesHost(const SshConnectionConfig& config) const;
+    SshOperationResult provisionDockerHost(const SshConnectionConfig& config, const std::string& sudoPassword = "") const;
+    SshOperationResult provisionLightweightKubernetesHost(const SshConnectionConfig& config, const std::string& sudoPassword = "") const;
+    SshOperationResult initializeK3sControlPlane(const SshConnectionConfig& config,
+                                                 const std::string& sudoPassword = "",
+                                                 const std::string& advertiseAddress = "",
+                                                 const std::string& tlsSan = "") const;
+    SshOperationResult joinK3sWorker(const SshConnectionConfig& config,
+                                     const std::string& serverUrl,
+                                     const std::string& nodeToken,
+                                     const std::string& sudoPassword = "") const;
+    SshOperationResult inspectK3sCluster(const SshConnectionConfig& config) const;
     SshOperationResult runRemoteCommand(const SshConnectionConfig& config,
                                         const std::string& workingDirectory,
                                         const std::string& command,
                                         int timeoutSeconds) const;
+    SshOperationResult uploadFile(const SshConnectionConfig& config,
+                                  const std::string& localPath,
+                                  const std::string& remotePath,
+                                  int timeoutSeconds,
+                                  SshLogCallback onLogLine = nullptr) const;
     SshOperationResult cloneGitRepository(const SshConnectionConfig& config,
                                           const std::string& workingDirectory,
                                           const std::string& repositoryUrl,
                                           const std::string& targetDirectory,
                                           int timeoutSeconds,
-                                          const std::string& gitToken = "") const;
+                                          const std::string& gitToken = "",
+                                          const std::string& branch = "",
+                                          const std::string& commitSha = "") const;
     SshOperationResult buildAndRunDockerProject(const SshConnectionConfig& config,
                                                 const std::string& remotePath,
                                                 const std::string& imageName,
@@ -124,4 +140,4 @@ private:
     void cleanupSessionFiles(const SessionFiles& files) const;
 };
 
-} // namespace aids
+} // namespace dokscp

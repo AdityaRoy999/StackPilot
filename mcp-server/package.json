@@ -1,0 +1,17 @@
+{
+  "name": "@dokscp/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP (Model Context Protocol) server for the DOKSCP deployment platform",
+  "type": "module",
+  "bin": {
+    "dokscp-mcp": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.25.76"
+  }
+}

@@ -6,7 +6,7 @@
 
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 class PasswordHelper {
 public:
@@ -16,4 +16,4 @@ public:
                                const std::string& hash);
 };
 
-} // namespace aids
+} // namespace dokscp

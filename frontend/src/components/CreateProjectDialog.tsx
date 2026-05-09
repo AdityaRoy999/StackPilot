@@ -10,6 +10,13 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -30,7 +37,9 @@ import {
   Plus,
   RefreshCw,
   Server,
+  ShieldCheck,
   Terminal,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
@@ -48,6 +57,18 @@ interface GitHubRepo {
 interface GitHubReposResponse {
   repositories?: GitHubRepo[];
   warnings?: string[];
+}
+
+interface GitHubBranch {
+  name: string;
+  protected?: boolean;
+  commit_sha?: string;
+}
+
+interface GitHubBranchesResponse {
+  repository: string;
+  branches: GitHubBranch[];
+  count: number;
 }
 
 interface MeResponse {
@@ -102,6 +123,16 @@ interface LocalBrowseResponse {
   entries: LocalBrowseEntry[];
 }
 
+interface ProjectEnvironmentDraft {
+  id: string;
+  name: string;
+  branch: string;
+  auto_deploy: boolean;
+  require_ci: boolean;
+  cleanup_previous_on_success: boolean;
+  env_vars: ProjectEnvVar[];
+}
+
 function GuideSection({ heading, items }: { heading: string; items: string[] }) {
   return (
     <div className="rounded-xl border border-border bg-muted/20 p-4">
@@ -131,6 +162,29 @@ function getRemoteHomePath(username?: string) {
   return username === "root" ? "/root" : `/home/${username}`;
 }
 
+function defaultProjectEnvironments(): ProjectEnvironmentDraft[] {
+  return [
+    {
+      id: "development",
+      name: "development",
+      branch: "dev",
+      auto_deploy: true,
+      require_ci: false,
+      cleanup_previous_on_success: true,
+      env_vars: [],
+    },
+    {
+      id: "production",
+      name: "production",
+      branch: "main",
+      auto_deploy: false,
+      require_ci: true,
+      cleanup_previous_on_success: false,
+      env_vars: [],
+    },
+  ];
+}
+
 export function CreateProjectDialog() {
   const [open, setOpen] = useState(false);
   const [sourceType, setSourceType] = useState<SourceType>("github");
@@ -139,6 +193,7 @@ export function CreateProjectDialog() {
   const [repoUrl, setRepoUrl] = useState("");
   const [githubPat, setGithubPat] = useState("");
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
+  const [branches, setBranches] = useState<GitHubBranch[]>([]);
   const [envVars, setEnvVars] = useState<ProjectEnvVar[]>([]);
   const [sshConnectionId, setSshConnectionId] = useState("");
   const [sshSourcePath, setSshSourcePath] = useState("");
@@ -159,6 +214,7 @@ export function CreateProjectDialog() {
   const [showRemoteTerminal, setShowRemoteTerminal] = useState(false);
   const [remoteTerminalCwd, setRemoteTerminalCwd] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
+  const [environments, setEnvironments] = useState<ProjectEnvironmentDraft[]>(() => defaultProjectEnvironments());
 
   const queryClient = useQueryClient();
   const meQuery = useQuery({
@@ -215,6 +271,51 @@ export function CreateProjectDialog() {
     },
   });
 
+  const fetchBranchesMutation = useMutation({
+    mutationFn: async (targetRepoUrl: string) => {
+      const res = await api.post("/github/branches", {
+        repo_url: targetRepoUrl,
+        pat: githubPat || undefined,
+      });
+      return res.data as GitHubBranchesResponse;
+    },
+    onSuccess: (data) => {
+      const nextBranches = data.branches || [];
+      setBranches(nextBranches);
+      if (nextBranches.length === 0) {
+        toast.warning("No branches were returned for this repository");
+        return;
+      }
+
+      const names = nextBranches.map((branch) => branch.name);
+      setEnvironments((current) => {
+        const used = new Set<string>();
+        return current.map((environment) => {
+          const preferred =
+            environment.name.toLowerCase() === "production"
+              ? (names.includes("main") ? "main" : names.includes("master") ? "master" : names[0])
+              : (names.includes(environment.branch) ? environment.branch : names.includes("dev") ? "dev" : names.find((name) => name !== "main" && name !== "master") || names[0]);
+          const branch = used.has(preferred)
+            ? names.find((name) => !used.has(name)) || preferred
+            : preferred;
+          used.add(branch);
+          return { ...environment, branch };
+        });
+      });
+      toast.success(`Loaded ${nextBranches.length} branches`);
+    },
+    onError: (error: unknown) => {
+      setBranches([]);
+      const message =
+        error instanceof AxiosError
+          ? (error.response?.data as { error?: string; details?: string } | undefined)?.details ||
+            (error.response?.data as { error?: string } | undefined)?.error ||
+            "Unable to load repository branches"
+          : "Unable to load repository branches";
+      toast.error(message);
+    },
+  });
+
   const browseSshMutation = useMutation({
     mutationFn: async (path: string) => {
       const res = await api.post(`/ssh/connections/${sshConnectionId}/browse`, { path });
@@ -256,6 +357,19 @@ export function CreateProjectDialog() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      const environmentPayload = environments.map((environment) => ({
+        name: environment.name.trim().toLowerCase(),
+        branch: environment.branch.trim(),
+        auto_deploy: environment.auto_deploy,
+        require_ci: environment.require_ci,
+        cleanup_previous_on_success: environment.cleanup_previous_on_success,
+        env_vars: environment.env_vars,
+        execution_mode: executionMode,
+        remote_connection_id: executionMode === "remote_host" ? sshConnectionId : "",
+        remote_runtime_type: remoteRuntimeType,
+        remote_k8s_exposure: effectiveRemoteK8sExposure,
+        runtime_scheme: effectiveRuntimeScheme,
+      }));
       const payload =
         sourceType === "ssh"
           ? {
@@ -300,11 +414,12 @@ export function CreateProjectDialog() {
               runtime_scheme: effectiveRuntimeScheme,
               local_https_enabled: effectiveLocalHttpsEnabled,
             };
-      const res = await api.post("/projects", payload);
+      const res = await api.post("/projects", { ...payload, environments: environmentPayload });
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success("Project created successfully");
+      (data?.warnings || []).forEach((warning: string) => toast.warning(warning));
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       setOpen(false);
@@ -326,6 +441,7 @@ export function CreateProjectDialog() {
     setRepoUrl("");
     setGithubPat("");
     setRepos([]);
+    setBranches([]);
     setEnvVars([]);
     setSshConnectionId("");
     setSshSourcePath("");
@@ -345,6 +461,7 @@ export function CreateProjectDialog() {
     setLocalEntries([]);
     setShowRemoteTerminal(false);
     setRemoteTerminalCwd("");
+    setEnvironments(defaultProjectEnvironments());
   };
 
   const handleFetchRepos = () => {
@@ -363,6 +480,7 @@ export function CreateProjectDialog() {
     setRepoUrl(repo.clone_url);
     if (!name) setName(repo.full_name.split("/")[1]);
     if (!description) setDescription(repo.description || "");
+    fetchBranchesMutation.mutate(repo.clone_url);
   };
 
   const handleBrowseCurrentPath = () => {
@@ -432,6 +550,33 @@ export function CreateProjectDialog() {
     browseLocalMutation.mutate(entry.path);
   };
 
+  const updateEnvironment = (id: string, patch: Partial<ProjectEnvironmentDraft>) => {
+    setEnvironments((current) =>
+      current.map((environment) =>
+        environment.id === id ? { ...environment, ...patch } : environment
+      )
+    );
+  };
+
+  const addEnvironment = () => {
+    setEnvironments((current) => [
+      ...current,
+      {
+        id: `environment-${Date.now()}`,
+        name: `environment-${current.length + 1}`,
+        branch: "",
+        auto_deploy: true,
+        require_ci: false,
+        cleanup_previous_on_success: false,
+        env_vars: [],
+      },
+    ]);
+  };
+
+  const removeEnvironment = (id: string) => {
+    setEnvironments((current) => (current.length <= 1 ? current : current.filter((environment) => environment.id !== id)));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name) {
@@ -456,6 +601,16 @@ export function CreateProjectDialog() {
     }
     if (sourceType === "local" && !localSourcePath) {
       toast.error("Choose a local source path");
+      return;
+    }
+    const normalizedNames = environments.map((environment) => environment.name.trim().toLowerCase());
+    const normalizedBranches = environments.map((environment) => environment.branch.trim());
+    if (normalizedNames.some((value) => !value) || normalizedBranches.some((value) => !value)) {
+      toast.error("Every environment needs a name and branch");
+      return;
+    }
+    if (new Set(normalizedNames).size !== normalizedNames.length) {
+      toast.error("Environment names must be unique");
       return;
     }
     createMutation.mutate();
@@ -585,6 +740,142 @@ export function CreateProjectDialog() {
       </div>
     );
   };
+
+  const renderEnvironmentSettings = () => (
+    <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Branch Environments
+          </Label>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Map GitHub branches to deployable environments and choose how CI and replacement cleanup behave.
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={addEnvironment}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add
+        </Button>
+      </div>
+
+      <div className="space-y-3">
+        {environments.map((environment) => (
+          <div key={environment.id} className="rounded-xl border border-border bg-card p-3">
+            <div className="grid gap-3 lg:grid-cols-[1fr,1fr,auto]">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Environment
+                </Label>
+                <Input
+                  value={environment.name}
+                  onChange={(event) => updateEnvironment(environment.id, { name: event.target.value })}
+                  placeholder="development"
+                  className="bg-muted/40"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Branch
+                </Label>
+                {sourceType === "github" && branches.length > 0 ? (
+                  <Select
+                    value={environment.branch}
+                    onValueChange={(value) => value && updateEnvironment(environment.id, { branch: value })}
+                  >
+                    <SelectTrigger className="h-10 w-full bg-muted/40">
+                      <SelectValue placeholder="Select branch" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {branches.map((branch) => (
+                        <SelectItem key={branch.name} value={branch.name}>
+                          <span className="truncate">{branch.name}</span>
+                          {branch.protected ? (
+                            <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              protected
+                            </span>
+                          ) : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    value={environment.branch}
+                    onChange={(event) => updateEnvironment(environment.id, { branch: event.target.value })}
+                    placeholder="dev"
+                    className="bg-muted/40"
+                  />
+                )}
+              </div>
+              <div className="flex items-end justify-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-lg"
+                  disabled={environments.length <= 1}
+                  onClick={() => removeEnvironment(environment.id)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2 lg:grid-cols-3">
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(
+                  "justify-start",
+                  environment.auto_deploy && "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                )}
+                onClick={() => updateEnvironment(environment.id, { auto_deploy: !environment.auto_deploy })}
+              >
+                <GitBranch className="mr-2 h-4 w-4" />
+                {environment.auto_deploy ? "Auto deploy on push" : "Manual deploy only"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(
+                  "justify-start",
+                  environment.require_ci && "border-blue-500/40 bg-blue-500/10 text-blue-500"
+                )}
+                onClick={() => updateEnvironment(environment.id, { require_ci: !environment.require_ci })}
+              >
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                {environment.require_ci ? "Require CI checks" : "Do not wait for CI"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={cn(
+                  "justify-start",
+                  environment.cleanup_previous_on_success && "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                )}
+                onClick={() =>
+                  updateEnvironment(environment.id, {
+                    cleanup_previous_on_success: !environment.cleanup_previous_on_success,
+                  })
+                }
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                {environment.cleanup_previous_on_success ? "Clean old runtime" : "Keep old runtime"}
+              </Button>
+            </div>
+
+            <div className="mt-3">
+              <ProjectEnvEditor
+                title={`${environment.name || "Environment"} variables`}
+                description="These override shared project variables only for this branch environment."
+                envVars={environment.env_vars}
+                onChange={(nextEnvVars) => updateEnvironment(environment.id, { env_vars: nextEnvVars })}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -770,13 +1061,44 @@ export function CreateProjectDialog() {
                   <Label htmlFor="repoUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Repository URL
                   </Label>
-                  <Input
-                    id="repoUrl"
-                    value={repoUrl}
-                    onChange={(e) => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/user/repo"
-                    className="bg-muted/40"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="repoUrl"
+                      value={repoUrl}
+                      onChange={(e) => {
+                        setRepoUrl(e.target.value);
+                        setBranches([]);
+                      }}
+                      onBlur={() => {
+                        if (repoUrl.trim()) fetchBranchesMutation.mutate(repoUrl.trim());
+                      }}
+                      placeholder="https://github.com/user/repo"
+                      className="bg-muted/40"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fetchBranchesMutation.mutate(repoUrl.trim())}
+                      disabled={!repoUrl.trim() || fetchBranchesMutation.isPending}
+                      className="shrink-0"
+                    >
+                      {fetchBranchesMutation.isPending ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <GitBranch className="mr-2 h-4 w-4" />
+                      )}
+                      Branches
+                    </Button>
+                  </div>
+                  {sourceType === "github" && repoUrl && (
+                    <p className="text-xs text-muted-foreground">
+                      {fetchBranchesMutation.isPending
+                        ? "Loading branches from GitHub..."
+                        : branches.length > 0
+                          ? `${branches.length} branches loaded. Environment branch fields now use the selector.`
+                          : "Load branches to select dev/main instead of typing them manually."}
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
@@ -907,7 +1229,7 @@ export function CreateProjectDialog() {
                                 id="githubRemoteWorkspacePath"
                                 value={githubRemoteWorkspacePath}
                                 onChange={(e) => setGithubRemoteWorkspacePath(e.target.value)}
-                                placeholder={`${getRemoteHomePath(activeSshConnection.username)}/aids-workspaces`}
+                                placeholder={`${getRemoteHomePath(activeSshConnection.username)}/dokscp-workspaces`}
                                 className="bg-muted/40"
                               />
                               <Button
@@ -925,8 +1247,8 @@ export function CreateProjectDialog() {
                               </Button>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              AIDS will clone each GitHub deployment under this folder in an isolated
-                              <span className="font-mono"> aids-builds/&lt;deployment-id&gt;</span> workspace.
+                              DOKSCP will clone each GitHub deployment under this folder in an isolated
+                              <span className="font-mono"> dokscp-builds/&lt;deployment-id&gt;</span> workspace.
                             </p>
                           </div>
 
@@ -1362,6 +1684,8 @@ export function CreateProjectDialog() {
               </div>
             )}
 
+            {renderEnvironmentSettings()}
+
             <ProjectEnvEditor envVars={envVars} onChange={setEnvVars} />
 
             <div className="space-y-4">
@@ -1447,8 +1771,8 @@ export function CreateProjectDialog() {
                 heading="GitHub source"
                 items={[
                   "Use GitHub OAuth or a PAT to load public and private repositories.",
-                  "Pick a repository, then AIDS stores the project record and creates the first Docker deployment.",
-                  "If you choose Run on server, select the server and a remote workspace path. The repo is cloned under aids-builds/<deployment-id> inside that path.",
+                  "Pick a repository, then DOKSCP stores the project record and creates the first Docker deployment.",
+                  "If you choose Run on server, select the server and a remote workspace path. The repo is cloned under dokscp-builds/<deployment-id> inside that path.",
                 ]}
               />
               <GuideSection
@@ -1466,7 +1790,7 @@ export function CreateProjectDialog() {
                 items={[
                   "Use this when the source folder already exists on a saved server or Tailscale machine.",
                   "Browse to the actual project folder, not only the parent folder.",
-                  "Run locally copies the remote source to AIDS and builds on this machine. Run on server builds and runs on that same remote server.",
+                  "Run locally copies the remote source to DOKSCP and builds on this machine. Run on server builds and runs on that same remote server.",
                 ]}
               />
               <GuideSection
@@ -1482,7 +1806,7 @@ export function CreateProjectDialog() {
               <GuideSection
                 heading="Local source"
                 items={[
-                  "Use this for folders already available on the host running AIDS.",
+                  "Use this for folders already available on the host running DOKSCP.",
                   "Local projects must live inside the allowed local source roots configured for the backend container.",
                   "Direct arbitrary laptop paths are intentionally blocked; mount or import the project into the allowed root so builds are reproducible and safe.",
                 ]}

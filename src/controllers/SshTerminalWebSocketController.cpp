@@ -26,7 +26,7 @@
 #include <sstream>
 #include <vector>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -385,4 +385,4 @@ void SshTerminalWebSocketController::closeSession(const std::shared_ptr<Terminal
     }
 }
 
-} // namespace aids
+} // namespace dokscp

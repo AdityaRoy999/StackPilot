@@ -49,11 +49,18 @@ function parseEnvText(text: string): ProjectEnvVar[] {
 }
 
 interface ProjectEnvEditorProps {
+  title?: string;
+  description?: string;
   envVars: ProjectEnvVar[];
   onChange: (envVars: ProjectEnvVar[]) => void;
 }
 
-export function ProjectEnvEditor({ envVars, onChange }: ProjectEnvEditorProps) {
+export function ProjectEnvEditor({
+  title = "Environment Variables",
+  description = "Add key/value pairs manually or upload an existing `.env` file.",
+  envVars,
+  onChange,
+}: ProjectEnvEditorProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const setRow = (index: number, next: ProjectEnvVar) => {
@@ -83,10 +90,10 @@ export function ProjectEnvEditor({ envVars, onChange }: ProjectEnvEditorProps) {
       <div className="space-y-3">
         <div className="space-y-1">
           <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Environment Variables
+            {title}
           </Label>
           <p className="text-sm text-muted-foreground">
-            Add key/value pairs manually or upload an existing `.env` file.
+            {description}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

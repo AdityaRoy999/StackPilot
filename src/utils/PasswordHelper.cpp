@@ -15,7 +15,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -134,4 +134,4 @@ bool PasswordHelper::verifyPassword(const std::string& password,
     return false;
 }
 
-} // namespace aids
+} // namespace dokscp

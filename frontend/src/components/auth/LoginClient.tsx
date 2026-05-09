@@ -66,7 +66,7 @@ export function LoginClient({
     <Card className="w-full max-w-md">
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl font-bold tracking-tight text-center">
-          AIDS Platform
+          DOKSCP Platform
         </CardTitle>
         <CardDescription className="text-center">
           Enter your credentials to sign in

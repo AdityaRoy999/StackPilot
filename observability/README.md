@@ -1,9 +1,9 @@
-# AIDS Observability
+# DOKSCP Observability
 
-Phase 6 adds a local production-style observability stack:
+This folder adds a local production-style observability stack:
 
 - Prometheus scrapes backend platform metrics from `/metrics`.
-- Grafana provisions an AIDS dashboard automatically.
+- Grafana provisions a DOKSCP dashboard automatically.
 - Loki stores logs.
 - Promtail streams Docker container logs into Loki.
 - cAdvisor exposes container CPU and memory metrics for Prometheus.
@@ -15,4 +15,4 @@ Default local URLs:
 - Loki: http://localhost:3100
 
 For production, set a strong `GRAFANA_ADMIN_PASSWORD` and optionally set
-`AIDS_METRICS_BEARER_TOKEN` so `/metrics` requires a bearer token.
+`DOKSCP_METRICS_BEARER_TOKEN` so `/metrics` requires a bearer token.

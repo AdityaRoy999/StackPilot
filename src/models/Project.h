@@ -7,7 +7,7 @@
 #include <string>
 #include <json/json.h>
 
-namespace aids {
+namespace dokscp {
 
 struct Project {
     std::string id;
@@ -33,4 +33,4 @@ struct Project {
     }
 };
 
-} // namespace aids
+} // namespace dokscp

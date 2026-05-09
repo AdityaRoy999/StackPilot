@@ -4,6 +4,7 @@ build/
 build-mingw/
 .vscode/
 .env*
+*.pem
 .git/
 frontend/node_modules/
 frontend/.next/

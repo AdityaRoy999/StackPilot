@@ -17,8 +17,8 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AIDS Platform | AI-Native Deployment System",
-  description: "Autonomous Intelligent Deployment System for scaling backend applications.",
+  title: "DOKSCP | Developer Operations Kubernetes Source Control Platform",
+  description: "Developer Operations Kubernetes Source Control Platform for AI-assisted builds, deployments, and runtime operations.",
 };
 
 export default function RootLayout({

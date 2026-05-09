@@ -13,7 +13,7 @@
 
 #include <json/json.h>
 
-namespace aids {
+namespace dokscp {
 
 class JobQueueService {
 public:
@@ -62,4 +62,4 @@ private:
     int maxAttempts_ = 3;
 };
 
-} // namespace aids
+} // namespace dokscp

@@ -18,7 +18,7 @@
 #include <cctype>
 #include <sstream>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -231,6 +231,11 @@ Json::Value JwtHelper::verifyRequestToken(const drogon::HttpRequestPtr& req) {
         return Json::Value(Json::nullValue);
     }
 
+    // Check if this is an MCP Bearer token (dokscp_mcp_ prefix)
+    if (token.rfind("dokscp_mcp_", 0) == 0) {
+        return verifyMcpToken(token);
+    }
+
     Json::Value payload = verifyToken(token);
     if (payload.isNull() || !payload.isMember("user_id") || !payload.isMember("iat")) {
         return Json::Value(Json::nullValue);
@@ -266,6 +271,57 @@ Json::Value JwtHelper::verifyRequestToken(const drogon::HttpRequestPtr& req) {
     return payload;
 }
 
+Json::Value JwtHelper::verifyMcpToken(const std::string& token) {
+    // SHA-256 hash the token to look it up
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hashLen = 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+    EVP_DigestUpdate(ctx, token.data(), token.size());
+    EVP_DigestFinal_ex(ctx, hash, &hashLen);
+    EVP_MD_CTX_free(ctx);
+
+    std::ostringstream hexStream;
+    hexStream << std::hex << std::setfill('0');
+    for (unsigned int i = 0; i < hashLen; ++i) {
+        hexStream << std::setw(2) << static_cast<int>(hash[i]);
+    }
+    std::string tokenHash = hexStream.str();
+
+    try {
+        auto& db = Database::getInstance();
+        auto conn = db.getConnection();
+        pqxx::work txn(*conn);
+
+        auto result = txn.exec_params(
+            "SELECT user_id FROM mcp_tokens WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+            tokenHash
+        );
+
+        if (result.empty()) {
+            spdlog::warn("MCP token not found or expired");
+            return Json::Value(Json::nullValue);
+        }
+
+        // Update last_used_at
+        txn.exec_params("UPDATE mcp_tokens SET last_used_at = NOW() WHERE token_hash = $1", tokenHash);
+        txn.commit();
+
+        // Build a synthetic JWT-like payload
+        Json::Value payload;
+        payload["user_id"] = result[0]["user_id"].as<std::string>();
+        payload["mcp"] = true;
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        payload["iat"] = Json::Value::Int64(now);
+        payload["exp"] = Json::Value::Int64(now + 86400);
+        return payload;
+    } catch (const std::exception& e) {
+        spdlog::error("MCP token verification DB error: {}", e.what());
+        return Json::Value(Json::nullValue);
+    }
+}
+
 bool JwtHelper::isExpired(const Json::Value& payload) {
     if (!payload.isMember("exp")) return true;
     auto now = std::chrono::duration_cast<std::chrono::seconds>(
@@ -273,4 +329,4 @@ bool JwtHelper::isExpired(const Json::Value& payload) {
     return now > payload["exp"].asInt64();
 }
 
-} // namespace aids
+} // namespace dokscp

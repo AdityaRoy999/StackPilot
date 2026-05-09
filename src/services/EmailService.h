@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 class EmailService {
 public:
@@ -21,4 +21,4 @@ private:
     static std::string getFromName();
 };
 
-} // namespace aids
+} // namespace dokscp

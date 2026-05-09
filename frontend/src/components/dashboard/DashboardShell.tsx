@@ -15,7 +15,10 @@ import {
   Laptop,
   Menu,
   Activity,
-  Star
+  Star,
+  Network,
+  Boxes,
+  Gauge,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,8 +36,11 @@ import api from "@/lib/api";
 const navigation = [
   { name: "Projects", href: "/dashboard", icon: LayoutDashboard },
   { name: "Deployments", href: "/dashboard/deployments", icon: Server },
-  { name: "Observability", href: "/dashboard/observability", icon: Activity },
-  { name: "AI Agent", href: "/dashboard/ai", icon: Star },
+  { name: "Logs & Monitoring", href: "/dashboard/logging-monitoring", icon: Activity },
+  { name: "Visualization", href: "/dashboard/logging-monitoring/visualization", icon: Gauge, nested: true },
+  { name: "Infrastructure", href: "/dashboard/logging-monitoring/infrastructure", icon: Network, nested: true },
+  { name: "Cluster Builder", href: "/dashboard/logging-monitoring/clusters", icon: Boxes, nested: true },
+  { name: "AI Agent", href: "/dashboard/ai", icon: Star, filled: true },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
@@ -108,18 +114,23 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       href={item.href}
       className={cn(
         "group grid items-center rounded-xl text-sm font-semibold transition-colors",
+        "overflow-hidden",
         isCollapsed
           ? "h-10 w-10 grid-cols-[40px_0fr] gap-0 justify-items-center px-0"
-          : "h-12 w-full grid-cols-[40px_1fr] gap-3 px-0",
+          : cn("h-12 w-full grid-cols-[40px_1fr] gap-3 px-0", item.nested && "ml-3 w-[calc(100%-0.75rem)]"),
         isActive
           ? "bg-accent text-foreground shadow-sm"
           : "text-muted-foreground hover:bg-accent/70 hover:text-foreground"
       )}
     >
       <div className="flex h-10 w-10 items-center justify-center rounded-lg">
-        <item.icon className={cn("h-5 w-5", isActive ? "text-primary" : "text-current")} />
+        <item.icon
+          className={cn("h-5 w-5", isActive ? "text-primary" : "text-current")}
+          fill={item.filled ? "currentColor" : "none"}
+          strokeWidth={item.filled ? 2.4 : 2}
+        />
       </div>
-      <span className={sidebarLabelClass}>{item.name}</span>
+      {!isCollapsed && <span className={sidebarLabelClass}>{item.name}</span>}
     </Link>
   );
 
@@ -149,8 +160,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             <TooltipContent side="right">{isCollapsed ? "Expand sidebar" : "Collapse sidebar"}</TooltipContent>
           </Tooltip>
 
-          <div className="flex h-full flex-col px-4 py-6">
-            <div className="h-10 shrink-0" />
+          <div className="flex h-full flex-col px-4 py-4">
+            <div className="h-4 shrink-0" />
             <nav className={cn("space-y-2", isCollapsed ? "flex w-10 flex-col items-center" : "w-full")}>
               {navigation.map((item) => {
                 const isActive = pathname === item.href;
@@ -184,7 +195,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
                         <ActiveThemeIcon className="h-5 w-5" />
                       </div>
-                      <span className={sidebarLabelClass}>{activeTheme.label}</span>
+                      {!isCollapsed && <span className={sidebarLabelClass}>{activeTheme.label}</span>}
                     </Button>
                   }
                 />
@@ -208,7 +219,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg">
                         <LogOut className="h-5 w-5" />
                       </div>
-                      <span className={sidebarLabelClass}>Logout</span>
+                      {!isCollapsed && <span className={sidebarLabelClass}>Logout</span>}
                     </Button>
                   }
                 />

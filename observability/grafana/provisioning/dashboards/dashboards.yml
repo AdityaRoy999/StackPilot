@@ -1,9 +1,9 @@
 apiVersion: 1
 
 providers:
-  - name: AIDS Platform
+  - name: DOKSCP Platform
     orgId: 1
-    folder: AIDS
+    folder: DOKSCP
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30

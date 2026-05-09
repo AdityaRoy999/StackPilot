@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -17,7 +24,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronRight, FolderTree, GitBranch, HardDrive, Link2, RefreshCw, Server, Settings2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, FolderTree, GitBranch, HardDrive, Link2, Plus, RefreshCw, Server, Settings2, ShieldCheck, Trash2 } from "lucide-react";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
 import { ProjectEnvEditor, ProjectEnvVar } from "@/components/ProjectEnvEditor";
 import { cn } from "@/lib/utils";
@@ -33,6 +40,18 @@ interface GitHubRepo {
 interface GitHubReposResponse {
   repositories?: GitHubRepo[];
   warnings?: string[];
+}
+
+interface GitHubBranch {
+  name: string;
+  protected?: boolean;
+  commit_sha?: string;
+}
+
+interface GitHubBranchesResponse {
+  repository: string;
+  branches: GitHubBranch[];
+  count: number;
 }
 
 interface MeResponse {
@@ -99,6 +118,25 @@ interface LocalBrowseResponse {
   path: string;
   roots: { name: string; path: string }[];
   entries: LocalBrowseEntry[];
+}
+
+interface ProjectEnvironmentDraft {
+  id: string;
+  name: string;
+  branch: string;
+  auto_deploy: boolean;
+  require_ci: boolean;
+  cleanup_previous_on_success: boolean;
+  env_vars: ProjectEnvVar[];
+  execution_mode?: "local" | "remote_host";
+  remote_connection_id?: string;
+  remote_runtime_type?: "docker" | "kubernetes";
+  remote_k8s_exposure?: "nodeport" | "ingress" | "loadbalancer" | "clusterip";
+  runtime_scheme?: "http" | "https";
+}
+
+interface ProjectEnvironmentsResponse {
+  environments: ProjectEnvironmentDraft[];
 }
 
 interface EditProjectDialogProps {
@@ -183,6 +221,9 @@ function EditProjectForm({
   const [sourcePath, setSourcePath] = useState(project.source_path || "");
   const [githubPat, setGithubPat] = useState("");
   const [envVars, setEnvVars] = useState<ProjectEnvVar[]>(project.env_vars || []);
+  const [branches, setBranches] = useState<GitHubBranch[]>([]);
+  const [environments, setEnvironments] = useState<ProjectEnvironmentDraft[]>([]);
+  const [deletedEnvironmentIds, setDeletedEnvironmentIds] = useState<string[]>([]);
   const [remoteRuntimeType, setRemoteRuntimeType] = useState<"docker" | "kubernetes">(
     project.remote_runtime_type || "docker"
   );
@@ -218,6 +259,26 @@ const segmentedButtonClass =
   "h-8 justify-center rounded-lg border border-transparent px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground";
 const segmentedButtonActiveClass =
   "!border-black !bg-black !text-white hover:!bg-black hover:!text-white dark:!border-white dark:!bg-white dark:!text-black dark:hover:!bg-white dark:hover:!text-black";
+
+  const environmentsQuery = useQuery({
+    queryKey: ["project-environments", project.id, "edit"],
+    queryFn: async () => {
+      const res = await api.get(`/projects/${project.id}/environments`);
+      return res.data as ProjectEnvironmentsResponse;
+    },
+    enabled: true,
+  });
+
+  const loadedEnvironments = useMemo(
+    () =>
+      (environmentsQuery.data?.environments || []).map((environment) => ({
+        ...environment,
+        env_vars: environment.env_vars || [],
+      })),
+    [environmentsQuery.data?.environments]
+  );
+  const displayedEnvironments =
+    environments.length > 0 || deletedEnvironmentIds.length > 0 ? environments : loadedEnvironments;
 
   const meQuery = useQuery({
     queryKey: ["me"],
@@ -307,6 +368,64 @@ const segmentedButtonActiveClass =
     },
   });
 
+  const fetchBranchesMutation = useMutation({
+    mutationFn: async (targetRepoUrl: string) => {
+      const res = await api.post("/github/branches", {
+        repo_url: targetRepoUrl,
+        pat: githubPat || undefined,
+      });
+      return res.data as GitHubBranchesResponse;
+    },
+    onSuccess: (data) => {
+      setBranches(data.branches || []);
+      toast.success(`Loaded ${data.branches?.length || 0} branches`);
+    },
+    onError: (error: unknown) => {
+      setBranches([]);
+      const message =
+        error instanceof AxiosError
+          ? (error.response?.data as { error?: string; details?: string } | undefined)?.details ||
+            (error.response?.data as { error?: string } | undefined)?.error ||
+            "Unable to load repository branches"
+          : "Unable to load repository branches";
+      toast.error(message);
+    },
+  });
+
+  const updateEnvironment = (id: string, patch: Partial<ProjectEnvironmentDraft>) => {
+    setEnvironments((current) =>
+      (current.length > 0 ? current : loadedEnvironments).map((environment) =>
+        environment.id === id ? { ...environment, ...patch } : environment
+      )
+    );
+  };
+
+  const addEnvironment = () => {
+    setEnvironments((current) => [
+      ...(current.length > 0 ? current : loadedEnvironments),
+      {
+        id: `new-${Date.now()}`,
+        name: `environment-${(current.length > 0 ? current : loadedEnvironments).length + 1}`,
+        branch: branches[0]?.name || "",
+        auto_deploy: true,
+        require_ci: false,
+        cleanup_previous_on_success: false,
+        env_vars: [],
+      },
+    ]);
+  };
+
+  const removeEnvironment = (id: string) => {
+    const base = environments.length > 0 ? environments : loadedEnvironments;
+    if (base.length <= 1) {
+      return;
+    }
+    setEnvironments(base.filter((environment) => environment.id !== id));
+    if (!id.startsWith("new-")) {
+      setDeletedEnvironmentIds((current) => (current.includes(id) ? current : [...current, id]));
+    }
+  };
+
   const updateMutation = useMutation({
     mutationFn: async () => {
       const res = await api.put(`/projects/${project.id}`, {
@@ -326,10 +445,37 @@ const segmentedButtonActiveClass =
         runtime_scheme: effectiveRuntimeScheme,
         local_https_enabled: project.execution_mode !== "remote_host" && localHttpsEnabled,
       });
+      const environmentPayloads = displayedEnvironments.map((environment) => ({
+        ...environment,
+        name: environment.name.trim().toLowerCase(),
+        branch: environment.branch.trim(),
+        env_vars: environment.env_vars || [],
+        execution_mode: environment.execution_mode || project.execution_mode || "local",
+        remote_connection_id:
+          environment.execution_mode === "remote_host"
+            ? environment.remote_connection_id || project.remote_connection_id || project.ssh_connection_id || ""
+            : environment.remote_connection_id || "",
+        remote_runtime_type: environment.remote_runtime_type || project.remote_runtime_type || "docker",
+        remote_k8s_exposure: environment.remote_k8s_exposure || project.remote_k8s_exposure || "nodeport",
+        runtime_scheme: environment.runtime_scheme || project.runtime_scheme || "http",
+      }));
+      await Promise.all(
+        environmentPayloads.map((environment) =>
+          environment.id.startsWith("new-")
+            ? api.post(`/projects/${project.id}/environments`, environment)
+            : api.put(`/projects/${project.id}/environments/${environment.id}`, environment)
+        )
+      );
+      await Promise.all(
+        deletedEnvironmentIds.map((environmentId) =>
+          api.delete(`/projects/${project.id}/environments/${environmentId}`)
+        )
+      );
       return res.data as { message?: string };
     },
     onSuccess: (data) => {
       toast.success(data.message || "Project updated successfully");
+      setDeletedEnvironmentIds([]);
       onSaved();
     },
     onError: (error: unknown) => {
@@ -366,6 +512,7 @@ const segmentedButtonActiveClass =
     setRepoUrl(repo.clone_url);
     if (!name) setName(repo.full_name.split("/")[1]);
     if (!description) setDescription(repo.description || "");
+    fetchBranchesMutation.mutate(repo.clone_url);
   };
 
   useEffect(() => {
@@ -373,6 +520,12 @@ const segmentedButtonActiveClass =
       fetchReposMutation.mutate(undefined);
     }
   }, [sourceType, githubConnected, repos.length, fetchReposMutation.status, fetchReposMutation]);
+
+  useEffect(() => {
+    if (sourceType === "github" && repoUrl && branches.length === 0 && fetchBranchesMutation.status === "idle") {
+      fetchBranchesMutation.mutate(repoUrl);
+    }
+  }, [sourceType, repoUrl, branches.length, fetchBranchesMutation.status, fetchBranchesMutation]);
 
   return (
     <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
@@ -492,13 +645,35 @@ const segmentedButtonActiveClass =
                   <Label htmlFor="edit-repoUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Repository URL
                   </Label>
-                  <Input
-                    id="edit-repoUrl"
-                    value={repoUrl}
-                    onChange={(e) => setRepoUrl(e.target.value)}
-                    placeholder="https://github.com/user/repo"
-                    className="bg-muted/40"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="edit-repoUrl"
+                      value={repoUrl}
+                      onChange={(e) => {
+                        setRepoUrl(e.target.value);
+                        setBranches([]);
+                      }}
+                      onBlur={() => {
+                        if (repoUrl.trim()) fetchBranchesMutation.mutate(repoUrl.trim());
+                      }}
+                      placeholder="https://github.com/user/repo"
+                      className="bg-muted/40"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fetchBranchesMutation.mutate(repoUrl.trim())}
+                      disabled={!repoUrl.trim() || fetchBranchesMutation.isPending}
+                      className="shrink-0"
+                    >
+                      {fetchBranchesMutation.isPending ? (
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <GitBranch className="mr-2 h-4 w-4" />
+                      )}
+                      Branches
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="min-w-0 space-y-2">
@@ -561,7 +736,7 @@ const segmentedButtonActiveClass =
                           id="edit-remoteWorkspace"
                           value={sourcePath}
                           onChange={(e) => setSourcePath(e.target.value)}
-                          placeholder="/root/aids-workspaces"
+                          placeholder="/root/dokscp-workspaces"
                           className="bg-muted/40"
                         />
                         <Button
@@ -817,7 +992,156 @@ const segmentedButtonActiveClass =
             </div>
           )}
 
-          <ProjectEnvEditor envVars={envVars} onChange={setEnvVars} />
+          <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Branch Environments
+                </Label>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Update branch mapping, CI gate, cleanup behavior, and per-environment variables.
+                </p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addEnvironment}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add
+              </Button>
+            </div>
+
+            {environmentsQuery.isLoading ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                Loading environments...
+              </div>
+            ) : displayedEnvironments.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                No environments are configured yet.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {displayedEnvironments.map((environment) => (
+                  <div key={environment.id} className="rounded-xl border border-border bg-card p-3">
+                    <div className="grid gap-3 lg:grid-cols-[1fr,1fr,auto]">
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Environment
+                        </Label>
+                        <Input
+                          value={environment.name}
+                          onChange={(event) => updateEnvironment(environment.id, { name: event.target.value })}
+                          placeholder="development"
+                          className="bg-muted/40"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Branch
+                        </Label>
+                        {sourceType === "github" && branches.length > 0 ? (
+                          <Select
+                            value={environment.branch}
+                            onValueChange={(value) => value && updateEnvironment(environment.id, { branch: value })}
+                          >
+                            <SelectTrigger className="h-10 w-full bg-muted/40">
+                              <SelectValue placeholder="Select branch" />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-72">
+                              {branches.map((branch) => (
+                                <SelectItem key={branch.name} value={branch.name}>
+                                  <span className="truncate">{branch.name}</span>
+                                  {branch.protected ? (
+                                    <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                      protected
+                                    </span>
+                                  ) : null}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={environment.branch}
+                            onChange={(event) => updateEnvironment(environment.id, { branch: event.target.value })}
+                            placeholder="main"
+                            className="bg-muted/40"
+                          />
+                        )}
+                      </div>
+                      <div className="flex items-end justify-end">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-lg"
+                          disabled={displayedEnvironments.length <= 1}
+                          onClick={() => removeEnvironment(environment.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 lg:grid-cols-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "justify-start",
+                          environment.auto_deploy && "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        )}
+                        onClick={() => updateEnvironment(environment.id, { auto_deploy: !environment.auto_deploy })}
+                      >
+                        <GitBranch className="mr-2 h-4 w-4" />
+                        {environment.auto_deploy ? "Auto deploy on push" : "Manual deploy only"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "justify-start",
+                          environment.require_ci && "border-blue-500/40 bg-blue-500/10 text-blue-500"
+                        )}
+                        onClick={() => updateEnvironment(environment.id, { require_ci: !environment.require_ci })}
+                      >
+                        <ShieldCheck className="mr-2 h-4 w-4" />
+                        {environment.require_ci ? "Require CI checks" : "Do not wait for CI"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn(
+                          "justify-start",
+                          environment.cleanup_previous_on_success && "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                        )}
+                        onClick={() =>
+                          updateEnvironment(environment.id, {
+                            cleanup_previous_on_success: !environment.cleanup_previous_on_success,
+                          })
+                        }
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {environment.cleanup_previous_on_success ? "Clean old runtime" : "Keep old runtime"}
+                      </Button>
+                    </div>
+
+                    <div className="mt-3">
+                      <ProjectEnvEditor
+                        title={`${environment.name || "Environment"} variables`}
+                        description="These override shared project variables only for this branch environment."
+                        envVars={environment.env_vars || []}
+                        onChange={(nextEnvVars) => updateEnvironment(environment.id, { env_vars: nextEnvVars })}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <ProjectEnvEditor
+            title="Shared project variables"
+            description="These are defaults for every environment. Environment variables above override matching keys."
+            envVars={envVars}
+            onChange={setEnvVars}
+          />
         </div>
       </div>
       <DialogFooter className="shrink-0 border-t border-border bg-muted/30 px-6 pt-4 pb-6 sm:pb-6">

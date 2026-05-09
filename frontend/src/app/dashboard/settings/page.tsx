@@ -26,6 +26,7 @@ import {
   KeyRound,
   Link2,
   Loader2,
+  Lock,
   Save,
   ScrollText,
   Server,
@@ -38,6 +39,7 @@ import {
 import { toast } from "sonner";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
 import { RemoteSshTerminal } from "@/components/RemoteSshTerminal";
+import { McpIntegrations } from "./mcp-integrations";
 
 interface MeResponse {
   user: {
@@ -81,6 +83,7 @@ interface ProvisionResponse {
   error?: string;
   hint?: string;
   details?: string;
+  needs_sudo_password?: boolean;
 }
 
 interface LoginHistoryEntry {
@@ -147,6 +150,9 @@ export default function SettingsPage() {
   const [terminalConnection, setTerminalConnection] = useState<SshConnection | null>(null);
   const [loginHistoryOpen, setLoginHistoryOpen] = useState(false);
   const [auditLogsOpen, setAuditLogsOpen] = useState(false);
+  const [sudoPasswordDialog, setSudoPasswordDialog] = useState<{ connectionId: string; action: "docker" | "kubernetes" } | null>(null);
+  const [sudoPasswordInput, setSudoPasswordInput] = useState("");
+  const [showSudoPassword, setShowSudoPassword] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["me"],
@@ -238,7 +244,7 @@ export default function SettingsPage() {
         host: sshHost,
         port: Number(sshPort) || 22,
         username: sshUsername,
-        auth_type: sshConnectionType === "ssh" ? sshAuthType : "tailscale",
+        auth_type: sshConnectionType === "ssh" ? sshAuthType : sshConnectionType,
         password: sshConnectionType === "ssh" && sshAuthType === "password" ? sshPassword : "",
         private_key: sshConnectionType === "ssh" && sshAuthType === "key" ? sshPrivateKey : "",
       };
@@ -335,8 +341,8 @@ export default function SettingsPage() {
 
   const provisionDockerMutation = useMutation({
     mutationKey: ["ssh-provision-docker"],
-    mutationFn: async (connectionId: string) => {
-      const res = await api.post(`/ssh/connections/${connectionId}/provision/docker`);
+    mutationFn: async ({ connectionId, sudoPassword }: { connectionId: string; sudoPassword?: string }) => {
+      const res = await api.post(`/ssh/connections/${connectionId}/provision/docker`, sudoPassword ? { sudo_password: sudoPassword } : undefined);
       return { id: connectionId, data: res.data as ProvisionResponse };
     },
     onSuccess: ({ id, data: responseData }) => {
@@ -353,20 +359,25 @@ export default function SettingsPage() {
       const responseData = error instanceof AxiosError
         ? (error.response?.data as ProvisionResponse | undefined)
         : undefined;
+      if (responseData?.needs_sudo_password && provisionDockerMutation.variables) {
+        setSudoPasswordDialog({ connectionId: provisionDockerMutation.variables.connectionId, action: "docker" });
+        setSudoPasswordInput("");
+        return;
+      }
       const message =
         error instanceof AxiosError
           ? responseData?.error || "Failed to prepare Docker host"
           : "Failed to prepare Docker host";
       toast.error(message, {
-        description: responseData?.details ? responseData.details.slice(0, 240) : undefined,
+        description: responseData?.hint || (responseData?.details ? responseData.details.slice(0, 240) : undefined),
       });
     },
   });
 
   const provisionKubernetesMutation = useMutation({
     mutationKey: ["ssh-provision-kubernetes"],
-    mutationFn: async (connectionId: string) => {
-      const res = await api.post(`/ssh/connections/${connectionId}/provision/kubernetes`);
+    mutationFn: async ({ connectionId, sudoPassword }: { connectionId: string; sudoPassword?: string }) => {
+      const res = await api.post(`/ssh/connections/${connectionId}/provision/kubernetes`, sudoPassword ? { sudo_password: sudoPassword } : undefined);
       return { id: connectionId, data: res.data as ProvisionResponse };
     },
     onSuccess: ({ id, data: responseData }) => {
@@ -377,6 +388,11 @@ export default function SettingsPage() {
       const responseData = error instanceof AxiosError
         ? (error.response?.data as ProvisionResponse | undefined)
         : undefined;
+      if (responseData?.needs_sudo_password && provisionKubernetesMutation.variables) {
+        setSudoPasswordDialog({ connectionId: provisionKubernetesMutation.variables.connectionId, action: "kubernetes" });
+        setSudoPasswordInput("");
+        return;
+      }
       const message =
         error instanceof AxiosError
           ? responseData?.error || "Failed to prepare Kubernetes"
@@ -546,6 +562,8 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        <McpIntegrations />
 
         <Card>
           <CardHeader>
@@ -848,7 +866,7 @@ export default function SettingsPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => provisionDockerMutation.mutate(connection.id)}
+                              onClick={() => provisionDockerMutation.mutate({ connectionId: connection.id })}
                               disabled={
                                 provisionDockerMutation.isPending ||
                                 deleteSshConnectionMutation.isPending ||
@@ -858,7 +876,7 @@ export default function SettingsPage() {
                               }
                             >
                               {provisionDockerMutation.isPending &&
-                              provisionDockerMutation.variables === connection.id ? (
+                              provisionDockerMutation.variables?.connectionId === connection.id ? (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                               ) : (
                                 <Wrench className="mr-2 h-4 w-4" />
@@ -868,7 +886,7 @@ export default function SettingsPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => provisionKubernetesMutation.mutate(connection.id)}
+                              onClick={() => provisionKubernetesMutation.mutate({ connectionId: connection.id })}
                               disabled={
                                 provisionKubernetesMutation.isPending ||
                                 provisionDockerMutation.isPending ||
@@ -878,7 +896,7 @@ export default function SettingsPage() {
                               }
                             >
                               {provisionKubernetesMutation.isPending &&
-                              provisionKubernetesMutation.variables === connection.id ? (
+                              provisionKubernetesMutation.variables?.connectionId === connection.id ? (
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                               ) : (
                                 <Wrench className="mr-2 h-4 w-4" />
@@ -1114,6 +1132,90 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!sudoPasswordDialog}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSudoPasswordDialog(null);
+            setSudoPasswordInput("");
+            setShowSudoPassword(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="h-5 w-5 text-primary" />
+              Sudo Password Required
+            </DialogTitle>
+            <DialogDescription>
+              This server requires a password for <code>sudo</code>.
+              Enter the server user password to proceed with{" "}
+              {sudoPasswordDialog?.action === "docker" ? "Docker" : "Kubernetes"} provisioning.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!sudoPasswordDialog || !sudoPasswordInput.trim()) return;
+              const { connectionId, action } = sudoPasswordDialog;
+              setSudoPasswordDialog(null);
+              if (action === "docker") {
+                provisionDockerMutation.mutate({ connectionId, sudoPassword: sudoPasswordInput });
+              } else {
+                provisionKubernetesMutation.mutate({ connectionId, sudoPassword: sudoPasswordInput });
+              }
+              setSudoPasswordInput("");
+              setShowSudoPassword(false);
+            }}
+            className="space-y-4"
+          >
+            <div className="grid gap-2">
+              <Label htmlFor="sudo-password">Server Password</Label>
+              <div className="relative">
+                <Input
+                  id="sudo-password"
+                  type={showSudoPassword ? "text" : "password"}
+                  value={sudoPasswordInput}
+                  onChange={(e) => setSudoPasswordInput(e.target.value)}
+                  placeholder="Enter sudo password"
+                  className="pr-10"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:text-foreground"
+                  onClick={() => setShowSudoPassword((current) => !current)}
+                  aria-label={showSudoPassword ? "Hide password" : "Show password"}
+                >
+                  {showSudoPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This password is used once for this operation and is not stored.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSudoPasswordDialog(null);
+                  setSudoPasswordInput("");
+                  setShowSudoPassword(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={!sudoPasswordInput.trim()}>
+                <Lock className="mr-2 h-4 w-4" />
+                Continue
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

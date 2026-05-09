@@ -20,7 +20,7 @@ if (Test-Path $envPath) {
 }
 
 $content = Get-Content $templatePath -Raw
-$content = $content.Replace("aids.example.com", $Domain)
+$content = $content.Replace("dokscp.example.com", $Domain)
 $content = $content.Replace("admin@example.com", $Email)
 $content = $content.Replace("replace-with-a-long-random-database-password", (New-Secret))
 $content = $content.Replace("replace-with-at-least-48-random-characters", (New-Secret))

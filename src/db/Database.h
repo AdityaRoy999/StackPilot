@@ -20,7 +20,7 @@
 #include <pqxx/pqxx>
 #include <mutex>
 
-namespace aids {
+namespace dokscp {
 
 class Database {
 public:
@@ -64,4 +64,4 @@ private:
     std::mutex m_mutex;  // Thread safety for initialization
 };
 
-} // namespace aids
+} // namespace dokscp

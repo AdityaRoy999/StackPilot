@@ -6,7 +6,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace aids {
+namespace dokscp {
 
 class DeploymentController : public drogon::HttpController<DeploymentController> {
 public:
@@ -19,6 +19,7 @@ public:
     ADD_METHOD_TO(DeploymentController::getDeploymentMetrics, "/api/v1/deployments/{deployment_id}/metrics", drogon::Get);
     ADD_METHOD_TO(DeploymentController::getRuntimeHealth, "/api/v1/deployments/{deployment_id}/runtime/health", drogon::Get);
     ADD_METHOD_TO(DeploymentController::deleteDeployment, "/api/v1/deployments/{deployment_id}", drogon::Delete);
+    ADD_METHOD_TO(DeploymentController::deployToLocalDocker, "/api/v1/deployments/{deployment_id}/docker/deploy", drogon::Post);
     ADD_METHOD_TO(DeploymentController::deployToKubernetes, "/api/v1/deployments/{deployment_id}/kubernetes/deploy", drogon::Post);
     ADD_METHOD_TO(DeploymentController::scaleKubernetesDeployment, "/api/v1/deployments/{deployment_id}/kubernetes/scale", drogon::Post);
     ADD_METHOD_TO(DeploymentController::pauseRuntime, "/api/v1/deployments/{deployment_id}/runtime/pause", drogon::Post);
@@ -52,6 +53,9 @@ public:
     void deleteDeployment(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                           const std::string& deploymentId);
+    void deployToLocalDocker(const drogon::HttpRequestPtr& req,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                             const std::string& deploymentId);
     void deployToKubernetes(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                             const std::string& deploymentId);
@@ -86,4 +90,4 @@ private:
                                bool paused);
 };
 
-} // namespace aids
+} // namespace dokscp

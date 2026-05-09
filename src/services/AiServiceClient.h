@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace aids {
+namespace dokscp {
 
 struct AiServiceResult {
     bool ok = false;
@@ -26,4 +26,4 @@ private:
     long timeoutSeconds() const;
 };
 
-} // namespace aids
+} // namespace dokscp

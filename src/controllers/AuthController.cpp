@@ -31,7 +31,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace aids {
+namespace dokscp {
 
 namespace {
 
@@ -279,6 +279,63 @@ std::string getFrontendBaseUrl() {
 bool isGitHubOAuthConfigured() {
     return !getEnvOrDefault("GITHUB_CLIENT_ID").empty() &&
            !getEnvOrDefault("GITHUB_CLIENT_SECRET").empty();
+}
+
+bool isProductionEnvironment() {
+    const std::string value = toLower(getEnvOrDefault("DOKSCP_ENV", getEnvOrDefault("NODE_ENV", "development")));
+    return value == "production" || value == "prod";
+}
+
+std::string registrationMode() {
+    std::string mode = toLower(trim(getEnvOrDefault("DOKSCP_AUTH_REGISTRATION_MODE")));
+    if (mode.empty()) {
+        mode = isProductionEnvironment() ? "first_user_only" : "open";
+    }
+    if (mode != "open" && mode != "first_user_only" && mode != "invite" && mode != "disabled") {
+        return isProductionEnvironment() ? "first_user_only" : "open";
+    }
+    return mode;
+}
+
+bool inviteCodeAccepted(const Json::Value* body) {
+    const std::string expected = trim(getEnvOrDefault("DOKSCP_AUTH_INVITE_CODE"));
+    if (expected.empty()) {
+        return true;
+    }
+    if (!body || !body->isMember("invite_code") || !(*body)["invite_code"].isString()) {
+        return false;
+    }
+    return trim((*body)["invite_code"].asString()) == expected;
+}
+
+bool registrationAllowed(pqxx::work& txn, const Json::Value* body, std::string& reason) {
+    const std::string mode = registrationMode();
+    if (mode == "disabled") {
+        reason = "New account registration is disabled on this DOKSCP instance.";
+        return false;
+    }
+    if ((mode == "invite" || !getEnvOrDefault("DOKSCP_AUTH_INVITE_CODE").empty()) && !inviteCodeAccepted(body)) {
+        reason = "A valid invite code is required to create a new account.";
+        return false;
+    }
+    if (mode == "first_user_only") {
+        const auto countRows = txn.exec("SELECT COUNT(*) FROM users");
+        const long long userCount = countRows.empty() || countRows[0][0].is_null()
+            ? 0
+            : countRows[0][0].as<long long>();
+        if (userCount > 0) {
+            reason = "This production DOKSCP instance already has an owner account. Ask the owner to create or invite additional users.";
+            return false;
+        }
+    }
+    return true;
+}
+
+Json::Value registrationClosedPayload(const std::string& reason) {
+    Json::Value err;
+    err["error"] = reason.empty() ? "New account registration is not allowed on this DOKSCP instance." : reason;
+    err["registration_mode"] = registrationMode();
+    return err;
 }
 
 std::string toHex(const unsigned char* data, size_t length) {
@@ -651,6 +708,15 @@ void AuthController::registerUser(
         auto conn = db.getConnection();
         pqxx::work txn(*conn);
 
+        std::string registrationReason;
+        if (!registrationAllowed(txn, body.get(), registrationReason)) {
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(registrationClosedPayload(registrationReason));
+            resp->setStatusCode(drogon::k403Forbidden);
+            recordRateLimitFailure(rateLimitKey, kRegisterRateLimit);
+            callback(resp);
+            return;
+        }
+
         auto existingUser = txn.exec_params(
             "SELECT id, username, email, password_hash, full_name, sign_in_type, google_sub, github_id, github_username, created_at, updated_at "
             "FROM users WHERE email = $1",
@@ -846,6 +912,14 @@ void AuthController::googleAuth(
 
                 pqxx::result finalResult;
                 if (existing.empty()) {
+                    std::string registrationReason;
+                    if (!registrationAllowed(txn, nullptr, registrationReason)) {
+                        Json::Value err = registrationClosedPayload(registrationReason);
+                        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                        resp->setStatusCode(drogon::k403Forbidden);
+                        callback(resp);
+                        return;
+                    }
                     const std::string usernameSeed =
                         !identity.name.empty() ? identity.name :
                         identity.email.substr(0, identity.email.find('@'));
@@ -1089,6 +1163,15 @@ void AuthController::githubCallback(
                     );
 
                     if (existing.empty()) {
+                        std::string registrationReason;
+                        if (!registrationAllowed(txn, nullptr, registrationReason)) {
+                            callback(makeRedirectResponse(buildGitHubFrontendRedirect(
+                                "error",
+                                mode,
+                                registrationReason
+                            )));
+                            return;
+                        }
                         const std::string usernameSeed =
                             !identity.username.empty() ? identity.username :
                             (!identity.name.empty() ? identity.name :
@@ -1834,4 +1917,4 @@ void AuthController::handleOptions(
     callback(resp);
 }
 
-} // namespace aids
+} // namespace dokscp
