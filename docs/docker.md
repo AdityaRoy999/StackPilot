@@ -26,6 +26,20 @@ Only run this on trusted infrastructure.
 
 For local Docker deployments, DOKSCP starts a container from the built image, publishes the configured container port on an ephemeral localhost port, stores the runtime as `local_docker`, and returns a browser-previewable URL such as `http://localhost:60806`. Runtime health for this mode is based on Docker container state so it works even when the backend itself is running inside a container.
 
+## Compose to Kubernetes
+
+When a project contains a Compose file, DOKSCP now treats it as a multi-service app instead of a single image. The backend runs Compose build, reads `docker compose config --format json`, generates Kubernetes Deployments, Services, Secrets, PVCs, optional HPA/PDB resources, and a public NodePort/Ingress/LoadBalancer route for the selected web-facing service.
+
+For Kubernetes runtime:
+
+- Each Compose stack is deployed into an isolated namespace so internal service DNS names such as `web`, `api`, `redis`, or `db` work like they do in Compose.
+- Built images are handed to the local Kubernetes runtime before rollout. Remote Kubernetes attempts kind, minikube, k3s import, then registry handoff.
+- Common dependency ports are inferred for images like Redis, Postgres, MySQL, MongoDB, Grafana, Prometheus, and Nginx when Compose does not declare `ports` or `expose`.
+- `environment`, `entrypoint`, `command`, `working_dir`, named volumes, and published ports are converted where Kubernetes can represent them safely.
+- Deleting the deployment removes the generated workloads, services, storage claims, and the isolated namespace.
+
+Host bind mounts, privileged containers, custom network modes, and exact Compose healthchecks are not blindly copied because those features are host-specific. DOKSCP logs warnings and uses portable Kubernetes defaults instead.
+
 ## Frontend Image
 
 `frontend/Dockerfile` uses a standalone Next.js build on Node 24 Alpine. The runtime image runs as a non-root `nextjs` user and exposes port `3000`.

@@ -48,6 +48,11 @@ public:
     KubernetesService();
 
     KubernetesRuntimeInfo deploy(const KubernetesDeployOptions& options) const;
+    KubernetesRuntimeInfo deployComposeStack(const KubernetesDeployOptions& options,
+                                             const std::string& composeWorkdir,
+                                             const std::string& composeFile,
+                                             const std::string& composeProjectName,
+                                             const std::string& composeServicesCsv) const;
     KubernetesRuntimeInfo scale(const std::string& nameSpace,
                                 const std::string& deploymentName,
                                 const std::string& serviceName,
@@ -68,6 +73,9 @@ public:
                                  const std::string& deploymentName,
                                  const std::string& serviceName,
                                  const std::string& exposureMode) const;
+    KubernetesRuntimeInfo removeComposeStack(const std::string& nameSpace,
+                                             const std::string& stackName,
+                                             const std::string& exposureMode) const;
     std::string collectEvents(const std::string& nameSpace,
                               const std::string& deploymentName,
                               const std::string& ingressName,

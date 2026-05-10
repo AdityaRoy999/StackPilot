@@ -98,6 +98,12 @@ public:
                                          const std::string& imageName) const;
     KubernetesRuntimeInfo deployKubernetesRuntime(const SshConnectionConfig& config,
                                                   const KubernetesDeployOptions& options) const;
+    KubernetesRuntimeInfo deployComposeKubernetesRuntime(const SshConnectionConfig& config,
+                                                         const KubernetesDeployOptions& options,
+                                                         const std::string& remoteComposeWorkdir,
+                                                         const std::string& composeFile,
+                                                         const std::string& composeProjectName,
+                                                         const std::string& composeServicesCsv) const;
     KubernetesRuntimeInfo inspectKubernetesRuntime(const SshConnectionConfig& config,
                                                    const std::string& nameSpace,
                                                    const std::string& deploymentName,
@@ -122,6 +128,10 @@ public:
                                                   const std::string& deploymentName,
                                                   const std::string& serviceName,
                                                   const std::string& exposureMode) const;
+    KubernetesRuntimeInfo removeComposeKubernetesRuntime(const SshConnectionConfig& config,
+                                                         const std::string& nameSpace,
+                                                         const std::string& stackName,
+                                                         const std::string& exposureMode) const;
     SshOperationResult fetchKnownHostsEntry(const std::string& host, int port) const;
 
 private:

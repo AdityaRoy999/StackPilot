@@ -40,8 +40,43 @@ std::string toLower(const std::string& input) {
     return out;
 }
 
+std::string trim(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+        ++start;
+    }
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+    return value.substr(start, end - start);
+}
+
 bool hasFile(const std::filesystem::path& dir, const std::string& name) {
     return std::filesystem::exists(dir / name);
+}
+
+std::filesystem::path findComposeFile(const std::filesystem::path& dir) {
+    const std::vector<std::string> candidates = {
+        "docker-compose.dokscp.yml",
+        "docker-compose.dokscp.yaml",
+        "docker-compose.prod.yml",
+        "docker-compose.prod.yaml",
+        "compose.prod.yml",
+        "compose.prod.yaml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml"
+    };
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        const auto path = dir / candidate;
+        if (std::filesystem::exists(path, ec) && std::filesystem::is_regular_file(path, ec)) {
+            return path;
+        }
+    }
+    return {};
 }
 
 bool hasPythonScript(const std::filesystem::path& dir) {
@@ -126,6 +161,18 @@ bool isValidDockerfileText(const std::string& dockerfile) {
     return lowered.find("from ") != std::string::npos &&
            lowered.find("copy ") != std::string::npos &&
            (lowered.find("cmd ") != std::string::npos || lowered.find("entrypoint ") != std::string::npos);
+}
+
+std::string markerValue(const std::string& output, const std::string& marker) {
+    std::istringstream stream(output);
+    std::string line;
+    const std::string prefix = marker + "=";
+    while (std::getline(stream, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            return trim(line.substr(prefix.size()));
+        }
+    }
+    return "";
 }
 
 bool writeGitAskPassFiles(const std::filesystem::path& deploymentDir,
@@ -830,7 +877,17 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
                                                     LogCallback onLogLine) const {
     BuildResult result;
     const std::string imageName = "dokscp/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
-    const std::string containerName = "dokscp-" + sanitizeName(projectName) + "-" + sanitizeName(deploymentId).substr(0, 8);
+    std::string projectSlug = sanitizeName(projectName);
+    if (projectSlug.size() > 32) {
+        projectSlug.resize(32);
+        while (!projectSlug.empty() && projectSlug.back() == '-') {
+            projectSlug.pop_back();
+        }
+    }
+    if (projectSlug.empty()) {
+        projectSlug = "project";
+    }
+    const std::string containerName = "dokscp-" + projectSlug + "-" + sanitizeName(deploymentId).substr(0, 8);
 
     std::vector<std::pair<std::string, std::string>> sshEnvVars;
     for (const auto& envVar : envVars) {
@@ -861,8 +918,30 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     result.remoteContainerName = containerName;
     result.runtimeProvider = "remote_docker";
 
+    const std::string remoteComposeProject = markerValue(remoteResult.output, "__DOKSCP_REMOTE_COMPOSE_PROJECT__");
+    if (!remoteComposeProject.empty()) {
+        result.composeProject = true;
+        result.composeProjectName = remoteComposeProject;
+        result.composeFile = markerValue(remoteResult.output, "__DOKSCP_REMOTE_COMPOSE_FILE__");
+        result.composeServices = markerValue(remoteResult.output, "__DOKSCP_REMOTE_COMPOSE_SERVICES__");
+        result.composeWorkdir = remotePath;
+        result.imageName = "compose:" + remoteComposeProject;
+        result.remoteContainerName = remoteComposeProject;
+        result.runtimeProvider = "remote_compose";
+        result.runtimeUrl = markerValue(remoteResult.output, "__DOKSCP_REMOTE_URL__");
+    }
+
     if (!remoteResult.success) {
-        result.error = remoteResult.error.empty() ? "Remote Docker execution failed" : remoteResult.error;
+        if (remoteResult.output.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos) {
+            result.error = "Docker Compose is not installed on the remote host";
+        } else {
+            result.error = remoteResult.error.empty() ? "Remote Docker execution failed" : remoteResult.error;
+        }
+        return result;
+    }
+
+    if (result.composeProject) {
+        result.success = true;
         return result;
     }
 
@@ -1077,6 +1156,86 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
     injectBuildEnvironmentFiles(sourceDir, envVars, onLogLine);
     if (!envVars.empty()) {
         appendLogLine(logFile, "Injected project environment variables into build context", nullptr);
+    }
+
+    const std::filesystem::path composePath = findComposeFile(sourceDir);
+    if (!composePath.empty()) {
+        const std::string composeFile = composePath.filename().string();
+        std::string composeProjectSuffix = sanitizeName(deploymentId);
+        if (composeProjectSuffix.size() > 24) {
+            composeProjectSuffix.resize(24);
+        }
+        while (!composeProjectSuffix.empty() && composeProjectSuffix.back() == '-') {
+            composeProjectSuffix.pop_back();
+        }
+        if (composeProjectSuffix.empty()) {
+            composeProjectSuffix = "deployment";
+        }
+        const std::string composeProject = "dokscp-" + composeProjectSuffix;
+        appendLogLine(logFile, "Detected Docker Compose project: " + composeFile, onLogLine);
+        appendLogLine(logFile, "Starting Compose build and runtime stack: " + composeProject, onLogLine);
+
+        const std::string quotedComposeFile = shellQuote(composeFile);
+        const std::string quotedProject = shellQuote(composeProject);
+        const std::string composeCommand =
+            "cd " + shellQuote(sourceDir.string()) + " && "
+            "compose_cmd='docker compose'; "
+            "if ! docker compose version >/dev/null 2>&1; then "
+            "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
+            "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
+            "fi; "
+            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " config --services > .dokscp-compose-services; "
+            "services=$(paste -sd, .dokscp-compose-services 2>/dev/null || true); "
+            "echo __DOKSCP_COMPOSE_PROJECT__=" + composeProject + "; "
+            "echo __DOKSCP_COMPOSE_FILE__=" + composeFile + "; "
+            "echo __DOKSCP_COMPOSE_SERVICES__=$services; "
+            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " pull --ignore-pull-failures || true; "
+            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " up -d --build --remove-orphans; "
+            "runtime=''; "
+            "domain=$(sed -n 's/^DOKSCP_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "if [ -n \"$domain\" ]; then runtime=\"https://$domain\"; fi; "
+            "if [ -z \"$runtime\" ]; then "
+            "  for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
+            "    for port in 80 443 3000 8080 8000 5000 5173; do "
+            "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
+            "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
+            "    done; "
+            "  done; "
+            "fi; "
+            "echo __DOKSCP_COMPOSE_URL__=$runtime; "
+            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " ps";
+
+        const int composeExit = runCommandCapture(
+            composeCommand,
+            logFile,
+            true,
+            std::max(buildTimeoutSeconds_, 120),
+            onLogLine
+        );
+
+        result.logs = readFileBounded(logFile);
+        result.composeProject = true;
+        result.composeProjectName = composeProject;
+        result.composeFile = composeFile;
+        result.composeWorkdir = sourceDir.string();
+        result.composeServices = markerValue(result.logs, "__DOKSCP_COMPOSE_SERVICES__");
+        result.runtimeUrl = markerValue(result.logs, "__DOKSCP_COMPOSE_URL__");
+        result.runtimeProvider = "local_compose";
+        result.remoteContainerName = composeProject;
+        result.imageName = "compose:" + composeProject;
+
+        if (composeExit != 0) {
+            result.error = result.logs.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos
+                ? "Docker Compose is not available to the DOKSCP backend"
+                : (composeExit == 124 ? "Docker Compose deploy timed out" : "Docker Compose deploy failed");
+            appendLogLine(logFile, result.error, onLogLine);
+            result.logs = readFileBounded(logFile);
+            result.success = false;
+            return result;
+        }
+
+        result.success = true;
+        return result;
     }
 
     std::string dockerfileReason;

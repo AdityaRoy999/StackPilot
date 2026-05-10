@@ -4,6 +4,8 @@
 
 #include "SshService.h"
 
+#include "ComposeKubernetesPlanner.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -1358,6 +1360,39 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "cd \"$target\"; "
         "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
         "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "compose_file=''; "
+        "for f in docker-compose.dokscp.yml docker-compose.dokscp.yaml docker-compose.prod.yml docker-compose.prod.yaml compose.prod.yml compose.prod.yaml docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do [ -f \"$f\" ] && { compose_file=\"$f\"; break; }; done; "
+        "if [ -n \"$compose_file\" ]; then "
+        "  compose_cmd='docker compose'; "
+        "  if ! docker compose version >/dev/null 2>&1; then if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; fi; "
+        "  cat > " + shellQuote(envFile) + " <<'__DOKSCP_ENV_EOF__'\n" +
+        envContent.str() +
+        "__DOKSCP_ENV_EOF__\n"
+        "  cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
+        "  cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
+        "  cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
+        "  echo 'Detected Docker Compose project: '\"$compose_file\"; "
+        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " config --services > .dokscp-compose-services; "
+        "  services=$(paste -sd, .dokscp-compose-services 2>/dev/null || true); "
+        "  echo __DOKSCP_REMOTE_COMPOSE_PROJECT__=" + containerName + "; "
+        "  echo __DOKSCP_REMOTE_COMPOSE_FILE__=$compose_file; "
+        "  echo __DOKSCP_REMOTE_COMPOSE_SERVICES__=$services; "
+        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " pull --ignore-pull-failures || true; "
+        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " up -d --build --remove-orphans; "
+        "  runtime=''; domain=$(sed -n 's/^DOKSCP_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  if [ -n \"$domain\" ]; then runtime=\"https://$domain\"; fi; "
+        "  if [ -z \"$runtime\" ]; then "
+        "    for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
+        "      for port in 80 443 3000 8080 8000 5000 5173; do "
+        "        mapped=$($compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
+        "        if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; runtime=\"$scheme://" + config.host + ":$mapped\"; break 2; fi; "
+        "      done; "
+        "    done; "
+        "  fi; "
+        "  echo __DOKSCP_REMOTE_URL__=$runtime; "
+        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " ps; "
+        "  exit 0; "
+        "fi; "
         "dockerfile_arg='-f Dockerfile'; "
         "if [ ! -f Dockerfile ]; then "
         "  mkdir -p .dokscp; "
@@ -2083,6 +2118,271 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
     return result;
 }
 
+KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnectionConfig& config,
+                                                                 const KubernetesDeployOptions& options,
+                                                                 const std::string& remoteComposeWorkdir,
+                                                                 const std::string& composeFile,
+                                                                 const std::string& composeProjectName,
+                                                                 const std::string& composeServicesCsv) const {
+    KubernetesRuntimeInfo result;
+    std::string error;
+    if (!isValidConnectionConfig(config, error)) {
+        result.error = error;
+        return result;
+    }
+    if (!isValidRemotePath(remoteComposeWorkdir) || composeFile.empty() || composeProjectName.empty()) {
+        result.error = "Remote Compose Kubernetes deployment is missing safe build metadata";
+        return result;
+    }
+
+    result.nameSpace = options.nameSpace.empty() ? "dokscp-apps" : toLower(trim(options.nameSpace));
+    result.exposureMode = normalizeKubernetesExposure(options.exposureMode);
+    result.runtimeScheme = normalizeRuntimeScheme(options.runtimeScheme);
+    result.desiredReplicas = std::clamp(options.replicas, 1, 10);
+    if (!isValidDnsLabelValue(result.nameSpace)) {
+        result.error = "Namespace must be a lowercase DNS label";
+        return result;
+    }
+
+    const SshOperationResult configResult = runRemoteCommand(
+        config,
+        remoteComposeWorkdir,
+        "compose_cmd='docker compose'; "
+        "if ! docker compose version >/dev/null 2>&1; then "
+        "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
+        "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
+        "fi; "
+        "$compose_cmd -f " + shellQuote(composeFile) +
+        " -p " + shellQuote(composeProjectName) +
+        " config --format json 2>/dev/null",
+        120
+    );
+    if (!configResult.success) {
+        result.logs = configResult.output;
+        result.error = configResult.output.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos
+            ? "Docker Compose is not available on the remote host"
+            : (configResult.error.empty() ? "Failed to read remote Docker Compose config" : configResult.error);
+        return result;
+    }
+
+    Json::Value composeConfig;
+    Json::CharReaderBuilder builder;
+    builder["collectComments"] = false;
+    std::string parseErrors;
+    std::istringstream composeStream(configResult.output);
+    if (!Json::parseFromStream(builder, composeStream, &composeConfig, &parseErrors)) {
+        result.logs = configResult.output;
+        result.error = "Remote Docker Compose config output could not be parsed";
+        return result;
+    }
+
+    const char* baseDomainEnv = std::getenv("REMOTE_K8S_BASE_DOMAIN");
+    const char* ingressClassEnv = std::getenv("REMOTE_K8S_INGRESS_CLASS");
+    const char* issuerEnv = std::getenv("REMOTE_K8S_CERT_CLUSTER_ISSUER");
+    const std::string baseDomain = baseDomainEnv && *baseDomainEnv ? baseDomainEnv : "";
+    const std::string ingressClass = ingressClassEnv && *ingressClassEnv ? ingressClassEnv : "";
+    const std::string clusterIssuer = issuerEnv && *issuerEnv ? issuerEnv : "";
+
+    ComposeKubernetesPlanOptions planOptions;
+    planOptions.deploymentId = options.deploymentId;
+    planOptions.projectName = options.projectName;
+    planOptions.composeProjectName = composeProjectName;
+    planOptions.nameSpace = result.nameSpace;
+    planOptions.exposureMode = result.exposureMode;
+    planOptions.runtimeScheme = result.runtimeScheme;
+    planOptions.serviceType = result.exposureMode == "loadbalancer" ? "LoadBalancer" : "NodePort";
+    planOptions.baseDomain = baseDomain;
+    planOptions.hostForNip = config.host;
+    planOptions.ingressClassName = ingressClass;
+    if (result.runtimeScheme == "https") {
+        const std::string issuer = clusterIssuer.empty() ? "letsencrypt-prod" : clusterIssuer;
+        planOptions.ingressAnnotationsJson = "{\"cert-manager.io/cluster-issuer\":\"" + issuer + "\"}";
+    }
+    planOptions.resourcePreset = options.resourcePreset;
+    planOptions.envVars = options.envVars;
+    planOptions.replicas = result.desiredReplicas;
+    planOptions.defaultContainerPort = options.containerPort;
+    planOptions.allowIngressWithoutBaseDomain = true;
+    planOptions.useImagePlaceholders = true;
+
+    const ComposeKubernetesPlan plan = ComposeKubernetesPlanner::build(composeConfig, planOptions);
+    if (!plan.success) {
+        result.error = plan.error.empty() ? "Remote Compose Kubernetes conversion failed" : plan.error;
+        result.logs = ComposeKubernetesPlanner::joinWarnings(plan.warnings);
+        return result;
+    }
+
+    result.nameSpace = plan.nameSpace;
+    result.deploymentName = plan.primaryDeploymentName;
+    result.serviceName = plan.primaryServiceName;
+    result.ingressName = plan.ingressName;
+    result.ingressHost = plan.ingressHost;
+    result.exposureMode = plan.exposureMode;
+    result.runtimeScheme = plan.runtimeScheme;
+    result.desiredReplicas = plan.desiredReplicas;
+
+    const std::filesystem::path localManifestPath =
+        std::filesystem::temp_directory_path() / ("dokscp-remote-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".yaml");
+    const std::filesystem::path localScriptPath =
+        std::filesystem::temp_directory_path() / ("dokscp-remote-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".sh");
+    {
+        std::ofstream manifest(localManifestPath, std::ios::trunc);
+        manifest << plan.manifest;
+    }
+
+    const std::string remoteBase = "/tmp/dokscp-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId);
+    const std::string remoteManifestPath = remoteBase + ".yaml";
+    const std::string remoteScriptPath = remoteBase + ".sh";
+
+    {
+        std::ofstream script(localScriptPath, std::ios::trunc);
+        script
+            << "#!/bin/sh\n"
+            << "set -eu\n"
+            << "echo '[remote-compose-k8s] Preparing multi-service Kubernetes stack'\n"
+            << "if command -v kubectl >/dev/null 2>&1; then K='kubectl';\n"
+            << "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl';\n"
+            << "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl';\n"
+            << "else echo __DOKSCP_KUBECTL_MISSING__; exit 30; fi\n"
+            << "$K get nodes >/dev/null 2>&1 || { echo __DOKSCP_K8S_NOT_READY__; exit 31; }\n"
+            << "$K get namespace " << shellQuote(plan.nameSpace) << " >/dev/null 2>&1 || $K create namespace " << shellQuote(plan.nameSpace) << "\n"
+            << "cd " << shellQuote(remoteComposeWorkdir) << "\n"
+            << "compose_cmd='docker compose'\n"
+            << "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi\n"
+            << "$compose_cmd -f " << shellQuote(composeFile) << " -p " << shellQuote(composeProjectName) << " down --remove-orphans || true\n"
+            << "ensure_registry() {\n"
+            << "  docker ps --format '{{.Names}}' | grep -qx dokscp-local-registry || { docker rm -f dokscp-local-registry >/dev/null 2>&1 || true; docker run -d --restart unless-stopped --name dokscp-local-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null; }\n"
+            << "  for i in $(seq 1 20); do (command -v curl >/dev/null 2>&1 && curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1) && return 0 || true; sleep 1; done\n"
+            << "  return 1\n"
+            << "}\n"
+            << "prepare_image() {\n"
+            << "  placeholder=\"$1\"; image=\"$2\"; replacement=\"$image\"; image_loaded=no\n"
+            << "  if ! command -v docker >/dev/null 2>&1 || ! docker image inspect \"$image\" >/dev/null 2>&1; then echo __DOKSCP_K8S_SOURCE_IMAGE_MISSING__=$image; exit 32; fi\n"
+            << "  if command -v kind >/dev/null 2>&1 && kind load docker-image \"$image\" >/dev/null 2>&1; then image_loaded=yes; fi\n"
+            << "  if [ \"$image_loaded\" = no ] && command -v minikube >/dev/null 2>&1 && minikube image load \"$image\" >/dev/null 2>&1; then image_loaded=yes; fi\n"
+            << "  if [ \"$image_loaded\" = no ] && command -v k3s >/dev/null 2>&1; then\n"
+            << "    if [ \"$(id -u)\" -eq 0 ] && docker save \"$image\" | k3s ctr images import - >/dev/null 2>&1; then image_loaded=yes;\n"
+            << "    elif sudo -n true >/dev/null 2>&1 && docker save \"$image\" | sudo -n k3s ctr images import - >/dev/null 2>&1; then image_loaded=yes; fi\n"
+            << "  fi\n"
+            << "  if [ \"$image_loaded\" = no ]; then\n"
+            << "    ensure_registry || { echo __DOKSCP_K8S_REGISTRY_PUSH_FAILED__; exit 33; }\n"
+            << "    registry_image=\"localhost:5000/${image#docker.io/}\"\n"
+            << "    docker tag \"$image\" \"$registry_image\"\n"
+            << "    docker push \"$registry_image\" >/dev/null || { echo __DOKSCP_K8S_REGISTRY_PUSH_FAILED__; exit 33; }\n"
+            << "    replacement=\"$registry_image\"\n"
+            << "  fi\n"
+            << "  safe=$(printf '%s' \"$replacement\" | sed 's/[&|]/\\\\&/g')\n"
+            << "  sed -i \"s|$placeholder|$safe|g\" " << shellQuote(remoteManifestPath) << "\n"
+            << "  echo __DOKSCP_K8S_IMAGE_USED__=$replacement\n"
+            << "}\n";
+        for (const auto& service : plan.services) {
+            script << "prepare_image " << shellQuote(service.imagePlaceholder) << " " << shellQuote(service.imageName) << "\n";
+        }
+        if (result.runtimeScheme == "https") {
+            const char* acmeEmailEnv = std::getenv("ACME_EMAIL");
+            const std::string acmeEmail = acmeEmailEnv && *acmeEmailEnv ? acmeEmailEnv : "";
+            script
+                << "if ! $K get crd certificates.cert-manager.io >/dev/null 2>&1; then\n"
+                << "  [ -n " << shellQuote(acmeEmail) << " ] || { echo __DOKSCP_ACME_EMAIL_MISSING__; exit 37; }\n"
+                << "  echo '[remote-compose-k8s] cert-manager is not installed; install it before HTTPS Compose deployments'\n"
+                << "  echo __DOKSCP_CERT_MANAGER_NOT_READY__; exit 39\n"
+                << "fi\n";
+        }
+        script
+            << "$K apply -f " << shellQuote(remoteManifestPath) << "\n";
+        for (const auto& service : plan.services) {
+            script
+                << "$K rollout status deployment/" << shellQuote(service.deploymentName)
+                << " -n " << shellQuote(plan.nameSpace) << " --timeout=180s || { echo __DOKSCP_K8S_ROLLOUT_FAILED__=" << service.serviceName << "; exit 40; }\n";
+        }
+        script
+            << "ready=$($K get deployment " << shellQuote(plan.primaryDeploymentName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)\n"
+            << "desired=$($K get deployment " << shellQuote(plan.primaryDeploymentName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.spec.replicas}' 2>/dev/null || true)\n"
+            << "nodeport=$($K get service " << shellQuote(plan.primaryServiceName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)\n"
+            << "lbhost=$($K get service " << shellQuote(plan.primaryServiceName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\n"
+            << "lbip=$($K get service " << shellQuote(plan.primaryServiceName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\n"
+            << "echo __DOKSCP_K8S_NAMESPACE__=" << plan.nameSpace << "\n"
+            << "echo __DOKSCP_K8S_DEPLOYMENT__=" << plan.primaryDeploymentName << "\n"
+            << "echo __DOKSCP_K8S_SERVICE__=" << plan.primaryServiceName << "\n"
+            << "echo __DOKSCP_K8S_INGRESS__=" << (plan.exposureMode == "ingress" ? plan.ingressName : "") << "\n"
+            << "echo __DOKSCP_K8S_EXPOSURE__=" << plan.exposureMode << "\n"
+            << "echo __DOKSCP_K8S_READY__=${ready:-0}\n"
+            << "echo __DOKSCP_K8S_DESIRED__=${desired:-0}\n";
+        if (plan.exposureMode == "ingress") {
+            script << "echo __DOKSCP_K8S_URL__=" << plan.runtimeScheme << "://" << plan.ingressHost << "\n";
+        } else {
+            script
+                << "if [ -n \"$nodeport\" ]; then echo __DOKSCP_K8S_URL__=http://" << config.host << ":$nodeport;\n"
+                << "elif [ -n \"$lbhost\" ]; then echo __DOKSCP_K8S_URL__=" << plan.runtimeScheme << "://$lbhost;\n"
+                << "elif [ -n \"$lbip\" ]; then echo __DOKSCP_K8S_URL__=" << plan.runtimeScheme << "://$lbip;\n"
+                << "else echo __DOKSCP_K8S_URL__=http://" << plan.primaryServiceName << "." << plan.nameSpace << ".svc.cluster.local; fi\n";
+        }
+        script
+            << "rm -f " << shellQuote(remoteManifestPath) << " " << shellQuote(remoteScriptPath) << "\n"
+            << "echo __DOKSCP_K8S_DONE__\n";
+    }
+
+    auto cleanupLocalFiles = [&]() {
+        std::error_code ignore;
+        std::filesystem::remove(localManifestPath, ignore);
+        std::filesystem::remove(localScriptPath, ignore);
+    };
+
+    SshOperationResult uploadManifest = uploadFile(config, localManifestPath.string(), remoteManifestPath, 120);
+    if (!uploadManifest.success) {
+        cleanupLocalFiles();
+        result.logs = uploadManifest.output;
+        result.error = uploadManifest.error.empty() ? "Failed to upload Compose Kubernetes manifest" : uploadManifest.error;
+        return result;
+    }
+    SshOperationResult uploadScript = uploadFile(config, localScriptPath.string(), remoteScriptPath, 120);
+    if (!uploadScript.success) {
+        cleanupLocalFiles();
+        result.logs = uploadManifest.output + uploadScript.output;
+        result.error = uploadScript.error.empty() ? "Failed to upload Compose Kubernetes deploy script" : uploadScript.error;
+        return result;
+    }
+
+    const SshOperationResult commandResult = runRemoteCommand(
+        config,
+        "/tmp",
+        "chmod 700 " + shellQuote(remoteScriptPath) + " && sh " + shellQuote(remoteScriptPath),
+        300
+    );
+    cleanupLocalFiles();
+
+    result.logs = uploadManifest.output + uploadScript.output +
+        ComposeKubernetesPlanner::joinWarnings(plan.warnings) + commandResult.output;
+    if (!commandResult.success || commandResult.output.find("__DOKSCP_K8S_DONE__") == std::string::npos) {
+        if (commandResult.output.find("__DOKSCP_KUBECTL_MISSING__") != std::string::npos) {
+            result.error = "kubectl or k3s is not installed on the remote host";
+        } else if (commandResult.output.find("__DOKSCP_K8S_NOT_READY__") != std::string::npos) {
+            result.error = "Remote Kubernetes cluster is not reachable";
+        } else if (commandResult.output.find("__DOKSCP_K8S_SOURCE_IMAGE_MISSING__") != std::string::npos) {
+            result.error = "One or more Compose-built images are missing before Kubernetes deploy";
+        } else if (commandResult.output.find("__DOKSCP_K8S_REGISTRY_PUSH_FAILED__") != std::string::npos) {
+            result.error = "Remote Kubernetes image handoff failed: unable to push to local registry";
+        } else if (commandResult.output.find("__DOKSCP_ACME_EMAIL_MISSING__") != std::string::npos) {
+            result.error = "HTTPS requires ACME_EMAIL to create Let's Encrypt certificates";
+        } else if (commandResult.output.find("__DOKSCP_CERT_MANAGER_NOT_READY__") != std::string::npos) {
+            result.error = "cert-manager must be installed before HTTPS Compose Kubernetes deployment";
+        } else if (commandResult.output.find("__DOKSCP_K8S_ROLLOUT_FAILED__") != std::string::npos) {
+            result.error = "Remote Compose Kubernetes rollout failed";
+        } else {
+            result.error = commandResult.error.empty() ? "Remote Compose Kubernetes deployment failed" : commandResult.error;
+        }
+        return result;
+    }
+
+    result.success = true;
+    result.deployed = true;
+    result.readyReplicas = markerInt(commandResult.output, "__DOKSCP_K8S_READY__", 0);
+    result.desiredReplicas = markerInt(commandResult.output, "__DOKSCP_K8S_DESIRED__", result.desiredReplicas);
+    result.runtimeUrl = markerValue(commandResult.output, "__DOKSCP_K8S_URL__");
+    result.status = result.desiredReplicas > 0 && result.readyReplicas >= result.desiredReplicas ? "running" : "deploying";
+    return result;
+}
+
 KubernetesRuntimeInfo SshService::inspectKubernetesRuntime(const SshConnectionConfig& config,
                                                            const std::string& nameSpace,
                                                            const std::string& deploymentName,
@@ -2285,6 +2585,50 @@ KubernetesRuntimeInfo SshService::removeKubernetesRuntime(const SshConnectionCon
     if (!commandResult.success) {
         result.success = false;
         result.error = commandResult.error.empty() ? "Failed to remove remote Kubernetes runtime" : commandResult.error;
+    }
+    return result;
+}
+
+KubernetesRuntimeInfo SshService::removeComposeKubernetesRuntime(const SshConnectionConfig& config,
+                                                                 const std::string& nameSpace,
+                                                                 const std::string& stackName,
+                                                                 const std::string& exposureMode) const {
+    KubernetesRuntimeInfo result;
+    result.success = true;
+    result.nameSpace = nameSpace;
+    result.deploymentName = stackName;
+    result.exposureMode = normalizeKubernetesExposure(exposureMode);
+    std::string error;
+    if (!isValidConnectionConfig(config, error)) {
+        result.success = false;
+        result.error = error;
+        return result;
+    }
+    if (!isValidDnsLabelValue(nameSpace) || !isValidDnsLabelValue(stackName)) {
+        result.success = false;
+        result.error = "Invalid remote Compose Kubernetes cleanup metadata";
+        return result;
+    }
+
+    const std::string selector = "dokscp.io/compose-project=" + stackName;
+    const SshOperationResult commandResult = runRemoteCommand(
+        config,
+        "/tmp",
+        "if command -v kubectl >/dev/null 2>&1; then K='kubectl'; "
+        "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl'; "
+        "else K='sudo -n k3s kubectl'; fi; "
+        "$K delete ingress,service,hpa,pdb,secret,pvc,deployment -l " + shellQuote(selector) +
+            " -n " + shellQuote(nameSpace) + " --ignore-not-found --cascade=foreground; "
+        "$K delete pods -l " + shellQuote(selector) +
+            " -n " + shellQuote(nameSpace) + " --ignore-not-found --grace-period=0 --force; "
+        "case " + shellQuote(nameSpace) + " in *" + shellQuote(stackName) + "*) "
+            "$K delete namespace " + shellQuote(nameSpace) + " --ignore-not-found || true;; esac",
+        120
+    );
+    result.logs = commandResult.output;
+    if (!commandResult.success) {
+        result.success = false;
+        result.error = commandResult.error.empty() ? "Failed to remove remote Compose Kubernetes runtime" : commandResult.error;
     }
     return result;
 }

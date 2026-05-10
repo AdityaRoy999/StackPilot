@@ -4,6 +4,8 @@
 
 #include "KubernetesService.h"
 
+#include "ComposeKubernetesPlanner.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -165,6 +167,18 @@ void writeYamlBlockScalar(std::ostream& out, const std::string& key, const std::
     if (!wroteLine) {
         out << "    \n";
     }
+}
+
+std::string replaceAll(std::string value, const std::string& needle, const std::string& replacement) {
+    if (needle.empty()) {
+        return value;
+    }
+    size_t pos = 0;
+    while ((pos = value.find(needle, pos)) != std::string::npos) {
+        value.replace(pos, needle.size(), replacement);
+        pos += replacement.size();
+    }
+    return value;
 }
 
 } // namespace
@@ -609,6 +623,244 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
     return inspected;
 }
 
+KubernetesRuntimeInfo KubernetesService::deployComposeStack(const KubernetesDeployOptions& options,
+                                                            const std::string& composeWorkdir,
+                                                            const std::string& composeFile,
+                                                            const std::string& composeProjectName,
+                                                            const std::string& composeServicesCsv) const {
+    KubernetesRuntimeInfo result;
+    result.nameSpace = options.nameSpace.empty() ? defaultNamespace_ : options.nameSpace;
+    result.exposureMode = normalizeExposureMode(options.exposureMode);
+    result.runtimeScheme = normalizeRuntimeScheme(options.runtimeScheme.empty() ? runtimeScheme_ : options.runtimeScheme);
+    result.desiredReplicas = std::max(1, options.replicas);
+    if (result.desiredReplicas > maxReplicas_) {
+        result.error = "Replica count exceeds configured platform maximum";
+        return result;
+    }
+    if (!isValidDnsLabel(result.nameSpace)) {
+        result.error = "Namespace must be a lowercase DNS label";
+        return result;
+    }
+    if (!namespacePrefix_.empty() && result.nameSpace.rfind(namespacePrefix_, 0) != 0) {
+        result.error = "Namespace must use the configured platform prefix";
+        return result;
+    }
+    if (composeWorkdir.empty() || composeFile.empty() || composeProjectName.empty()) {
+        result.error = "Compose Kubernetes deployment is missing build metadata";
+        return result;
+    }
+
+    std::ostringstream logs;
+    logs << "[compose-k8s] Preparing Docker Compose Kubernetes stack\n";
+    logs << "[compose-k8s] Namespace: " << result.nameSpace << "\n";
+    logs << "[compose-k8s] Compose project: " << composeProjectName << "\n";
+    logs << "[compose-k8s] Compose file: " << composeFile << "\n";
+    if (!composeServicesCsv.empty()) {
+        logs << "[compose-k8s] Compose services: " << composeServicesCsv << "\n";
+    }
+
+    if (result.runtimeScheme == "https" && !exposureUsesIngress(result.exposureMode)) {
+        result.error = "HTTPS runtime URLs require Ingress exposure so TLS can terminate at the ingress controller";
+        result.logs = logs.str();
+        return result;
+    }
+
+    if (exposureUsesIngress(result.exposureMode) && !ingressClassName_.empty()) {
+        std::string ingressClassOutput;
+        if (!ingressClassExists(ingressClassOutput)) {
+            result.error = "Configured ingress class is not available in the cluster";
+            result.logs = logs.str() + ingressClassOutput;
+            return result;
+        }
+    }
+
+    std::string output;
+    const std::string configCommand =
+        "timeout 120s sh -lc " + shellQuote(
+            "cd " + shellQuote(composeWorkdir) + " && "
+            "compose_cmd='docker compose'; "
+            "if ! docker compose version >/dev/null 2>&1; then "
+            "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
+            "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
+            "fi; "
+            "$compose_cmd -f " + shellQuote(composeFile) +
+            " -p " + shellQuote(composeProjectName) +
+            " config --format json 2>/dev/null"
+        );
+    if (runCommand(configCommand, output) != 0) {
+        result.error = output.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos
+            ? "Docker Compose is not available to the DOKSCP backend"
+            : "Failed to read Docker Compose config for Kubernetes conversion";
+        result.logs = logs.str() + output;
+        return result;
+    }
+
+    Json::Value composeConfig;
+    Json::CharReaderBuilder builder;
+    builder["collectComments"] = false;
+    std::string parseErrors;
+    std::istringstream composeStream(output);
+    if (!Json::parseFromStream(builder, composeStream, &composeConfig, &parseErrors)) {
+        result.error = "Docker Compose config output could not be parsed";
+        result.logs = logs.str() + parseErrors + "\n" + output;
+        return result;
+    }
+
+    ComposeKubernetesPlanOptions planOptions;
+    planOptions.deploymentId = options.deploymentId;
+    planOptions.projectName = options.projectName;
+    planOptions.composeProjectName = composeProjectName;
+    planOptions.nameSpace = result.nameSpace;
+    planOptions.exposureMode = result.exposureMode;
+    planOptions.runtimeScheme = result.runtimeScheme;
+    planOptions.serviceType = serviceType_;
+    planOptions.baseDomain = baseDomain_;
+    planOptions.ingressClassName = ingressClassName_;
+    planOptions.ingressTlsSecretName = ingressTlsSecretName_;
+    planOptions.ingressAnnotationsJson = ingressAnnotationsJson_;
+    planOptions.imagePullSecretName = imagePullSecretName_;
+    planOptions.serviceAccountName = serviceAccountName_;
+    planOptions.resourcePreset = options.resourcePreset;
+    planOptions.cpuRequest = cpuRequest_;
+    planOptions.memoryRequest = memoryRequest_;
+    planOptions.cpuLimit = cpuLimit_;
+    planOptions.memoryLimit = memoryLimit_;
+    planOptions.healthPath = options.healthPath.empty() ? probePath_ : options.healthPath;
+    planOptions.envVars = options.envVars;
+    planOptions.replicas = result.desiredReplicas;
+    planOptions.defaultContainerPort = options.containerPort;
+    planOptions.maxReplicas = maxReplicas_;
+    planOptions.enablePodDisruptionBudget = enablePodDisruptionBudget_;
+    planOptions.enableHorizontalPodAutoscaler = enableHorizontalPodAutoscaler_;
+    planOptions.hpaMinReplicas = hpaMinReplicas_;
+    planOptions.hpaMaxReplicas = hpaMaxReplicas_;
+    planOptions.hpaCpuUtilizationTarget = hpaCpuUtilizationTarget_;
+    planOptions.useImagePlaceholders = true;
+
+    const ComposeKubernetesPlan plan = ComposeKubernetesPlanner::build(composeConfig, planOptions);
+    if (!plan.success) {
+        result.error = plan.error.empty() ? "Docker Compose Kubernetes conversion failed" : plan.error;
+        result.logs = logs.str() + ComposeKubernetesPlanner::joinWarnings(plan.warnings);
+        return result;
+    }
+    logs << ComposeKubernetesPlanner::joinWarnings(plan.warnings);
+    logs << "[compose-k8s] Primary service: " << plan.primaryServiceName << "\n";
+    logs << "[compose-k8s] Exposure mode: " << plan.exposureMode << "\n";
+
+    std::string manifestText = plan.manifest;
+    for (const auto& service : plan.services) {
+        output.clear();
+        if (runCommand("docker image inspect " + shellQuote(service.imageName) + " >/dev/null", output) != 0) {
+            result.error = "Compose-built image is missing before Kubernetes deploy: " + service.imageName;
+            result.logs = logs.str() + output;
+            return result;
+        }
+
+        bool imageLoaded = false;
+        const std::vector<std::string> loadCommands = {
+            "timeout 180s sh -lc " + shellQuote("kind load docker-image " + shellQuote(service.imageName) + " >/dev/null 2>&1"),
+            "timeout 180s sh -lc " + shellQuote("minikube image load " + shellQuote(service.imageName) + " >/dev/null 2>&1"),
+            "timeout 180s sh -lc " + shellQuote(
+                "docker save " + shellQuote(service.imageName) +
+                " | docker run --rm -i --privileged --pid=host justincormack/nsenter1 ctr -n k8s.io images import - >/dev/null 2>&1"
+            )
+        };
+        for (const auto& loadCommand : loadCommands) {
+            output.clear();
+            if (runCommand(loadCommand, output) == 0) {
+                imageLoaded = true;
+                break;
+            }
+        }
+        if (imageLoaded) {
+            logs << "[compose-k8s] Loaded image into Kubernetes runtime: " << service.imageName << "\n";
+        } else {
+            logs << "[compose-k8s] WARNING: Could not proactively load image into the Kubernetes runtime; rollout may rely on a pullable image: " << service.imageName << "\n";
+        }
+        manifestText = replaceAll(manifestText, service.imagePlaceholder, service.imageName);
+    }
+
+    const std::string ensureNamespaceCommand =
+        kubectlPrefix() + " get namespace " + shellQuote(plan.nameSpace) + " >/dev/null 2>&1 || " +
+        kubectlPrefix() + " create namespace " + shellQuote(plan.nameSpace);
+    output.clear();
+    if (runCommand(ensureNamespaceCommand, output) != 0) {
+        result.error = "Failed to ensure Kubernetes namespace";
+        result.logs = logs.str() + output;
+        return result;
+    }
+    logs << output;
+
+    const std::string downCommand =
+        "timeout 120s sh -lc " + shellQuote(
+            "cd " + shellQuote(composeWorkdir) + " && "
+            "compose_cmd='docker compose'; "
+            "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
+            "$compose_cmd -f " + shellQuote(composeFile) +
+            " -p " + shellQuote(composeProjectName) +
+            " down --remove-orphans || true"
+        );
+    output.clear();
+    runCommand(downCommand, output);
+    if (!output.empty()) {
+        logs << output;
+    }
+
+    const std::filesystem::path manifestPath =
+        std::filesystem::temp_directory_path() / ("dokscp-compose-k8s-" + options.deploymentId + ".yaml");
+    {
+        std::ofstream manifest(manifestPath, std::ios::trunc);
+        manifest << manifestText;
+    }
+
+    output.clear();
+    if (runCommand(kubectlPrefix() + " apply -f " + shellQuote(manifestPath.string()), output) != 0) {
+        result.error = "Failed to apply Compose Kubernetes manifests";
+        result.logs = logs.str() + output;
+        std::error_code ignore;
+        std::filesystem::remove(manifestPath, ignore);
+        return result;
+    }
+    logs << output;
+
+    for (const auto& service : plan.services) {
+        output.clear();
+        if (runCommand(
+                kubectlPrefix() + " rollout status deployment/" + shellQuote(service.deploymentName) +
+                    " -n " + shellQuote(plan.nameSpace) +
+                    " --timeout=" + std::to_string(rolloutTimeoutSeconds_) + "s",
+                output
+            ) != 0) {
+            result.error = "Compose Kubernetes rollout failed for service " + service.serviceName;
+            result.logs = logs.str() + output;
+            std::error_code ignore;
+            std::filesystem::remove(manifestPath, ignore);
+            return result;
+        }
+        logs << output;
+    }
+
+    std::error_code ignore;
+    std::filesystem::remove(manifestPath, ignore);
+
+    KubernetesRuntimeInfo inspected = inspect(plan.nameSpace, plan.primaryDeploymentName, plan.primaryServiceName, plan.exposureMode, plan.runtimeScheme);
+    inspected.ingressHost = plan.ingressHost;
+    inspected.ingressName = plan.ingressName;
+    inspected.exposureMode = plan.exposureMode;
+    inspected.runtimeScheme = plan.runtimeScheme;
+    if (plan.exposureMode == "ingress" && !plan.ingressHost.empty()) {
+        inspected.runtimeUrl = plan.runtimeScheme + "://" + plan.ingressHost;
+    }
+    inspected.logs = logs.str() + inspected.logs;
+    if (!inspected.success) {
+        return inspected;
+    }
+
+    inspected.deployed = true;
+    inspected.success = true;
+    return inspected;
+}
+
 KubernetesRuntimeInfo KubernetesService::scale(const std::string& nameSpace,
                                                const std::string& deploymentName,
                                                const std::string& serviceName,
@@ -885,6 +1137,63 @@ KubernetesRuntimeInfo KubernetesService::remove(const std::string& nameSpace,
         result.error = "Failed to remove one or more Kubernetes resources";
     }
 
+    result.logs = logs.str();
+    return result;
+}
+
+KubernetesRuntimeInfo KubernetesService::removeComposeStack(const std::string& nameSpace,
+                                                            const std::string& stackName,
+                                                            const std::string& exposureMode) const {
+    KubernetesRuntimeInfo result;
+    result.success = true;
+    result.nameSpace = nameSpace.empty() ? defaultNamespace_ : nameSpace;
+    result.deploymentName = stackName;
+    result.exposureMode = normalizeExposureMode(exposureMode);
+
+    if (!isValidDnsLabel(result.nameSpace) || !isValidDnsLabel(stackName)) {
+        result.success = false;
+        result.error = "Invalid Compose Kubernetes cleanup metadata";
+        return result;
+    }
+
+    const std::string selector = "dokscp.io/compose-project=" + stackName;
+    std::ostringstream logs;
+    logs << "[compose-k8s] Removing Kubernetes stack " << stackName << "\n";
+
+    std::string output;
+    const int resourceExit = runCommand(
+        kubectlPrefix() + " delete ingress,service,hpa,pdb,secret,pvc,deployment " +
+            "-l " + shellQuote(selector) +
+            " -n " + shellQuote(result.nameSpace) +
+            " --ignore-not-found --cascade=foreground",
+        output
+    );
+    logs << output;
+
+    output.clear();
+    runCommand(
+        kubectlPrefix() + " delete pods " +
+            "-l " + shellQuote(selector) +
+            " -n " + shellQuote(result.nameSpace) +
+            " --ignore-not-found --grace-period=0 --force",
+        output
+    );
+    logs << output;
+
+    if (resourceExit == 0 && result.nameSpace != defaultNamespace_ &&
+        result.nameSpace.find(stackName) != std::string::npos) {
+        output.clear();
+        runCommand(
+            kubectlPrefix() + " delete namespace " + shellQuote(result.nameSpace) + " --ignore-not-found",
+            output
+        );
+        logs << output;
+    }
+
+    if (resourceExit != 0) {
+        result.success = false;
+        result.error = "Failed to remove one or more Compose Kubernetes resources";
+    }
     result.logs = logs.str();
     return result;
 }

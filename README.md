@@ -14,6 +14,7 @@ Logic-wise, the platform now has a production-grade source artifact path for MCP
 
 - Create projects from GitHub repositories, saved SSH paths, host-mounted local folders, or immutable MCP-uploaded source artifacts.
 - Build Docker images with deterministic generators first and AI-assisted Dockerfile planning when deterministic detection is not enough.
+- Detect Docker Compose apps, build every service, convert the stack to Kubernetes resources, and return one preview URL for the selected public service.
 - Deploy to local Docker with a `localhost` preview URL, local Kubernetes, remote Docker, or remote Kubernetes.
 - Delete projects and deployments with runtime cleanup for pods, services, ingress, containers, images, jobs, and workspaces.
 - Use the DOKSCP AI Agent for diagnostics, build planning, deployment reasoning, and failure explanations.

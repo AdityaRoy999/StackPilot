@@ -26,6 +26,11 @@ struct BuildResult {
     std::string runtimeProvider;
     std::string remoteContainerName;
     std::string error;
+    bool composeProject = false;
+    std::string composeProjectName;
+    std::string composeFile;
+    std::string composeWorkdir;
+    std::string composeServices;
 };
 
 typedef std::function<void(const std::string&)> LogCallback;

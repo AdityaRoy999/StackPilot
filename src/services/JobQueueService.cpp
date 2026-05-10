@@ -180,6 +180,59 @@ Json::Value runtimeSnapshot(const std::string& provider,
     return snapshot;
 }
 
+Json::Value composeRuntimeSnapshot(const BuildResult& buildResult,
+                                   const std::string& provider,
+                                   const std::string& runtimeScheme = "http") {
+    Json::Value snapshot = runtimeSnapshot(
+        provider,
+        buildResult.imageName,
+        buildResult.runtimeUrl,
+        provider,
+        1,
+        0,
+        "compose",
+        "/",
+        runtimeScheme
+    );
+    snapshot["multi_service"] = true;
+    snapshot["compose_project"] = buildResult.composeProjectName;
+    snapshot["compose_file"] = buildResult.composeFile;
+    snapshot["compose_workdir"] = buildResult.composeWorkdir;
+    snapshot["compose_services"] = buildResult.composeServices;
+    return snapshot;
+}
+
+Json::Value composeKubernetesRuntimeSnapshot(const BuildResult& buildResult,
+                                             const KubernetesRuntimeInfo& runtime,
+                                             const std::string& provider,
+                                             const std::string& runtimeScheme,
+                                             int containerPort = 3000,
+                                             const std::string& resourcePreset = "small",
+                                             const std::string& healthPath = "/") {
+    Json::Value snapshot = runtimeSnapshot(
+        provider,
+        buildResult.imageName,
+        runtime.runtimeUrl,
+        runtime.exposureMode,
+        runtime.desiredReplicas,
+        containerPort,
+        resourcePreset,
+        healthPath,
+        runtime.runtimeScheme.empty() ? runtimeScheme : runtime.runtimeScheme
+    );
+    snapshot["multi_service"] = true;
+    snapshot["compose_kubernetes"] = true;
+    snapshot["compose_project"] = buildResult.composeProjectName;
+    snapshot["compose_file"] = buildResult.composeFile;
+    snapshot["compose_workdir"] = buildResult.composeWorkdir;
+    snapshot["compose_services"] = buildResult.composeServices;
+    snapshot["compose_primary_deployment"] = runtime.deploymentName;
+    snapshot["compose_primary_service"] = runtime.serviceName;
+    snapshot["ingress_name"] = runtime.ingressName;
+    snapshot["ingress_host"] = runtime.ingressHost;
+    return snapshot;
+}
+
 std::string shellQuote(const std::string& value) {
     std::string quoted = "'";
     for (char c : value) {
@@ -1221,7 +1274,31 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             }
             if (buildResult.success && remoteRuntimeType == "kubernetes") {
                 SshService sshService;
-                if (!buildResult.remoteContainerName.empty()) {
+                if (buildResult.composeProject) {
+                    KubernetesDeployOptions options;
+                    options.deploymentId = job.deploymentId;
+                    options.projectName = projectName;
+                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
+                    options.runtimeScheme = runtimeScheme;
+                    options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
+                    options.replicas = 1;
+                    options.containerPort = 3000;
+                    options.resourcePreset = "small";
+                    options.healthPath = "/";
+                    for (const auto& envVar : envVars) {
+                        options.envVars.emplace_back(envVar.key, envVar.value);
+                    }
+
+                    logSink("Deploying Docker Compose stack to remote Kubernetes...");
+                    remoteK8sRuntime = sshService.deployComposeKubernetesRuntime(
+                        remoteExecutionConfig,
+                        options,
+                        buildResult.composeWorkdir,
+                        buildResult.composeFile,
+                        buildResult.composeProjectName,
+                        buildResult.composeServices
+                    );
+                } else if (!buildResult.remoteContainerName.empty()) {
                     const auto cleanup = sshService.removeDockerContainer(
                         remoteExecutionConfig,
                         buildResult.remoteContainerName,
@@ -1234,23 +1311,25 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     logSink("Temporary remote Docker container removed before Kubernetes deployment");
                 }
 
-                KubernetesDeployOptions options;
-                options.deploymentId = job.deploymentId;
-                options.projectName = projectName;
-                options.imageName = buildResult.imageName;
-                options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
-                options.runtimeScheme = runtimeScheme;
-                options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
-                options.replicas = 1;
-                options.containerPort = 3000;
-                options.resourcePreset = "small";
-                options.healthPath = "/";
-                for (const auto& envVar : envVars) {
-                    options.envVars.emplace_back(envVar.key, envVar.value);
-                }
+                if (!buildResult.composeProject) {
+                    KubernetesDeployOptions options;
+                    options.deploymentId = job.deploymentId;
+                    options.projectName = projectName;
+                    options.imageName = buildResult.imageName;
+                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
+                    options.runtimeScheme = runtimeScheme;
+                    options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
+                    options.replicas = 1;
+                    options.containerPort = 3000;
+                    options.resourcePreset = "small";
+                    options.healthPath = "/";
+                    for (const auto& envVar : envVars) {
+                        options.envVars.emplace_back(envVar.key, envVar.value);
+                    }
 
-                logSink("Deploying image to remote Kubernetes...");
-                remoteK8sRuntime = sshService.deployKubernetesRuntime(remoteExecutionConfig, options);
+                    logSink("Deploying image to remote Kubernetes...");
+                    remoteK8sRuntime = sshService.deployKubernetesRuntime(remoteExecutionConfig, options);
+                }
                 hasRemoteK8sRuntime = true;
                 buildResult.logs += "\n" + remoteK8sRuntime.logs;
                 buildResult.runtimeProvider = "remote_kubernetes";
@@ -1301,7 +1380,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             );
         }
 
-        if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "docker") {
+        if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "docker" && !buildResult.composeProject) {
             const std::string containerName =
                 "dokscp-local-" + sanitizeDockerContainerName(projectName) + "-" +
                 sanitizeDockerContainerName(job.deploymentId).substr(0, 12);
@@ -1352,7 +1431,18 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
 
             logSink("Deploying image to local Kubernetes...");
             KubernetesService kubernetesService;
-            localK8sRuntime = kubernetesService.deploy(options);
+            if (buildResult.composeProject) {
+                logSink("Converting Docker Compose stack to local Kubernetes resources...");
+                localK8sRuntime = kubernetesService.deployComposeStack(
+                    options,
+                    buildResult.composeWorkdir,
+                    buildResult.composeFile,
+                    buildResult.composeProjectName,
+                    buildResult.composeServices
+                );
+            } else {
+                localK8sRuntime = kubernetesService.deploy(options);
+            }
             hasLocalK8sRuntime = true;
             buildResult.logs += "\n" + localK8sRuntime.logs;
             buildResult.runtimeProvider = "kubernetes";
@@ -1388,17 +1478,19 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     remoteK8sRuntime.serviceName,
                     remoteK8sRuntime.ingressName,
                     remoteK8sRuntime.desiredReplicas,
-                    compactJson(runtimeSnapshot(
-                        "remote_kubernetes",
-                        buildResult.imageName,
-                        remoteK8sRuntime.runtimeUrl,
-                        remoteK8sRuntime.exposureMode,
-                        remoteK8sRuntime.desiredReplicas,
-                        3000,
-                        "small",
-                        "/",
-                        remoteK8sRuntime.runtimeScheme.empty() ? runtimeScheme : remoteK8sRuntime.runtimeScheme
-                    )),
+                    compactJson(buildResult.composeProject
+                        ? composeKubernetesRuntimeSnapshot(buildResult, remoteK8sRuntime, "remote_kubernetes", runtimeScheme, 3000, "small", "/")
+                        : runtimeSnapshot(
+                            "remote_kubernetes",
+                            buildResult.imageName,
+                            remoteK8sRuntime.runtimeUrl,
+                            remoteK8sRuntime.exposureMode,
+                            remoteK8sRuntime.desiredReplicas,
+                            3000,
+                            "small",
+                            "/",
+                            remoteK8sRuntime.runtimeScheme.empty() ? runtimeScheme : remoteK8sRuntime.runtimeScheme
+                        )),
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, remoteK8sRuntime.status.empty() ? "running" : remoteK8sRuntime.status);
@@ -1421,20 +1513,37 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     localK8sRuntime.serviceName,
                     localK8sRuntime.ingressName,
                     localK8sRuntime.desiredReplicas,
-                    compactJson(runtimeSnapshot(
-                        "kubernetes",
-                        buildResult.imageName,
-                        localK8sRuntime.runtimeUrl,
-                        localK8sRuntime.exposureMode,
-                        localK8sRuntime.desiredReplicas,
-                        3000,
-                        "small",
-                        "/",
-                        localK8sRuntime.runtimeScheme.empty() ? runtimeScheme : localK8sRuntime.runtimeScheme
-                    )),
+                    compactJson(buildResult.composeProject
+                        ? composeKubernetesRuntimeSnapshot(buildResult, localK8sRuntime, "kubernetes", runtimeScheme, 3000, "small", "/")
+                        : runtimeSnapshot(
+                            "kubernetes",
+                            buildResult.imageName,
+                            localK8sRuntime.runtimeUrl,
+                            localK8sRuntime.exposureMode,
+                            localK8sRuntime.desiredReplicas,
+                            3000,
+                            "small",
+                            "/",
+                            localK8sRuntime.runtimeScheme.empty() ? runtimeScheme : localK8sRuntime.runtimeScheme
+                        )),
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, localK8sRuntime.status.empty() ? "running" : localK8sRuntime.status);
+            } else if (buildResult.runtimeProvider == "remote_compose") {
+                updateTxn.exec_params(
+                    "UPDATE deployments "
+                    "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'remote_compose', "
+                    "runtime_provider = 'remote_compose', remote_container_name = $4, runtime_snapshot = $5::jsonb, "
+                    "artifact_available = TRUE, runtime_paused = FALSE, updated_at = NOW() "
+                    "WHERE id = $6",
+                    buildResult.logs,
+                    buildResult.imageName,
+                    buildResult.runtimeUrl,
+                    buildResult.composeProjectName.empty() ? buildResult.remoteContainerName : buildResult.composeProjectName,
+                    compactJson(composeRuntimeSnapshot(buildResult, "remote_compose", "http")),
+                    job.deploymentId
+                );
+                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
             } else if (buildResult.runtimeProvider == "remote_docker") {
                 updateTxn.exec_params(
                     "UPDATE deployments "
@@ -1447,6 +1556,21 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     buildResult.runtimeUrl,
                     buildResult.remoteContainerName,
                     compactJson(runtimeSnapshot("remote_docker", buildResult.imageName, buildResult.runtimeUrl, "remote_docker", 1, 3000, "small", "/", "http")),
+                    job.deploymentId
+                );
+                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
+            } else if (buildResult.runtimeProvider == "local_compose") {
+                updateTxn.exec_params(
+                    "UPDATE deployments "
+                    "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'local_compose', "
+                    "runtime_provider = 'local_compose', remote_container_name = $4, desired_replicas = 1, runtime_paused = FALSE, "
+                    "runtime_snapshot = $5::jsonb, artifact_available = TRUE, updated_at = NOW() "
+                    "WHERE id = $6",
+                    buildResult.logs,
+                    buildResult.imageName,
+                    buildResult.runtimeUrl,
+                    buildResult.composeProjectName.empty() ? buildResult.remoteContainerName : buildResult.composeProjectName,
+                    compactJson(composeRuntimeSnapshot(buildResult, "local_compose", localHttpsEnabled ? "https" : "http")),
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, "running");

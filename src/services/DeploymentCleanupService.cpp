@@ -95,6 +95,47 @@ bool isValidDockerImageRefForCleanup(const std::string& value) {
     return true;
 }
 
+bool isValidComposeProjectName(const std::string& value) {
+    const std::string cleaned = trim(value);
+    if (cleaned.empty() || cleaned.size() > 80) {
+        return false;
+    }
+    for (char c : cleaned) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isSafeComposeFileName(const std::string& value) {
+    const std::string cleaned = trim(value);
+    if (cleaned.empty() || cleaned.size() > 120 ||
+        cleaned.find('/') != std::string::npos ||
+        cleaned.find('\\') != std::string::npos) {
+        return false;
+    }
+    for (char c : cleaned) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-' && c != '.') {
+            return false;
+        }
+    }
+    const auto endsWith = [&cleaned](const std::string& suffix) {
+        return cleaned.size() >= suffix.size() &&
+               cleaned.compare(cleaned.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    return endsWith(".yml") || endsWith(".yaml");
+}
+
+bool isSafeComposeWorkdir(const std::string& value) {
+    const std::string cleaned = trim(value);
+    return !cleaned.empty() &&
+           cleaned.size() < 512 &&
+           cleaned.front() == '/' &&
+           cleaned.find('\n') == std::string::npos &&
+           cleaned.find('\r') == std::string::npos;
+}
+
 int runCommand(const std::string& command, std::string& output) {
     output.clear();
 #ifdef _WIN32
@@ -300,8 +341,151 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
 
         result.runtimeProvider = runtimeProvider;
         result.imageName = imageName;
+        bool composeImageHandled = false;
 
-        if ((runtimeProvider == "remote_docker" || exposureMode == "remote_docker") && !remoteContainerName.empty() && hasRemoteHost) {
+        const std::string composeProject = jsonString(runtimeSnapshotJson, "compose_project", remoteContainerName);
+        const std::string composeFile = jsonString(runtimeSnapshotJson, "compose_file");
+        const std::string composeWorkdir = jsonString(runtimeSnapshotJson, "compose_workdir");
+
+        if ((runtimeProvider == "remote_compose" || exposureMode == "remote_compose") && hasRemoteHost) {
+            result.runtimeCleanupAttempted = true;
+            if (!isValidComposeProjectName(composeProject) ||
+                !isSafeComposeFileName(composeFile) ||
+                !isSafeComposeWorkdir(composeWorkdir)) {
+                result.error = "Compose runtime snapshot is missing safe cleanup metadata";
+                return result;
+            }
+            SshService sshService;
+            const std::string command =
+                "compose_cmd='docker compose'; "
+                "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
+                "cd " + shellQuote(composeWorkdir) + " && "
+                "$compose_cmd -f " + shellQuote(composeFile) +
+                " -p " + shellQuote(composeProject) +
+                std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + "; "
+                "echo __DOKSCP_COMPOSE_REMOVED__";
+            const auto removal = sshService.runRemoteCommand(rowToRemoteRuntimeConfig(row), "/", command, 180);
+            result.logs += removal.output;
+            appendDeploymentLogBlock(deploymentId, removal.output);
+            if (!removal.success || removal.output.find("__DOKSCP_COMPOSE_REMOVED__") == std::string::npos) {
+                result.error = removal.error.empty() ? "Failed to remove remote Compose runtime before deleting deployment" : removal.error;
+                return result;
+            }
+            if (options.deleteImage) {
+                result.imageCleanupAttempted = true;
+                result.imageDeleted = true;
+                composeImageHandled = true;
+            }
+        } else if (runtimeProvider == "local_compose" || exposureMode == "local_compose") {
+            result.runtimeCleanupAttempted = true;
+            if (!isValidComposeProjectName(composeProject) ||
+                !isSafeComposeFileName(composeFile) ||
+                !isSafeComposeWorkdir(composeWorkdir)) {
+                result.error = "Compose runtime snapshot is missing safe cleanup metadata";
+                return result;
+            }
+            const std::string command =
+                "timeout 180s sh -lc " + shellQuote(
+                    "compose_cmd='docker compose'; "
+                    "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
+                    "cd " + shellQuote(composeWorkdir) + " && "
+                    "$compose_cmd -f " + shellQuote(composeFile) +
+                    " -p " + shellQuote(composeProject) +
+                    std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + "; "
+                    "echo __DOKSCP_COMPOSE_REMOVED__"
+                );
+            std::string output;
+            const int exitCode = runCommand(command, output);
+            result.logs += output;
+            appendDeploymentLogBlock(deploymentId, output);
+            if (exitCode != 0 || output.find("__DOKSCP_COMPOSE_REMOVED__") == std::string::npos) {
+                result.error = "Failed to remove local Compose runtime before deleting deployment";
+                return result;
+            }
+            if (options.deleteImage) {
+                result.imageCleanupAttempted = true;
+                result.imageDeleted = true;
+                composeImageHandled = true;
+            }
+        }
+
+        const bool composeKubernetesRuntime =
+            runtimeSnapshotJson.get("compose_kubernetes", false).asBool() ||
+            (runtimeSnapshotJson.get("multi_service", false).asBool() &&
+             (runtimeProvider == "kubernetes" || runtimeProvider == "remote_kubernetes") &&
+             !composeProject.empty());
+
+        if (composeKubernetesRuntime && runtimeProvider == "remote_kubernetes" && !composeProject.empty() && hasRemoteHost) {
+            result.runtimeCleanupAttempted = true;
+            SshService sshService;
+            const KubernetesRuntimeInfo removal = sshService.removeComposeKubernetesRuntime(
+                rowToRemoteRuntimeConfig(row),
+                nameSpace,
+                composeProject,
+                exposureMode
+            );
+            result.logs += removal.logs;
+            appendDeploymentLogBlock(deploymentId, removal.logs);
+            if (!removal.success) {
+                result.error = removal.error.empty() ? "Failed to remove remote Compose Kubernetes runtime before deleting deployment" : removal.error;
+                return result;
+            }
+            if (options.deleteImage && isValidComposeProjectName(composeProject) &&
+                isSafeComposeFileName(composeFile) && isSafeComposeWorkdir(composeWorkdir)) {
+                result.imageCleanupAttempted = true;
+                const std::string command =
+                    "compose_cmd='docker compose'; "
+                    "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
+                    "cd " + shellQuote(composeWorkdir) + " && "
+                    "$compose_cmd -f " + shellQuote(composeFile) +
+                    " -p " + shellQuote(composeProject) +
+                    " down --remove-orphans --rmi local || true; "
+                    "echo __DOKSCP_COMPOSE_IMAGES_REMOVED__";
+                const auto imageRemoval = sshService.runRemoteCommand(rowToRemoteRuntimeConfig(row), "/", command, 180);
+                result.logs += imageRemoval.output;
+                appendDeploymentLogBlock(deploymentId, imageRemoval.output);
+                if (!imageRemoval.success || imageRemoval.output.find("__DOKSCP_COMPOSE_IMAGES_REMOVED__") == std::string::npos) {
+                    result.error = imageRemoval.error.empty() ? "Failed to clean remote Compose images" : imageRemoval.error;
+                    return result;
+                }
+                result.imageDeleted = true;
+                composeImageHandled = true;
+            }
+        } else if (composeKubernetesRuntime && runtimeProvider == "kubernetes" && !composeProject.empty()) {
+            result.runtimeCleanupAttempted = true;
+            KubernetesService service;
+            const KubernetesRuntimeInfo removal = service.removeComposeStack(nameSpace, composeProject, exposureMode);
+            result.logs += removal.logs;
+            appendDeploymentLogBlock(deploymentId, removal.logs);
+            if (!removal.success) {
+                result.error = removal.error.empty() ? "Failed to remove Compose Kubernetes runtime before deleting deployment" : removal.error;
+                return result;
+            }
+            if (options.deleteImage && isValidComposeProjectName(composeProject) &&
+                isSafeComposeFileName(composeFile) && isSafeComposeWorkdir(composeWorkdir)) {
+                result.imageCleanupAttempted = true;
+                const std::string command =
+                    "timeout 180s sh -lc " + shellQuote(
+                        "compose_cmd='docker compose'; "
+                        "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
+                        "cd " + shellQuote(composeWorkdir) + " && "
+                        "$compose_cmd -f " + shellQuote(composeFile) +
+                        " -p " + shellQuote(composeProject) +
+                        " down --remove-orphans --rmi local || true; "
+                        "echo __DOKSCP_COMPOSE_IMAGES_REMOVED__"
+                    );
+                std::string output;
+                const int exitCode = runCommand(command, output);
+                result.logs += output;
+                appendDeploymentLogBlock(deploymentId, output);
+                if (exitCode != 0 || output.find("__DOKSCP_COMPOSE_IMAGES_REMOVED__") == std::string::npos) {
+                    result.error = "Failed to clean local Compose images";
+                    return result;
+                }
+                result.imageDeleted = true;
+                composeImageHandled = true;
+            }
+        } else if ((runtimeProvider == "remote_docker" || exposureMode == "remote_docker") && !remoteContainerName.empty() && hasRemoteHost) {
             result.runtimeCleanupAttempted = true;
             SshService sshService;
             const auto removal = sshService.removeDockerContainer(rowToRemoteRuntimeConfig(row), remoteContainerName, imageName, false);
@@ -342,7 +526,7 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
             }
         }
 
-        if (options.deleteImage && !imageName.empty()) {
+        if (options.deleteImage && !imageName.empty() && !composeImageHandled && imageName.rfind("compose:", 0) != 0) {
             result.imageCleanupAttempted = true;
             SshOperationResult imageRemoval;
             if (hasRemoteHost && (runtimeProvider == "remote_docker" || runtimeProvider == "remote_kubernetes" || executionMode == "remote_host")) {
