@@ -245,7 +245,8 @@ function EditProjectForm({
   const effectiveRemoteConnectionId = project.remote_connection_id || project.ssh_connection_id || "";
   const showRemoteSourceControls = project.execution_mode === "remote_host" || sourceType === "ssh";
   const selectedRemoteConnectionId = sourceType === "ssh" ? project.ssh_connection_id || "" : effectiveRemoteConnectionId;
-  const remoteHttpsAllowed = remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress";
+  const remoteHttpsAllowed =
+    remoteRuntimeType === "docker" || (remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress");
   const effectiveRuntimeScheme =
     project.execution_mode === "remote_host"
       ? remoteHttpsAllowed
@@ -889,7 +890,6 @@ const segmentedButtonActiveClass =
                   onClick={() => {
                   setRemoteRuntimeType("docker");
                   setRemoteK8sExposure("nodeport");
-                  setRuntimeScheme("http");
                 }}
                 >
                   <Server className="mr-2 h-4 w-4" />
@@ -929,7 +929,7 @@ const segmentedButtonActiveClass =
                 </div>
               )}
 
-              {remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress" ? (
+              {(remoteRuntimeType === "docker" || remoteK8sExposure === "ingress") ? (
                 <div className="space-y-2">
                   <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Runtime URL Scheme
@@ -953,14 +953,14 @@ const segmentedButtonActiveClass =
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    HTTPS is only available for Kubernetes Ingress with cert-manager or a TLS secret.
+                    {remoteRuntimeType === "docker"
+                      ? "Remote Docker can use HTTPS when the server reverse proxy terminates TLS."
+                      : "HTTPS is available for Kubernetes Ingress with cert-manager or a TLS secret."}
                   </p>
                 </div>
               ) : (
                 <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                  {remoteRuntimeType === "docker"
-                    ? "Remote Docker is locked to HTTP. Switch to Kubernetes Ingress if this deployment needs HTTPS."
-                    : "NodePort is locked to HTTP. Choose Ingress to use a domain and HTTPS."}
+                  NodePort is locked to HTTP. Choose Ingress to use a domain and HTTPS.
                 </div>
               )}
             </div>

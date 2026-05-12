@@ -243,7 +243,9 @@ export function CreateProjectDialog() {
     () => sshConnections?.find((connection) => connection.id === sshConnectionId) ?? null,
     [sshConnectionId, sshConnections]
   );
-  const runtimeHttpsAllowed = remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress";
+  const runtimeHttpsAllowed =
+    (executionMode === "remote_host" && remoteRuntimeType === "docker") ||
+    (remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress");
   const effectiveRuntimeScheme: RuntimeScheme = runtimeHttpsAllowed ? runtimeScheme : "http";
   const effectiveRemoteK8sExposure: RemoteK8sExposure =
     remoteRuntimeType === "kubernetes" ? remoteK8sExposure : "nodeport";
@@ -646,7 +648,6 @@ export function CreateProjectDialog() {
               onClick={() => {
                 setRemoteRuntimeType("docker");
                 setRemoteK8sExposure("nodeport");
-                setRuntimeScheme("http");
                 setLocalHttpsEnabled(false);
               }}
             >
@@ -731,10 +732,37 @@ export function CreateProjectDialog() {
               </p>
             )}
           </>
+        ) : executionMode === "remote_host" ? (
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Runtime URL Scheme
+            </Label>
+            <div className={segmentedGroupClass}>
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn(segmentedButtonClass, runtimeScheme === "http" && segmentedButtonActiveClass)}
+                onClick={() => setRuntimeScheme("http")}
+              >
+                HTTP
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className={cn(segmentedButtonClass, runtimeScheme === "https" && segmentedButtonActiveClass)}
+                onClick={() => setRuntimeScheme("https")}
+              >
+                HTTPS
+              </Button>
+            </div>
+            <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              Remote Docker can use HTTPS when the server reverse proxy terminates TLS.
+            </p>
+          </div>
         ) : (
           <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            {runtimeScope} Docker publishes a container port directly and uses HTTP. Choose Kubernetes Ingress when you
-            need HTTPS.
+            Local Docker publishes a container port directly and uses HTTP. Choose Kubernetes Ingress when you need
+            HTTPS.
           </p>
         )}
       </div>

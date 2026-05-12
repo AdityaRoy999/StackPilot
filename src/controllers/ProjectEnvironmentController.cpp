@@ -409,9 +409,9 @@ void ProjectEnvironmentController::createEnvironment(
         const std::string branch = trim((*body).get("branch", "").asString());
         const std::string executionMode = toLower(trim((*body).get("execution_mode", "local").asString()));
         const std::string remoteConnectionId = trim((*body).get("remote_connection_id", "").asString());
-        const std::string remoteRuntimeType = toLower(trim((*body).get("remote_runtime_type", "kubernetes").asString()));
-        const std::string remoteK8sExposure = toLower(trim((*body).get("remote_k8s_exposure", "ingress").asString()));
-        const std::string runtimeScheme = toLower(trim((*body).get("runtime_scheme", "https").asString()));
+        const std::string remoteRuntimeType = toLower(trim((*body).get("remote_runtime_type", "docker").asString()));
+        const std::string remoteK8sExposure = toLower(trim((*body).get("remote_k8s_exposure", "nodeport").asString()));
+        const std::string runtimeScheme = toLower(trim((*body).get("runtime_scheme", "http").asString()));
         const auto envVars = parseEnvVars(*body);
         if (name.empty() || branch.empty() || !isSupportedExecutionMode(executionMode) ||
             !isSupportedRuntimeType(remoteRuntimeType) || !isSupportedK8sExposure(remoteK8sExposure) ||

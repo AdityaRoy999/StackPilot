@@ -300,7 +300,9 @@ void normalizeRuntimePreferences(const std::string& executionMode,
     if (runtimeType != "kubernetes") {
         runtimeType = "docker";
         k8sExposure = "nodeport";
-        runtimeScheme = "http";
+        if (executionMode != "remote_host") {
+            runtimeScheme = "http";
+        }
         localHttpsEnabled = false;
         return;
     }
