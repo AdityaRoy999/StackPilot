@@ -504,6 +504,7 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
                                                     serviceName,
                                                     service);
         detail.service.imagePlaceholder = "__DOKSCP_COMPOSE_IMAGE_" + std::to_string(placeholderIndex++) + "__";
+        detail.service.localBuildImage = service.isMember("build");
         detail.service.containerPort = firstContainerPort(service, serviceName, detail.service.imageName);
         detail.service.hasPublishedPort = hasPublishedPort(service);
         detail.entrypoint = jsonCommandList(service["entrypoint"]);
@@ -728,7 +729,7 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
             << "      containers:\n"
             << "        - name: " << sanitizeDnsLabel(svc.serviceName, 40) << "\n"
             << "          image: " << (options.useImagePlaceholders ? svc.imagePlaceholder : svc.imageName) << "\n"
-            << "          imagePullPolicy: IfNotPresent\n";
+            << "          imagePullPolicy: " << (svc.localBuildImage ? "Never" : "IfNotPresent") << "\n";
         writeYamlStringList(manifest, "command", detail.entrypoint, 10);
         writeYamlStringList(manifest, "args", detail.command, 10);
         if (!detail.workingDir.empty()) {

@@ -57,7 +57,7 @@ interface ProjectEnvEditorProps {
 
 export function ProjectEnvEditor({
   title = "Environment Variables",
-  description = "Add key/value pairs manually or upload an existing `.env` file.",
+  description = "Add key/value pairs manually or upload an existing env file.",
   envVars,
   onChange,
 }: ProjectEnvEditorProps) {
@@ -69,7 +69,7 @@ export function ProjectEnvEditor({
     onChange(copy);
   };
 
-  const addRow = () => onChange([...envVars, { key: "", value: "" }]);
+  const addRow = () => onChange([{ key: "", value: "" }, ...envVars]);
 
   const removeRow = (index: number) => onChange(envVars.filter((_, rowIndex) => rowIndex !== index));
 
@@ -100,7 +100,7 @@ export function ProjectEnvEditor({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".env,.txt"
+            accept=".env,.production,.local,.txt"
             className="hidden"
             onChange={handleFileUpload}
           />
@@ -112,7 +112,7 @@ export function ProjectEnvEditor({
             onClick={() => fileInputRef.current?.click()}
           >
             <Upload className="mr-2 h-4 w-4" />
-            Upload `.env`
+            Upload Env File
           </Button>
           <Button
             type="button"

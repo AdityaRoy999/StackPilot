@@ -27,11 +27,17 @@ export function RegisterClient({
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
   const registerMutation = useMutation({
     mutationFn: async () => {
-      const response = await api.post("/auth/register", { username, email, password });
+      const response = await api.post("/auth/register", {
+        username,
+        email,
+        password,
+        ...(inviteCode.trim() ? { invite_code: inviteCode.trim() } : {}),
+      });
       return response.data;
     },
     onSuccess: (data: { message?: string }) => {
@@ -138,6 +144,17 @@ export function RegisterClient({
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="invite-code">Invite Code</Label>
+            <Input
+              id="invite-code"
+              type="text"
+              placeholder="Invite code"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value)}
+              disabled={registerMutation.isPending}
+            />
           </div>
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">

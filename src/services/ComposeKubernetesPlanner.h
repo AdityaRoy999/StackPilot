@@ -18,6 +18,7 @@ struct ComposeKubernetesPlanService {
     std::string kubernetesServiceName;
     std::string imageName;
     std::string imagePlaceholder;
+    bool localBuildImage = false;
     bool publicService = false;
     bool hasPublishedPort = false;
     int containerPort = 0;

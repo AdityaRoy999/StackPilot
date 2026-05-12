@@ -52,6 +52,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        DOKSCP_BACKEND_BUILD_PARALLELISM: ${DOKSCP_BACKEND_BUILD_PARALLELISM:-1}
     container_name: dokscp-backend
     restart: unless-stopped
     logging: *dokscp-logging
@@ -90,8 +92,8 @@ services:
       - BUILD_WORKSPACE_DIR=/app/uploads/builds
       - SOURCE_ARTIFACT_DIR=/app/uploads/source-artifacts
       - BUILD_MAX_LOG_BYTES=${BUILD_MAX_LOG_BYTES:-200000}
-      - BUILD_CLONE_TIMEOUT_SECONDS=${BUILD_CLONE_TIMEOUT_SECONDS:-120}
-      - BUILD_COMMAND_TIMEOUT_SECONDS=${BUILD_COMMAND_TIMEOUT_SECONDS:-900}
+      - BUILD_CLONE_TIMEOUT_SECONDS=${BUILD_CLONE_TIMEOUT_SECONDS:-300}
+      - BUILD_COMMAND_TIMEOUT_SECONDS=${BUILD_COMMAND_TIMEOUT_SECONDS:-3600}
       - BUILD_DOCKER_MEMORY=${BUILD_DOCKER_MEMORY:-1g}
       - DOKSCP_CI_NO_CHECKS_GRACE_SECONDS=${DOKSCP_CI_NO_CHECKS_GRACE_SECONDS:-30}
       - LOCAL_SOURCE_ROOTS=${LOCAL_SOURCE_ROOTS:-/app/local-projects}

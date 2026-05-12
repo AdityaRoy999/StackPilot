@@ -101,6 +101,22 @@ bool isValidRemoteCommand(const std::string& value) {
     return true;
 }
 
+std::string extractJsonObjectFromCommandOutput(const std::string& output) {
+    const size_t start = output.find('{');
+    if (start == std::string::npos) {
+        return "";
+    }
+
+    const size_t exitMarker = output.find("__DOKSCP_EXIT_CODE__", start);
+    const size_t searchEnd = exitMarker == std::string::npos ? output.size() : exitMarker;
+    const size_t end = output.rfind('}', searchEnd);
+    if (end == std::string::npos || end < start) {
+        return "";
+    }
+
+    return output.substr(start, end - start + 1);
+}
+
 bool isValidCloneTargetDirectory(const std::string& value) {
     const std::string cleaned = trim(value);
     if (cleaned.empty()) {
@@ -144,6 +160,67 @@ std::string toLower(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+bool looksLikeGitHubCloneAuthFailure(const std::string& output) {
+    const std::string lowered = toLower(output);
+    return lowered.find("invalid username or token") != std::string::npos ||
+           lowered.find("password authentication is not supported") != std::string::npos ||
+           lowered.find("authentication failed") != std::string::npos ||
+           lowered.find("repository not found") != std::string::npos ||
+           lowered.find("could not read username") != std::string::npos;
+}
+
+std::string composePortFallbackShell(const std::string& composeFileArg,
+                                     const std::string& projectArg) {
+    return R"sh(
+port_in_use() {
+  port="$1"
+  if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:|])'"$port"'$'; then return 0; fi
+  if command -v netstat >/dev/null 2>&1 && netstat -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:|])'"$port"'$'; then return 0; fi
+  if docker ps --format '{{.Ports}}' 2>/dev/null | grep -Eq '(^|, )([^ ]+:)?'"$port"'->'; then return 0; fi
+  return 1
+}
+choose_port() {
+  preferred="$1"
+  shift
+  for port in "$preferred" "$@"; do
+    case "$port" in ''|*[!0-9]*) continue ;; esac
+    if ! port_in_use "$port"; then echo "$port"; return 0; fi
+  done
+  port="$preferred"
+  while [ "$port" -le 65535 ]; do
+    if ! port_in_use "$port"; then echo "$port"; return 0; fi
+    port=$((port + 1))
+  done
+  return 1
+}
+write_env_value() {
+  key="$1"
+  value="$2"
+  touch .env
+  if grep -q "^${key}=" .env 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+compose_up_exit=0
+compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
+printf '%s\n' "$compose_up_output"
+if [ "$compose_up_exit" -ne 0 ]; then
+  if printf '%s\n' "$compose_up_output" | grep -qi 'address already in use'; then
+    http_port=$(choose_port 80 8080 8081 8082 8090 8000 3000)
+    https_port=$(choose_port 443 8443 9443 10443 4443)
+    write_env_value DOKSCP_HTTP_PORT "$http_port"
+    write_env_value DOKSCP_HTTPS_PORT "$https_port"
+    echo "Host port conflict detected; retrying Compose with DOKSCP_HTTP_PORT=$http_port and DOKSCP_HTTPS_PORT=$https_port"
+    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
+  else
+    exit "$compose_up_exit"
+  fi
+fi
+)sh";
 }
 
 bool isTailscaleConnection(const SshConnectionConfig& config) {
@@ -1311,6 +1388,11 @@ SshOperationResult SshService::cloneGitRepository(const SshConnectionConfig& con
             result.error = "Git is not installed on the remote host";
         } else if (exitCode == 124) {
             result.error = "Git clone timed out";
+        } else if (trim(repositoryUrl).starts_with("https://github.com/") &&
+                   looksLikeGitHubCloneAuthFailure(output)) {
+            result.error = gitToken.empty()
+                ? "GitHub clone failed because no usable token was available for the remote HTTPS clone. Reconnect GitHub, install the GitHub App on this repository, or add a project token with repo access."
+                : "GitHub rejected the remote clone credentials. Check that the repository URL is correct and that the connected GitHub token or GitHub App installation can access this repository.";
         } else {
             result.error = "Git clone failed";
         }
@@ -1371,6 +1453,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "  cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
         "  cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
         "  cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
+        "  compose_parallel_limit=$(sed -n 's/^DOKSCP_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  [ -n \"$compose_parallel_limit\" ] || compose_parallel_limit=1; "
+        "  export COMPOSE_PARALLEL_LIMIT=\"$compose_parallel_limit\"; "
         "  echo 'Detected Docker Compose project: '\"$compose_file\"; "
         "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " config --services > .dokscp-compose-services; "
         "  services=$(paste -sd, .dokscp-compose-services 2>/dev/null || true); "
@@ -1378,9 +1463,10 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "  echo __DOKSCP_REMOTE_COMPOSE_FILE__=$compose_file; "
         "  echo __DOKSCP_REMOTE_COMPOSE_SERVICES__=$services; "
         "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " pull --ignore-pull-failures || true; "
-        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " up -d --build --remove-orphans; "
+        + composePortFallbackShell("\"$compose_file\"", shellQuote(containerName)) +
         "  runtime=''; domain=$(sed -n 's/^DOKSCP_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  if [ -n \"$domain\" ]; then runtime=\"https://$domain\"; fi; "
+        "  https_port=$(sed -n 's/^DOKSCP_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  if [ -n \"$domain\" ]; then if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; fi; "
         "  if [ -z \"$runtime\" ]; then "
         "    for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
         "      for port in 80 443 3000 8080 8000 5000 5173; do "
@@ -1498,8 +1584,10 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
         "cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
         "cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
+        "build_parallel=$(sed -n 's/^DOKSCP_BACKEND_BUILD_PARALLELISM=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "[ -n \"$build_parallel\" ] || build_parallel=1; "
         "echo 'Building remote Docker image " + imageName + "'; "
-        "docker build --pull=false $dockerfile_arg -t " + shellQuote(imageName) + " .; "
+        "docker build --pull=false --build-arg DOKSCP_BACKEND_BUILD_PARALLELISM=\"$build_parallel\" $dockerfile_arg -t " + shellQuote(imageName) + " .; "
         "docker rm -f " + shellQuote(containerName) + " >/dev/null 2>&1 || true; "
         "echo 'Starting remote container " + containerName + "'; "
         "docker run -d --restart unless-stopped --name " + shellQuote(containerName) +
@@ -1981,8 +2069,8 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         "if command -v kind >/dev/null 2>&1 && kind load docker-image " + shellQuote(options.imageName) + " >/dev/null 2>&1; then image_loaded=yes; fi; "
         "if [ \"$image_loaded\" = no ] && command -v minikube >/dev/null 2>&1 && minikube image load " + shellQuote(options.imageName) + " >/dev/null 2>&1; then image_loaded=yes; fi; "
         "if [ \"$image_loaded\" = no ] && command -v k3s >/dev/null 2>&1; then "
-        "  if [ \"$(id -u)\" -eq 0 ] && docker save " + shellQuote(options.imageName) + " | k3s ctr images import - >/dev/null 2>&1; then image_loaded=yes; "
-        "  elif sudo -n true >/dev/null 2>&1 && docker save " + shellQuote(options.imageName) + " | sudo -n k3s ctr images import - >/dev/null 2>&1; then image_loaded=yes; fi; "
+        "  if [ \"$(id -u)\" -eq 0 ] && docker save " + shellQuote(options.imageName) + " | k3s ctr -n k8s.io images import - >/dev/null 2>&1; then image_loaded=yes; "
+        "  elif sudo -n true >/dev/null 2>&1 && docker save " + shellQuote(options.imageName) + " | sudo -n k3s ctr -n k8s.io images import - >/dev/null 2>&1; then image_loaded=yes; fi; "
         "fi; "
         "if [ \"$image_loaded\" = no ]; then "
         "  echo '[remote-k8s] Local image import unavailable; using local registry fallback'; "
@@ -2169,9 +2257,10 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
     Json::CharReaderBuilder builder;
     builder["collectComments"] = false;
     std::string parseErrors;
-    std::istringstream composeStream(configResult.output);
+    const std::string composeJson = extractJsonObjectFromCommandOutput(configResult.output);
+    std::istringstream composeStream(composeJson.empty() ? configResult.output : composeJson);
     if (!Json::parseFromStream(builder, composeStream, &composeConfig, &parseErrors)) {
-        result.logs = configResult.output;
+        result.logs = configResult.output + "\n" + parseErrors;
         result.error = "Remote Docker Compose config output could not be parsed";
         return result;
     }
@@ -2245,6 +2334,21 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             << "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl';\n"
             << "else echo __DOKSCP_KUBECTL_MISSING__; exit 30; fi\n"
             << "$K get nodes >/dev/null 2>&1 || { echo __DOKSCP_K8S_NOT_READY__; exit 31; }\n"
+            << "find_build_node() {\n"
+            << "  ips=\"$(hostname -I 2>/dev/null || true)\"\n"
+            << "  nodes=\"$($K get nodes -o jsonpath='{range .items[*]}{.metadata.name}{\"|\"}{range .status.addresses[*]}{.address}{\",\"}{end}{\"\\n\"}{end}' 2>/dev/null || true)\"\n"
+            << "  for ip in $ips; do\n"
+            << "    match=$(printf '%s\\n' \"$nodes\" | awk -F'|' -v ip=\"$ip\" 'index(\",\" $2, \",\" ip \",\") { print $1; exit }')\n"
+            << "    [ -n \"$match\" ] && { printf '%s' \"$match\"; return 0; }\n"
+            << "  done\n"
+            << "  host=\"$(hostname 2>/dev/null || true)\"\n"
+            << "  if [ -n \"$host\" ] && $K get node \"$host\" >/dev/null 2>&1; then printf '%s' \"$host\"; return 0; fi\n"
+            << "  $K get nodes -o jsonpath='{.items[0].metadata.name}'\n"
+            << "}\n"
+            << "build_node=\"$(find_build_node)\"\n"
+            << "[ -n \"$build_node\" ] || { echo __DOKSCP_K8S_BUILD_NODE_NOT_FOUND__; exit 35; }\n"
+            << "$K label node \"$build_node\" dokscp.io/local-build-node=true --overwrite >/dev/null 2>&1 || true\n"
+            << "echo __DOKSCP_K8S_BUILD_NODE__=$build_node\n"
             << "$K get namespace " << shellQuote(plan.nameSpace) << " >/dev/null 2>&1 || $K create namespace " << shellQuote(plan.nameSpace) << "\n"
             << "cd " << shellQuote(remoteComposeWorkdir) << "\n"
             << "compose_cmd='docker compose'\n"
@@ -2256,27 +2360,27 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             << "  return 1\n"
             << "}\n"
             << "prepare_image() {\n"
-            << "  placeholder=\"$1\"; image=\"$2\"; replacement=\"$image\"; image_loaded=no\n"
+            << "  placeholder=\"$1\"; image=\"$2\"; local_build=\"$3\"; replacement=\"$image\"; image_loaded=no\n"
             << "  if ! command -v docker >/dev/null 2>&1 || ! docker image inspect \"$image\" >/dev/null 2>&1; then echo __DOKSCP_K8S_SOURCE_IMAGE_MISSING__=$image; exit 32; fi\n"
             << "  if command -v kind >/dev/null 2>&1 && kind load docker-image \"$image\" >/dev/null 2>&1; then image_loaded=yes; fi\n"
             << "  if [ \"$image_loaded\" = no ] && command -v minikube >/dev/null 2>&1 && minikube image load \"$image\" >/dev/null 2>&1; then image_loaded=yes; fi\n"
             << "  if [ \"$image_loaded\" = no ] && command -v k3s >/dev/null 2>&1; then\n"
-            << "    if [ \"$(id -u)\" -eq 0 ] && docker save \"$image\" | k3s ctr images import - >/dev/null 2>&1; then image_loaded=yes;\n"
-            << "    elif sudo -n true >/dev/null 2>&1 && docker save \"$image\" | sudo -n k3s ctr images import - >/dev/null 2>&1; then image_loaded=yes; fi\n"
+            << "    if [ \"$(id -u)\" -eq 0 ] && docker save \"$image\" | k3s ctr -n k8s.io images import - >/dev/null 2>&1; then image_loaded=yes;\n"
+            << "    elif sudo -n true >/dev/null 2>&1 && docker save \"$image\" | sudo -n k3s ctr -n k8s.io images import - >/dev/null 2>&1; then image_loaded=yes; fi\n"
             << "  fi\n"
-            << "  if [ \"$image_loaded\" = no ]; then\n"
-            << "    ensure_registry || { echo __DOKSCP_K8S_REGISTRY_PUSH_FAILED__; exit 33; }\n"
-            << "    registry_image=\"localhost:5000/${image#docker.io/}\"\n"
-            << "    docker tag \"$image\" \"$registry_image\"\n"
-            << "    docker push \"$registry_image\" >/dev/null || { echo __DOKSCP_K8S_REGISTRY_PUSH_FAILED__; exit 33; }\n"
-            << "    replacement=\"$registry_image\"\n"
+            << "  if [ \"$local_build\" = yes ] && [ \"$image_loaded\" = no ]; then\n"
+            << "    echo __DOKSCP_K8S_IMAGE_IMPORT_FAILED__=$image\n"
+            << "    exit 34\n"
             << "  fi\n"
             << "  safe=$(printf '%s' \"$replacement\" | sed 's/[&|]/\\\\&/g')\n"
             << "  sed -i \"s|$placeholder|$safe|g\" " << shellQuote(remoteManifestPath) << "\n"
             << "  echo __DOKSCP_K8S_IMAGE_USED__=$replacement\n"
             << "}\n";
         for (const auto& service : plan.services) {
-            script << "prepare_image " << shellQuote(service.imagePlaceholder) << " " << shellQuote(service.imageName) << "\n";
+            script
+                << "prepare_image " << shellQuote(service.imagePlaceholder)
+                << " " << shellQuote(service.imageName)
+                << " " << (service.localBuildImage ? "yes" : "no") << "\n";
         }
         if (result.runtimeScheme == "https") {
             const char* acmeEmailEnv = std::getenv("ACME_EMAIL");
@@ -2289,11 +2393,40 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
                 << "fi\n";
         }
         script
+            << "dump_rollout_debug() {\n"
+            << "  deployment=\"$1\"; service=\"$2\"\n"
+            << "  echo __DOKSCP_K8S_ROLLOUT_DEBUG__=$service\n"
+            << "  $K get deployment \"$deployment\" -n " << shellQuote(plan.nameSpace) << " -o wide || true\n"
+            << "  $K get pods -n " << shellQuote(plan.nameSpace) << " -l app=\"$deployment\" -o wide || true\n"
+            << "  $K describe deployment \"$deployment\" -n " << shellQuote(plan.nameSpace) << " || true\n"
+            << "  for pod in $($K get pods -n " << shellQuote(plan.nameSpace) << " -l app=\"$deployment\" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do\n"
+            << "    echo __DOKSCP_K8S_POD_DESCRIBE__=$pod\n"
+            << "    $K describe pod \"$pod\" -n " << shellQuote(plan.nameSpace) << " || true\n"
+            << "    echo __DOKSCP_K8S_POD_LOGS__=$pod\n"
+            << "    $K logs \"$pod\" -n " << shellQuote(plan.nameSpace) << " --all-containers --tail=120 || true\n"
+            << "  done\n"
+            << "}\n"
             << "$K apply -f " << shellQuote(remoteManifestPath) << "\n";
+        for (const auto& service : plan.services) {
+            if (!service.localBuildImage) {
+                continue;
+            }
+            script
+                << "$K patch deployment/" << shellQuote(service.deploymentName)
+                << " -n " << shellQuote(plan.nameSpace)
+                << " --type merge -p '{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"dokscp.io/local-build-node\":\"true\"}}}}}' >/dev/null\n";
+        }
+        for (const auto& service : plan.services) {
+            script
+                << "$K rollout restart deployment/" << shellQuote(service.deploymentName)
+                << " -n " << shellQuote(plan.nameSpace) << " || true\n";
+        }
         for (const auto& service : plan.services) {
             script
                 << "$K rollout status deployment/" << shellQuote(service.deploymentName)
-                << " -n " << shellQuote(plan.nameSpace) << " --timeout=180s || { echo __DOKSCP_K8S_ROLLOUT_FAILED__=" << service.serviceName << "; exit 40; }\n";
+                << " -n " << shellQuote(plan.nameSpace) << " --timeout=180s || { dump_rollout_debug "
+                << shellQuote(service.deploymentName) << " " << shellQuote(service.serviceName)
+                << "; echo __DOKSCP_K8S_ROLLOUT_FAILED__=" << service.serviceName << "; exit 40; }\n";
         }
         script
             << "ready=$($K get deployment " << shellQuote(plan.primaryDeploymentName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)\n"

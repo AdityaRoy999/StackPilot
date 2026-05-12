@@ -7,6 +7,7 @@ LABEL org.opencontainers.image.title="DOKSCP Backend" \
       org.opencontainers.image.vendor="DOKSCP"
 
 ENV DEBIAN_FRONTEND=noninteractive
+ARG DOKSCP_BACKEND_BUILD_PARALLELISM=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpqxx-dev \
@@ -42,7 +43,11 @@ WORKDIR /app
 COPY . .
 
 RUN cmake -B build -S . && \
-    cmake --build build --config Release --parallel
+    if [ "$DOKSCP_BACKEND_BUILD_PARALLELISM" = "auto" ]; then \
+        cmake --build build --config Release --parallel; \
+    else \
+        cmake --build build --config Release --parallel "$DOKSCP_BACKEND_BUILD_PARALLELISM"; \
+    fi
 
 RUN mkdir -p logs uploads/builds uploads/source-artifacts
 

@@ -175,6 +175,58 @@ std::string markerValue(const std::string& output, const std::string& marker) {
     return "";
 }
 
+std::string composePortFallbackShell(const std::string& composeFileArg,
+                                     const std::string& projectArg) {
+    return R"sh(
+port_in_use() {
+  port="$1"
+  if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:|])'"$port"'$'; then return 0; fi
+  if command -v netstat >/dev/null 2>&1 && netstat -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:|])'"$port"'$'; then return 0; fi
+  if docker ps --format '{{.Ports}}' 2>/dev/null | grep -Eq '(^|, )([^ ]+:)?'"$port"'->'; then return 0; fi
+  return 1
+}
+choose_port() {
+  preferred="$1"
+  shift
+  for port in "$preferred" "$@"; do
+    case "$port" in ''|*[!0-9]*) continue ;; esac
+    if ! port_in_use "$port"; then echo "$port"; return 0; fi
+  done
+  port="$preferred"
+  while [ "$port" -le 65535 ]; do
+    if ! port_in_use "$port"; then echo "$port"; return 0; fi
+    port=$((port + 1))
+  done
+  return 1
+}
+write_env_value() {
+  key="$1"
+  value="$2"
+  touch .env
+  if grep -q "^${key}=" .env 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+compose_up_exit=0
+compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
+printf '%s\n' "$compose_up_output"
+if [ "$compose_up_exit" -ne 0 ]; then
+  if printf '%s\n' "$compose_up_output" | grep -qi 'address already in use'; then
+    http_port=$(choose_port 80 8080 8081 8082 8090 8000 3000)
+    https_port=$(choose_port 443 8443 9443 10443 4443)
+    write_env_value DOKSCP_HTTP_PORT "$http_port"
+    write_env_value DOKSCP_HTTPS_PORT "$https_port"
+    echo "Host port conflict detected; retrying Compose with DOKSCP_HTTP_PORT=$http_port and DOKSCP_HTTPS_PORT=$https_port"
+    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
+  else
+    exit "$compose_up_exit"
+  fi
+fi
+)sh";
+}
+
 bool writeGitAskPassFiles(const std::filesystem::path& deploymentDir,
                           const std::string& token,
                           std::filesystem::path& askPassPath,
@@ -1085,6 +1137,11 @@ BuildResult BuildService::buildRepositoryAndRunOnRemoteDocker(const std::string&
         onLogLine("Repository: " + repoUrl);
         if (!branch.empty()) onLogLine("Branch: " + branch);
         if (!commitSha.empty()) onLogLine("Commit: " + commitSha);
+        if (repoUrl.rfind("https://github.com/", 0) == 0) {
+            onLogLine(githubPat.empty()
+                ? "GitHub credentials: no project PAT or connected GitHub token available for this remote clone."
+                : "GitHub credentials: token available for this remote clone.");
+        }
         onLogLine("Remote host: " + sshConfig.username + "@" + sshConfig.host);
         onLogLine("Preparing remote build workspace: " + remoteBase);
     }
@@ -1184,16 +1241,20 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
             "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
             "fi; "
+            "compose_parallel_limit=$(sed -n 's/^DOKSCP_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "[ -n \"$compose_parallel_limit\" ] || compose_parallel_limit=1; "
+            "export COMPOSE_PARALLEL_LIMIT=\"$compose_parallel_limit\"; "
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " config --services > .dokscp-compose-services; "
             "services=$(paste -sd, .dokscp-compose-services 2>/dev/null || true); "
             "echo __DOKSCP_COMPOSE_PROJECT__=" + composeProject + "; "
             "echo __DOKSCP_COMPOSE_FILE__=" + composeFile + "; "
             "echo __DOKSCP_COMPOSE_SERVICES__=$services; "
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " pull --ignore-pull-failures || true; "
-            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " up -d --build --remove-orphans; "
+            + composePortFallbackShell(quotedComposeFile, quotedProject) +
             "runtime=''; "
             "domain=$(sed -n 's/^DOKSCP_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "if [ -n \"$domain\" ]; then runtime=\"https://$domain\"; fi; "
+            "https_port=$(sed -n 's/^DOKSCP_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "if [ -n \"$domain\" ]; then if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; fi; "
             "if [ -z \"$runtime\" ]; then "
             "  for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
             "    for port in 80 443 3000 8080 8000 5000 5173; do "
@@ -1250,8 +1311,14 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
     }
 
     const std::string imageName = "dokscp/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string buildParallel = [] {
+        const char* value = std::getenv("DOKSCP_BACKEND_BUILD_PARALLELISM");
+        return (value && *value) ? std::string(value) : std::string("1");
+    }();
     const std::string buildCmd = "docker build --pull=false --memory \"" + dockerMemoryLimit_ +
-                                 "\" -t \"" + imageName + "\" \"" + sourceDir.string() + "\"";
+                                 "\" --build-arg DOKSCP_BACKEND_BUILD_PARALLELISM=" +
+                                 shellQuote(buildParallel) + " -t \"" + imageName +
+                                 "\" \"" + sourceDir.string() + "\"";
 
     {
         std::string buildMsg = "Building image: " + imageName;
