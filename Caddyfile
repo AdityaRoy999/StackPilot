@@ -2,7 +2,7 @@
 	email {$ACME_EMAIL}
 }
 
-{$DOKSCP_DOMAIN} {
+{$DOKSCP_CADDY_SITE_ADDRESS::80} {
 	encode zstd gzip
 
 	header {

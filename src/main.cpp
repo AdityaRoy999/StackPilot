@@ -311,20 +311,21 @@ void validateProductionConfiguration(const std::string& jwtSecret,
                                      const std::string& tokenKey,
                                      const std::vector<std::string>& allowedOrigins,
                                      const std::string& frontendUrl,
-                                     const std::string& backendUrl) {
+                                     const std::string& backendUrl,
+                                     bool requireHttps) {
     if (!isProductionEnv()) {
         return;
     }
 
     std::vector<std::string> errors;
-    if (!startsWith(frontendUrl, "https://")) {
+    if (requireHttps && !startsWith(frontendUrl, "https://")) {
         errors.push_back("FRONTEND_PUBLIC_URL must use https:// in production");
     }
-    if (!startsWith(backendUrl, "https://")) {
+    if (requireHttps && !startsWith(backendUrl, "https://")) {
         errors.push_back("BACKEND_PUBLIC_URL must use https:// in production");
     }
     for (const auto& origin : allowedOrigins) {
-        if (!startsWith(origin, "https://")) {
+        if (requireHttps && !startsWith(origin, "https://")) {
             errors.push_back("CORS_ALLOWED_ORIGIN entries must use https:// in production: " + origin);
         }
     }
@@ -368,13 +369,15 @@ int main() {
     const std::vector<std::string> allowedOriginsForValidation = splitCsv(
         getEnvOrDefault("CORS_ALLOWED_ORIGIN", frontendPublicUrl)
     );
+    const bool requireHttpsForValidation = getEnvBoolOrDefault("DOKSCP_REQUIRE_HTTPS", isProductionEnv());
     try {
         validateProductionConfiguration(
             jwtSecret,
             tokenKey,
             allowedOriginsForValidation,
             frontendPublicUrl,
-            backendPublicUrlForValidation
+            backendPublicUrlForValidation,
+            requireHttpsForValidation
         );
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
