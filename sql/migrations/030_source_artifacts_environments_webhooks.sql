@@ -23,7 +23,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_source_artifacts_user_sha
 ALTER TABLE projects
     DROP CONSTRAINT IF EXISTS projects_source_type_check,
     ADD CONSTRAINT projects_source_type_check
-        CHECK (source_type IN ('github', 'ssh', 'local', 'artifact'));
+        CHECK (source_type IN ('github', 'ssh', 'local', 'artifact', 'application'));
 
 CREATE TABLE IF NOT EXISTS project_environments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -4,6 +4,8 @@ import json
 import os
 import re
 import asyncio
+import hashlib
+import math
 import time
 import uuid
 from typing import Any, Dict, List, Literal, Optional, TypedDict
@@ -40,6 +42,7 @@ class AgentRequest(BaseModel):
     command: str = ""
     model_mode: Literal["fast", "thinking"] = "fast"
     history: List[Dict[str, str]] = Field(default_factory=list)
+    memory: Dict[str, Any] = Field(default_factory=dict)
     confidence_threshold: float = 0.72
 
     @model_validator(mode="after")
@@ -65,6 +68,16 @@ class AgentResponse(BaseModel):
     latency_ms: int = 0
     token_usage: Dict[str, Any] = Field(default_factory=dict)
     error: str = ""
+
+
+class EmbeddingRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    provider_overrides: Dict[str, Any] = Field(default_factory=dict)
+    texts: List[str] = Field(default_factory=list)
+    dimensions: int = Field(default_factory=lambda: int(os.getenv("DOKSCP_AI_EMBEDDING_DIMENSIONS", "384")))
 
 
 class AgentState(TypedDict, total=False):
@@ -155,6 +168,99 @@ def provider_config(
             or "meta/llama-3.1-70b-instruct"
         )
     return selected, base_url, api_key, selected_model
+
+
+def embedding_provider_config(req: EmbeddingRequest) -> tuple[str, str, str, str]:
+    overrides = req.provider_overrides or {}
+    selected = (req.provider or os.getenv("DOKSCP_AI_EMBEDDING_PROVIDER") or os.getenv("DOKSCP_AI_PROVIDER") or "nvidia_nim").strip()
+    if selected == "openai_compatible":
+        base_url = str(
+            overrides.get("base_url")
+            or overrides.get("openai_compatible_base_url")
+            or os.getenv("OPENAI_COMPATIBLE_BASE_URL", "")
+        ).rstrip("/")
+        api_key = str(
+            overrides.get("api_key")
+            or overrides.get("openai_compatible_api_key")
+            or os.getenv("OPENAI_COMPATIBLE_API_KEY", "")
+        )
+        model = req.model or os.getenv("OPENAI_COMPATIBLE_EMBEDDING_MODEL") or "text-embedding-3-small"
+    else:
+        selected = "nvidia_nim"
+        base_url = os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1").rstrip("/")
+        api_key = os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("NVIDIA_API_KEY", "")
+        model = req.model or os.getenv("NVIDIA_NIM_EMBEDDING_MODEL") or "nvidia/llama-3.2-nv-embedqa-1b-v2"
+    return selected, base_url, api_key, model
+
+
+def normalize_embedding(values: List[float], dimensions: int) -> List[float]:
+    if len(values) > dimensions:
+        values = values[:dimensions]
+    elif len(values) < dimensions:
+        values = [*values, *([0.0] * (dimensions - len(values)))]
+    norm = math.sqrt(sum(v * v for v in values)) or 1.0
+    return [round(v / norm, 8) for v in values]
+
+
+def deterministic_embedding(text: str, dimensions: int) -> List[float]:
+    vector = [0.0] * dimensions
+    tokens = re.findall(r"[A-Za-z0-9_./:-]+", (text or "").lower())
+    if not tokens:
+        tokens = ["empty"]
+    for token in tokens:
+        digest = hashlib.sha256(token.encode("utf-8", errors="ignore")).digest()
+        for offset in range(0, min(16, len(digest)), 2):
+            index = int.from_bytes(digest[offset : offset + 2], "big") % dimensions
+            sign = 1.0 if digest[(offset + 1) % len(digest)] % 2 == 0 else -1.0
+            vector[index] += sign
+    return normalize_embedding(vector, dimensions)
+
+
+async def provider_embeddings(req: EmbeddingRequest) -> Dict[str, Any]:
+    dimensions = 384
+    texts = [clip(redact_text(text), MAX_TEXT) for text in req.texts[:32]]
+    provider, base_url, api_key, model = embedding_provider_config(req)
+    allow_fallback = env_flag("DOKSCP_AI_EMBEDDING_FALLBACK", True)
+
+    if base_url and api_key and texts:
+        payload: Dict[str, Any] = {"model": model, "input": texts}
+        if provider == "openai_compatible" and "text-embedding-3" in model:
+            payload["dimensions"] = dimensions
+        try:
+            timeout = httpx.Timeout(DEFAULT_TIMEOUT, connect=10.0, read=DEFAULT_TIMEOUT, write=10.0, pool=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    f"{base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                )
+            response.raise_for_status()
+            data = response.json()
+            embeddings = []
+            for item in data.get("data", []):
+                raw = item.get("embedding", [])
+                embeddings.append(normalize_embedding([float(v) for v in raw], dimensions))
+            if len(embeddings) == len(texts):
+                return {
+                    "status": "ok",
+                    "provider": provider,
+                    "model": model,
+                    "dimensions": dimensions,
+                    "fallback": False,
+                    "embeddings": embeddings,
+                }
+        except Exception:
+            if not allow_fallback:
+                raise
+
+    return {
+        "status": "ok",
+        "provider": "deterministic",
+        "model": "dokscp-hash-embedding-v1",
+        "dimensions": dimensions,
+        "fallback": True,
+        "embeddings": [deterministic_embedding(text, dimensions) for text in texts],
+    }
 
 
 def model_extra_body(model: str, model_mode: str) -> Dict[str, Any]:
@@ -457,6 +563,7 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
         "command": redact_text(req.command),
         "model_mode": req.model_mode,
         "history": safe_json(req.history[-12:]),
+        "memory": safe_json(req.memory),
         "confidence_threshold": req.confidence_threshold,
     }
     base = {
@@ -481,6 +588,9 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
         ),
         "agent_chat": (
             "You are the DOKSCP platform agent, a production DevOps copilot. Interpret slash commands and natural language. "
+            "Use the supplied chat memory as durable context for this specific conversation, but prefer the user's latest instruction when it conflicts. "
+            "Never repeat an old diagnosis, deployment failure, or log analysis unless the latest user message is asking about that failure, deployment, logs, or fix. "
+            "If the latest user message is a general question, answer that question directly and treat deployment/log context only as optional background. "
             "You may recommend builds, deployments, Dockerfile changes, and diagnosis steps, but you do not claim to have "
             "executed platform actions unless the caller says an action result is present in runtime. Explain the why, what it means, "
             "and the next safe action. For errors, include likely cause, evidence from context, and concrete fixes. Do not give a one-line answer unless the user asks for one. "
@@ -984,6 +1094,11 @@ async def models_for_request(request: AgentRequest) -> Dict[str, Any]:
         request.provider_overrides,
     )
     return await model_catalog(provider, base_url, api_key, selected_model)
+
+
+@app.post("/embeddings")
+async def embeddings(request: EmbeddingRequest) -> Dict[str, Any]:
+    return await provider_embeddings(request)
 
 
 @app.post("/analyze/project", response_model=AgentResponse)

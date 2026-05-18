@@ -67,7 +67,7 @@ interface ProjectSummary {
   name: string;
   description: string;
   repo_url: string;
-  source_type?: "github" | "ssh" | "local";
+  source_type?: "github" | "ssh" | "local" | "application";
   source_path?: string;
   execution_mode?: "local" | "remote_host";
   remote_runtime_type?: "docker" | "kubernetes";

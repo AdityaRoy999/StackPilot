@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { Trash2, Loader2, AlertTriangle, Copy } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -49,6 +49,15 @@ export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDia
   });
 
   const isConfirmed = confirmName === projectName;
+  const copyConfirmationText = async () => {
+    try {
+      await navigator.clipboard.writeText(projectName);
+      setConfirmName(projectName);
+      toast.success("Confirmation text copied");
+    } catch {
+      toast.error("Unable to copy confirmation text");
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={(val) => { setOpen(val); if (!val) setConfirmName(""); }}>
@@ -59,7 +68,7 @@ export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDia
           </Button>
         }
       />
-      <DialogContent className="overflow-hidden p-0 sm:max-w-[520px]">
+      <DialogContent className="!w-[min(94vw,680px)] !max-w-[680px] overflow-hidden p-0">
         <DialogHeader className="px-6 pt-6">
           <div className="mx-auto w-14 h-14 bg-destructive/10 rounded-full flex items-center justify-center mb-4 border border-destructive/20">
             <AlertTriangle className="h-7 w-7 text-destructive" />
@@ -70,7 +79,16 @@ export function DeleteProjectDialog({ projectId, projectName }: DeleteProjectDia
           </DialogDescription>
         </DialogHeader>
 
-        <div className="px-6 py-5">
+        <div className="space-y-2 px-6 py-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="min-w-0 text-sm text-muted-foreground">
+              Confirmation text: <span className="font-medium text-foreground">{projectName}</span>
+            </span>
+            <Button type="button" variant="outline" size="sm" onClick={copyConfirmationText} className="shrink-0">
+              <Copy className="mr-2 h-3.5 w-3.5" />
+              Copy
+            </Button>
+          </div>
           <Input
             value={confirmName}
             onChange={(e) => setConfirmName(e.target.value)}

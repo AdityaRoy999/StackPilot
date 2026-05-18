@@ -5,6 +5,7 @@
 #include "../utils/AiRedaction.h"
 #include "../utils/AuditLogger.h"
 #include "../utils/JwtHelper.h"
+#include "../utils/TokenCrypto.h"
 
 #include <json/json.h>
 #include <pqxx/pqxx>
@@ -13,12 +14,16 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <deque>
+#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace dokscp {
 
@@ -91,6 +96,157 @@ Json::Value parseJson(const std::string& value) {
         return Json::Value(Json::objectValue);
     }
     return parsed;
+}
+
+std::string trimText(const std::string& value) {
+    const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c); });
+    const auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) { return std::isspace(c); }).base();
+    if (begin >= end) {
+        return "";
+    }
+    return std::string(begin, end);
+}
+
+std::string chatTitleFromMessage(const std::string& message) {
+    std::string title = trimText(message);
+    title.erase(std::remove(title.begin(), title.end(), '\n'), title.end());
+    title.erase(std::remove(title.begin(), title.end(), '\r'), title.end());
+    if (title.size() > 72) {
+        title = title.substr(0, 69) + "...";
+    }
+    return title.empty() ? "New AI chat" : title;
+}
+
+std::string lowerText(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::string hostFromUrl(const std::string& url) {
+    const auto schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) {
+        return "";
+    }
+    auto hostStart = schemeEnd + 3;
+    const auto at = url.find('@', hostStart);
+    if (at != std::string::npos) {
+        hostStart = at + 1;
+    }
+    const auto hostEnd = url.find_first_of(":/?#", hostStart);
+    std::string host = url.substr(hostStart, hostEnd == std::string::npos ? std::string::npos : hostEnd - hostStart);
+    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
+        host = host.substr(1, host.size() - 2);
+    }
+    return lowerText(host);
+}
+
+bool isBlockedProviderHost(const std::string& host) {
+    if (host.empty()) {
+        return true;
+    }
+    static const std::unordered_set<std::string> exact = {
+        "localhost",
+        "metadata.google.internal",
+        "host.docker.internal",
+        "kubernetes.default",
+        "kubernetes.default.svc"
+    };
+    if (exact.count(host) > 0) {
+        return true;
+    }
+    if (host == "::1" || host == "0.0.0.0" || host.rfind("127.", 0) == 0 ||
+        host.rfind("10.", 0) == 0 || host.rfind("192.168.", 0) == 0 ||
+        host.rfind("169.254.", 0) == 0 || host.rfind("172.16.", 0) == 0 ||
+        host.rfind("172.17.", 0) == 0 || host.rfind("172.18.", 0) == 0 ||
+        host.rfind("172.19.", 0) == 0 || host.rfind("172.2", 0) == 0 ||
+        host.rfind("172.30.", 0) == 0 || host.rfind("172.31.", 0) == 0) {
+        return true;
+    }
+    return false;
+}
+
+bool validOpenAiCompatibleBaseUrl(const std::string& url) {
+    if (url.empty()) {
+        return true;
+    }
+    const std::string normalized = lowerText(trimText(url));
+    if (normalized.rfind("https://", 0) != 0) {
+        return false;
+    }
+    return !isBlockedProviderHost(hostFromUrl(normalized));
+}
+
+std::string clipText(const std::string& value, std::size_t limit) {
+    if (value.size() <= limit) {
+        return value;
+    }
+    return value.substr(value.size() - limit);
+}
+
+Json::Value sessionMemory(const std::string& summary, const std::string& graphText) {
+    Json::Value memory(Json::objectValue);
+    memory["summary"] = summary;
+    Json::Value graph = parseJson(graphText);
+    memory["graph"] = graph.isObject() ? graph : Json::Value(Json::objectValue);
+    return memory;
+}
+
+Json::Value buildHistory(const pqxx::result& rows) {
+    Json::Value history(Json::arrayValue);
+    for (const auto& row : rows) {
+        Json::Value message(Json::objectValue);
+        message["role"] = row["role"].as<std::string>();
+        message["content"] = row["content"].as<std::string>();
+        history.append(message);
+    }
+    return history;
+}
+
+Json::Value updateMemoryGraph(Json::Value graph, const std::string& userMessage, const std::string& assistantMessage) {
+    if (!graph.isObject()) {
+        graph = Json::Value(Json::objectValue);
+    }
+    graph["last_user_request"] = clipText(userMessage, 1000);
+    graph["last_assistant_response"] = clipText(assistantMessage, 1000);
+
+    std::string lower = userMessage;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    const bool looksLikePreference =
+        lower.find("remember") != std::string::npos ||
+        lower.find("prefer") != std::string::npos ||
+        lower.find("always") != std::string::npos ||
+        lower.find("my ") != std::string::npos;
+    if (looksLikePreference) {
+        Json::Value preferences = graph.isMember("preferences") && graph["preferences"].isArray()
+                                      ? graph["preferences"]
+                                      : Json::Value(Json::arrayValue);
+        preferences.append(clipText(userMessage, 500));
+        while (preferences.size() > 24) {
+            Json::Value trimmed(Json::arrayValue);
+            for (Json::ArrayIndex i = 1; i < preferences.size(); ++i) {
+                trimmed.append(preferences[i]);
+            }
+            preferences = trimmed;
+        }
+        graph["preferences"] = preferences;
+    }
+    return graph;
+}
+
+std::string updateMemorySummary(const std::string& current,
+                                const std::string& userMessage,
+                                const std::string& assistantMessage) {
+    std::ostringstream next;
+    if (!current.empty()) {
+        next << current << "\n";
+    }
+    next << "User: " << clipText(userMessage, 700) << "\n";
+    next << "Assistant: " << clipText(assistantMessage, 700);
+    return clipText(next.str(), 6000);
 }
 
 Json::Value requestBody(const drogon::HttpRequestPtr& req) {
@@ -167,7 +323,7 @@ Json::Value loadPreferences(pqxx::work& txn, const std::string& userId) {
             row["openai_compatible_base_url"].is_null() ? "" : row["openai_compatible_base_url"].as<std::string>();
         prefs["openai_compatible_api_key"] =
             row["openai_compatible_api_key"].is_null() ? envOrDefault("OPENAI_COMPATIBLE_API_KEY", "")
-                                                       : row["openai_compatible_api_key"].as<std::string>();
+                                                       : TokenCrypto::decrypt(row["openai_compatible_api_key"].as<std::string>());
         prefs["confidence_threshold"] = clampConfidence(row["confidence_threshold"].as<double>());
         prefs["history_retention_days"] = row["history_retention_days"].as<int>();
     }
@@ -317,6 +473,100 @@ Json::Value providerOverrides(const Json::Value& prefs) {
     return overrides;
 }
 
+Json::Value runWorkflow(const std::string& path, const Json::Value& payload, const Json::Value& overrides);
+
+int embeddingDimensions() {
+    return 384;
+}
+
+std::string vectorLiteral(const Json::Value& embedding) {
+    std::ostringstream out;
+    out << "[";
+    for (Json::ArrayIndex i = 0; i < embedding.size(); ++i) {
+        if (i > 0) {
+            out << ",";
+        }
+        out << std::setprecision(9) << embedding[i].asDouble();
+    }
+    out << "]";
+    return out.str();
+}
+
+Json::Value embeddingForText(const Json::Value& prefs, const std::string& text) {
+    Json::Value payload(Json::objectValue);
+    payload["provider"] = prefs["provider"];
+    payload["dimensions"] = embeddingDimensions();
+    payload["texts"] = Json::Value(Json::arrayValue);
+    payload["texts"].append(AiRedaction::redactText(text, maxContextBytes()));
+    Json::Value result = runWorkflow("/embeddings", payload, providerOverrides(prefs));
+    if (!result.isObject() || !result.isMember("embeddings") || !result["embeddings"].isArray() ||
+        result["embeddings"].empty() || !result["embeddings"][0].isArray()) {
+        return Json::Value(Json::arrayValue);
+    }
+    return result["embeddings"][0];
+}
+
+Json::Value retrieveSemanticMemories(pqxx::work& txn,
+                                     const std::string& userId,
+                                     const std::string& sessionId,
+                                     const Json::Value& embedding) {
+    Json::Value memories(Json::arrayValue);
+    if (!embedding.isArray() || embedding.empty()) {
+        return memories;
+    }
+    try {
+        const auto rows = txn.exec_params(
+            "SELECT content, metadata::text, session_id::text, memory_type, similarity FROM ("
+            "  SELECT content, metadata, session_id, memory_type, (1 - (embedding <=> $2::vector)) AS similarity "
+            "  FROM ai_memory_chunks "
+            "  WHERE user_id = $1 AND ($3 = '' OR session_id = $3::uuid OR session_id IS NULL)"
+            ") ranked "
+            "WHERE similarity >= 0.22 "
+            "ORDER BY similarity DESC LIMIT 8",
+            userId,
+            vectorLiteral(embedding),
+            sessionId);
+        for (const auto& row : rows) {
+            Json::Value memory(Json::objectValue);
+            memory["content"] = row["content"].as<std::string>();
+            memory["metadata"] = parseJson(row["metadata"].as<std::string>());
+            memory["session_id"] = row["session_id"].is_null() ? "" : row["session_id"].as<std::string>();
+            memory["memory_type"] = row["memory_type"].as<std::string>();
+            memory["similarity"] = row["similarity"].as<double>();
+            memories.append(memory);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("AI semantic memory retrieval skipped: {}", e.what());
+    }
+    return memories;
+}
+
+void storeSemanticMemory(pqxx::work& txn,
+                         const std::string& userId,
+                         const std::string& sessionId,
+                         const std::string& sourceMessageId,
+                         const std::string& content,
+                         const Json::Value& embedding,
+                         const Json::Value& metadata) {
+    if (!embedding.isArray() || embedding.empty() || content.empty()) {
+        return;
+    }
+    try {
+        txn.exec_params(
+            "INSERT INTO ai_memory_chunks "
+            "(user_id, session_id, source_message_id, memory_type, content, metadata, embedding) "
+            "VALUES ($1, $2::uuid, NULLIF($3, '')::uuid, 'chat_turn', $4, $5::jsonb, $6::vector)",
+            userId,
+            sessionId,
+            sourceMessageId,
+            AiRedaction::redactText(clipText(content, 4000), maxContextBytes()),
+            compactJson(metadata),
+            vectorLiteral(embedding));
+    } catch (const std::exception& e) {
+        spdlog::warn("AI semantic memory store skipped: {}", e.what());
+    }
+}
+
 Json::Value runWorkflow(const std::string& path,
                         const Json::Value& payload,
                         const Json::Value& overrides = Json::Value(Json::objectValue)) {
@@ -365,6 +615,15 @@ Json::Value buildPayload(const Json::Value& prefs,
     }
     if (body.isMember("runtime")) {
         payload["runtime"] = body["runtime"];
+    }
+    if (body.isMember("history")) {
+        payload["history"] = body["history"];
+    }
+    if (body.isMember("memory")) {
+        payload["memory"] = body["memory"];
+    }
+    if (body.isMember("session_id")) {
+        payload["session_id"] = body["session_id"];
     }
     return AiRedaction::redactJson(payload, maxContextBytes());
 }
@@ -445,10 +704,24 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
     const bool enabled = body.isMember("enabled") ? body["enabled"].asBool() : true;
     const std::string model = body.isMember("model") ? body["model"].asString() : "";
     const std::string baseUrl = body.isMember("openai_compatible_base_url") ? body["openai_compatible_base_url"].asString() : "";
+    if (!validOpenAiCompatibleBaseUrl(baseUrl)) {
+        sendError(callback,
+                  drogon::k400BadRequest,
+                  "OpenAI-compatible base URL must be HTTPS and cannot target localhost, private, or link-local hosts");
+        return;
+    }
     const bool clearCompatibleKey = body.isMember("clear_openai_compatible_api_key") &&
                                     body["clear_openai_compatible_api_key"].asBool();
     const std::string compatibleApiKey =
         body.isMember("openai_compatible_api_key") ? body["openai_compatible_api_key"].asString() : "";
+    std::string encryptedCompatibleApiKey;
+    try {
+        encryptedCompatibleApiKey = compatibleApiKey.empty() ? "" : TokenCrypto::encrypt(compatibleApiKey);
+    } catch (const std::exception& e) {
+        spdlog::error("AI provider key encryption failed: {}", e.what());
+        sendError(callback, drogon::k500InternalServerError, "AI provider key encryption is not configured");
+        return;
+    }
     const double threshold = body.isMember("confidence_threshold")
                                  ? clampConfidence(body["confidence_threshold"].asDouble())
                                  : clampConfidence(envDouble("DOKSCP_AI_CONFIDENCE_THRESHOLD", 0.72));
@@ -478,7 +751,7 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
             provider,
             model,
             baseUrl,
-            compatibleApiKey,
+            encryptedCompatibleApiKey,
             threshold,
             retentionDays,
             clearCompatibleKey);
@@ -563,42 +836,146 @@ void AiController::chatAgent(const drogon::HttpRequestPtr& req,
 
     try {
         auto conn = Database::getInstance().getConnection();
-        pqxx::work txn(*conn);
-        Json::Value prefs = loadPreferences(txn, userId);
-        if (!prefs["enabled"].asBool()) {
-            sendError(callback, drogon::k403Forbidden, "AI is disabled");
-            return;
-        }
-
+        Json::Value prefs(Json::objectValue);
         Json::Value project(Json::objectValue);
         Json::Value deployment(Json::objectValue);
+        Json::Value payload(Json::objectValue);
         std::string projectId = body.isMember("project_id") ? body["project_id"].asString() : "";
         const std::string deploymentId = body.isMember("deployment_id") ? body["deployment_id"].asString() : "";
+        const std::string userMessage = AiRedaction::redactText(body["message"].asString(), maxContextBytes());
+        std::string sessionId = body.isMember("session_id") ? body["session_id"].asString() : "";
+        std::string sessionTitle;
+        std::string memorySummary;
+        std::string userMessageId;
+        Json::Value memoryGraph(Json::objectValue);
 
-        if (!deploymentId.empty()) {
-            deployment = deploymentContext(txn, userId, deploymentId);
-            if (deployment.isNull()) {
-                sendError(callback, drogon::k404NotFound, "Deployment not found");
+        {
+            pqxx::work txn(*conn);
+            prefs = loadPreferences(txn, userId);
+            if (!prefs["enabled"].asBool()) {
+                sendError(callback, drogon::k403Forbidden, "AI is disabled");
                 return;
             }
-            projectId = deployment["project_id"].asString();
-        }
 
-        if (!projectId.empty()) {
-            project = projectContext(txn, userId, projectId);
-            if (project.isNull()) {
-                sendError(callback, drogon::k404NotFound, "Project not found");
-                return;
+            if (!deploymentId.empty()) {
+                deployment = deploymentContext(txn, userId, deploymentId);
+                if (deployment.isNull()) {
+                    sendError(callback, drogon::k404NotFound, "Deployment not found");
+                    return;
+                }
+                projectId = deployment["project_id"].asString();
             }
+
+            if (!projectId.empty()) {
+                project = projectContext(txn, userId, projectId);
+                if (project.isNull()) {
+                    sendError(callback, drogon::k404NotFound, "Project not found");
+                    return;
+                }
+            }
+
+            if (!sessionId.empty()) {
+                const auto sessions = txn.exec_params(
+                    "SELECT id, title, memory_summary, memory_graph::text "
+                    "FROM ai_sessions WHERE id = $1 AND user_id = $2 AND session_type = 'agent_chat'",
+                    sessionId,
+                    userId);
+                if (sessions.empty()) {
+                    sendError(callback, drogon::k404NotFound, "AI chat not found");
+                    return;
+                }
+                sessionTitle = sessions[0]["title"].as<std::string>();
+                memorySummary = sessions[0]["memory_summary"].as<std::string>();
+                memoryGraph = parseJson(sessions[0]["memory_graph"].as<std::string>());
+                if (!memoryGraph.isObject()) {
+                    memoryGraph = Json::Value(Json::objectValue);
+                }
+            } else {
+                sessionTitle = chatTitleFromMessage(userMessage);
+                const auto rows = txn.exec_params(
+                    "INSERT INTO ai_sessions (user_id, project_id, title, session_type) "
+                    "VALUES ($1, NULLIF($2, '')::uuid, $3, 'agent_chat') RETURNING id",
+                    userId,
+                    projectId,
+                    sessionTitle);
+                sessionId = rows[0][0].as<std::string>();
+            }
+
+            const auto historyRows = txn.exec_params(
+                "SELECT role, content FROM ("
+                "SELECT role, content, created_at FROM ai_messages WHERE session_id = $1 "
+                "ORDER BY created_at DESC LIMIT 24"
+                ") recent ORDER BY created_at ASC",
+                sessionId);
+            body["history"] = buildHistory(historyRows);
+            body["session_id"] = sessionId;
+
+            const auto userMessageRows = txn.exec_params(
+                "INSERT INTO ai_messages (session_id, role, content) VALUES ($1, 'user', $2) RETURNING id",
+                sessionId,
+                userMessage);
+            userMessageId = userMessageRows[0][0].as<std::string>();
+            txn.commit();
         }
 
-        Json::Value payload = buildPayload(prefs, body, project, deployment);
+        Json::Value queryEmbedding = embeddingForText(prefs, userMessage);
+        {
+            pqxx::work txn(*conn);
+            Json::Value memory = sessionMemory(memorySummary, compactJson(memoryGraph));
+            memory["semantic"] = retrieveSemanticMemories(txn, userId, sessionId, queryEmbedding);
+            body["memory"] = memory;
+            txn.commit();
+        }
+
+        payload = buildPayload(prefs, body, project, deployment);
         Json::Value result = runWorkflow("/chat/agent", payload, providerOverrides(prefs));
-        const std::string runId = insertAiRun(txn, userId, "agent_chat", payload, result,
-                                              result.isMember("error") ? result["error"].asString() : "");
-        linkAiRun(txn, runId, projectId, deploymentId);
-        storeArtifacts(txn, runId, result);
-        txn.commit();
+        std::string runId;
+        const std::string assistantMessage = result.isMember("summary") ? result["summary"].asString() : compactJson(result);
+        Json::Value turnEmbedding = embeddingForText(prefs, userMessage + "\n" + assistantMessage);
+
+        {
+            pqxx::work txn(*conn);
+            runId = insertAiRun(txn, userId, "agent_chat", payload, result,
+                                result.isMember("error") ? result["error"].asString() : "");
+            linkAiRun(txn, runId, projectId, deploymentId);
+            storeArtifacts(txn, runId, result);
+
+            Json::Value messageMeta;
+            messageMeta["run_id"] = runId;
+            messageMeta["model"] = result.isMember("model") ? result["model"].asString() : payload["model"].asString();
+            messageMeta["provider"] = result.isMember("provider") ? result["provider"].asString() : payload["provider"].asString();
+            const auto assistantRows = txn.exec_params(
+                "INSERT INTO ai_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3::jsonb) RETURNING id",
+                sessionId,
+                assistantMessage,
+                compactJson(messageMeta));
+            const std::string assistantMessageId = assistantRows[0][0].as<std::string>();
+
+            Json::Value semanticMeta(Json::objectValue);
+            semanticMeta["run_id"] = runId;
+            semanticMeta["user_message_id"] = userMessageId;
+            semanticMeta["assistant_message_id"] = assistantMessageId;
+            semanticMeta["embedding_kind"] = "chat_turn";
+            storeSemanticMemory(
+                txn,
+                userId,
+                sessionId,
+                assistantMessageId,
+                "User: " + userMessage + "\nAssistant: " + assistantMessage,
+                turnEmbedding,
+                semanticMeta);
+
+            memorySummary = updateMemorySummary(memorySummary, userMessage, assistantMessage);
+            memoryGraph = updateMemoryGraph(memoryGraph, userMessage, assistantMessage);
+            txn.exec_params(
+                "UPDATE ai_sessions SET updated_at = NOW(), memory_summary = $2, memory_graph = $3::jsonb, last_model = $4 "
+                "WHERE id = $1",
+                sessionId,
+                memorySummary,
+                compactJson(memoryGraph),
+                payload["model"].asString());
+            txn.commit();
+        }
 
         Json::Value audit;
         audit["run_id"] = runId;
@@ -606,10 +983,137 @@ void AiController::chatAgent(const drogon::HttpRequestPtr& req,
         AuditLogger::recordFromRequest(req, userId, "ai.agent.chat", "ai", runId, audit);
 
         result["run_id"] = runId;
+        result["session_id"] = sessionId;
+        result["session_title"] = sessionTitle;
         sendJson(callback, result);
     } catch (const std::exception& e) {
         spdlog::error("AI agent chat failed: {}", e.what());
         sendError(callback, drogon::k500InternalServerError, "AI agent chat failed");
+    }
+}
+
+void AiController::listSessions(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+    const std::string userId = extractUserId(req);
+    if (userId.empty()) {
+        sendError(callback, drogon::k401Unauthorized, "Unauthorized");
+        return;
+    }
+
+    try {
+        auto conn = Database::getInstance().getConnection();
+        pqxx::work txn(*conn);
+        const auto rows = txn.exec_params(
+            "SELECT s.id, s.title, s.session_type, s.project_id, s.memory_summary, s.last_model, "
+            "s.created_at, s.updated_at, "
+            "(SELECT COUNT(*) FROM ai_messages m WHERE m.session_id = s.id) AS message_count, "
+            "COALESCE((SELECT m.content FROM ai_messages m WHERE m.session_id = s.id ORDER BY m.created_at DESC LIMIT 1), '') AS preview "
+            "FROM ai_sessions s WHERE s.user_id = $1 AND s.session_type IN ('agent_chat', 'project_chat') "
+            "ORDER BY s.updated_at DESC LIMIT 100",
+            userId);
+        Json::Value sessions(Json::arrayValue);
+        for (const auto& row : rows) {
+            Json::Value session(Json::objectValue);
+            for (const auto& name : {"id", "title", "session_type", "created_at", "updated_at", "memory_summary", "last_model", "preview"}) {
+                session[name] = row[name].is_null() ? "" : row[name].as<std::string>();
+            }
+            session["project_id"] = row["project_id"].is_null() ? "" : row["project_id"].as<std::string>();
+            session["message_count"] = row["message_count"].as<int>();
+            sessions.append(session);
+        }
+        txn.commit();
+
+        Json::Value payload;
+        payload["sessions"] = sessions;
+        sendJson(callback, payload);
+    } catch (const std::exception& e) {
+        spdlog::error("AI sessions list failed: {}", e.what());
+        sendError(callback, drogon::k500InternalServerError, "Failed to list AI chats");
+    }
+}
+
+void AiController::getSession(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                              const std::string& sessionId) {
+    const std::string userId = extractUserId(req);
+    if (userId.empty()) {
+        sendError(callback, drogon::k401Unauthorized, "Unauthorized");
+        return;
+    }
+
+    try {
+        auto conn = Database::getInstance().getConnection();
+        pqxx::work txn(*conn);
+        const auto sessions = txn.exec_params(
+            "SELECT id, title, session_type, project_id, memory_summary, memory_graph::text, last_model, created_at, updated_at "
+            "FROM ai_sessions WHERE id = $1 AND user_id = $2",
+            sessionId,
+            userId);
+        if (sessions.empty()) {
+            sendError(callback, drogon::k404NotFound, "AI chat not found");
+            return;
+        }
+
+        const auto& row = sessions[0];
+        Json::Value session(Json::objectValue);
+        for (const auto& name : {"id", "title", "session_type", "created_at", "updated_at", "memory_summary", "last_model"}) {
+            session[name] = row[name].is_null() ? "" : row[name].as<std::string>();
+        }
+        session["project_id"] = row["project_id"].is_null() ? "" : row["project_id"].as<std::string>();
+        session["memory_graph"] = parseJson(row["memory_graph"].as<std::string>());
+
+        const auto messagesRows = txn.exec_params(
+            "SELECT id, role, content, metadata::text, created_at FROM ai_messages "
+            "WHERE session_id = $1 ORDER BY created_at ASC LIMIT 500",
+            sessionId);
+        Json::Value messages(Json::arrayValue);
+        for (const auto& messageRow : messagesRows) {
+            Json::Value message(Json::objectValue);
+            for (const auto& name : {"id", "role", "content", "created_at"}) {
+                message[name] = messageRow[name].is_null() ? "" : messageRow[name].as<std::string>();
+            }
+            message["metadata"] = parseJson(messageRow["metadata"].as<std::string>());
+            messages.append(message);
+        }
+        txn.commit();
+
+        Json::Value payload;
+        payload["session"] = session;
+        payload["messages"] = messages;
+        sendJson(callback, payload);
+    } catch (const std::exception& e) {
+        spdlog::error("AI session load failed: {}", e.what());
+        sendError(callback, drogon::k500InternalServerError, "Failed to load AI chat");
+    }
+}
+
+void AiController::deleteSession(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                                 const std::string& sessionId) {
+    const std::string userId = extractUserId(req);
+    if (userId.empty()) {
+        sendError(callback, drogon::k401Unauthorized, "Unauthorized");
+        return;
+    }
+
+    try {
+        auto conn = Database::getInstance().getConnection();
+        pqxx::work txn(*conn);
+        const auto rows = txn.exec_params(
+            "DELETE FROM ai_sessions WHERE id = $1 AND user_id = $2 RETURNING id",
+            sessionId,
+            userId);
+        if (rows.empty()) {
+            sendError(callback, drogon::k404NotFound, "AI chat not found");
+            return;
+        }
+        txn.commit();
+        Json::Value payload;
+        payload["success"] = true;
+        sendJson(callback, payload);
+    } catch (const std::exception& e) {
+        spdlog::error("AI session delete failed: {}", e.what());
+        sendError(callback, drogon::k500InternalServerError, "Failed to delete AI chat");
     }
 }
 

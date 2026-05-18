@@ -25,6 +25,8 @@ sed \
   -e "s/dokscp.example.com/$DOMAIN/g" \
   -e "s/admin@example.com/$EMAIL/g" \
   -e "s#replace-with-a-long-random-database-password#$(secret)#" \
+  -e "s#replace-with-a-long-random-webhook-secret#$(secret)#" \
+  -e "s#replace-with-a-long-random-grafana-password#$(secret)#" \
   -e "s#replace-with-at-least-48-random-characters#$(secret)#" \
   "$TEMPLATE" > "$ENV_FILE"
 

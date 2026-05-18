@@ -205,13 +205,51 @@ write_env_value() {
     printf '%s=%s\n' "$key" "$value" >> .env
   fi
 }
+read_env_value() {
+  key="$1"
+  sed -n "s/^${key}=//p" .env 2>/dev/null | tail -n1 | tr -d '"' | tr -d "'" || true
+}
+next_port_after() {
+  port="$1"
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$port" -lt 65535 ]; then echo $((port + 1)); else return 1; fi
+}
+rewrite_conflicting_application_ports() {
+  changed=0
+  app_public_port=$(read_env_value APP_PUBLIC_PORT)
+  if [ -n "$app_public_port" ]; then
+    next_public=$(next_port_after "$app_public_port" || true)
+    if [ -n "$next_public" ]; then
+      app_public_next=$(choose_port "$next_public" 3307 5433 6380 27018 5673 4223 8082 8089 9002 9091 3001)
+      if [ -n "$app_public_next" ] && [ "$app_public_next" != "$app_public_port" ]; then
+        write_env_value APP_PUBLIC_PORT "$app_public_next"
+        echo "Application port conflict detected; retrying with APP_PUBLIC_PORT=$app_public_next"
+        changed=1
+      fi
+    fi
+  fi
+  app_public_ui_port=$(read_env_value APP_PUBLIC_UI_PORT)
+  if [ -n "$app_public_ui_port" ]; then
+    next_ui=$(next_port_after "$app_public_ui_port" || true)
+    if [ -n "$next_ui" ]; then
+      app_ui_next=$(choose_port "$next_ui" 15673 9002 8223 3002 8083 9092)
+      if [ -n "$app_ui_next" ] && [ "$app_ui_next" != "$app_public_ui_port" ]; then
+        write_env_value APP_PUBLIC_UI_PORT "$app_ui_next"
+        echo "Application UI port conflict detected; retrying with APP_PUBLIC_UI_PORT=$app_ui_next"
+        changed=1
+      fi
+    fi
+  fi
+  return "$changed"
+}
 compose_up_exit=0
 compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
 printf '%s\n' "$compose_up_output"
 if [ "$compose_up_exit" -ne 0 ]; then
-  if printf '%s\n' "$compose_up_output" | grep -qi 'address already in use'; then
-    http_port=$(choose_port 80 8080 8081 8082 8090 8000 3000)
-    https_port=$(choose_port 443 8443 9443 10443 4443)
+  if printf '%s\n' "$compose_up_output" | grep -Eqi 'address already in use|ports are not available|only one usage of each socket address|bind:'; then
+    rewrite_conflicting_application_ports || true
+    http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
+    https_port=$(choose_port 8443 9443 10443 4443)
     write_env_value DOKSCP_HTTP_PORT "$http_port"
     write_env_value DOKSCP_HTTPS_PORT "$https_port"
     echo "Host port conflict detected; retrying Compose with DOKSCP_HTTP_PORT=$http_port and DOKSCP_HTTPS_PORT=$https_port"
@@ -1477,9 +1515,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "  fi; "
         "  if [ -z \"$runtime\" ]; then "
         "    for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
-        "      for port in 80 443 3000 8080 8000 5000 5173; do "
+        "      for port in 80 443 3000 8080 8000 5000 5173 15672 9001 8222 9090 3100 5432 3306 6379 27017 5672 9000 4222; do "
         "        mapped=$($compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
-        "        if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; runtime=\"$scheme://" + config.host + ":$mapped\"; break 2; fi; "
+        "        if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://" + config.host + ":$mapped\"; break 2; fi; "
         "      done; "
         "    done; "
         "  fi; "

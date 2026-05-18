@@ -189,6 +189,61 @@ interface InfrastructureInventory {
   warnings: string[];
 }
 
+const EMPTY_INVENTORY: InfrastructureInventory = {
+  status: "unknown",
+  mode: "local",
+  timestamp: "",
+  docker: {
+    available: false,
+    container_count: 0,
+    image_count: 0,
+    containers: [],
+    images: [],
+  },
+  kubernetes: {
+    available: false,
+    namespace_count: 0,
+    node_count: 0,
+    pod_count: 0,
+    deployment_count: 0,
+    service_count: 0,
+    event_count: 0,
+    namespaces: [],
+    nodes: [],
+    pods: [],
+    deployments: [],
+    services: [],
+    events: [],
+  },
+  warnings: [],
+};
+
+function normalizeInventory(data?: Partial<InfrastructureInventory> | null): InfrastructureInventory {
+  const docker = data?.docker || EMPTY_INVENTORY.docker;
+  const kubernetes = data?.kubernetes || EMPTY_INVENTORY.kubernetes;
+  return {
+    ...EMPTY_INVENTORY,
+    ...data,
+    docker: {
+      ...EMPTY_INVENTORY.docker,
+      ...docker,
+      containers: Array.isArray(docker.containers) ? docker.containers : [],
+      images: Array.isArray(docker.images) ? docker.images : [],
+    },
+    kubernetes: {
+      ...EMPTY_INVENTORY.kubernetes,
+      ...kubernetes,
+      namespaces: Array.isArray(kubernetes.namespaces) ? kubernetes.namespaces : [],
+      nodes: Array.isArray(kubernetes.nodes) ? kubernetes.nodes : [],
+      pods: Array.isArray(kubernetes.pods) ? kubernetes.pods : [],
+      deployments: Array.isArray(kubernetes.deployments) ? kubernetes.deployments : [],
+      services: Array.isArray(kubernetes.services) ? kubernetes.services : [],
+      events: Array.isArray(kubernetes.events) ? kubernetes.events : [],
+    },
+    warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+  };
+}
+
 interface SshConnection {
   id: string;
   name: string;
@@ -351,7 +406,7 @@ export function InfrastructureMonitor() {
     queryKey: ["infrastructure-inventory", targetConnectionId],
     queryFn: async () => {
       const response = await api.get<InfrastructureInventory>(`/infrastructure/inventory${targetQueryValue}`);
-      return response.data;
+      return normalizeInventory(response.data);
     },
     refetchInterval: 10000,
   });

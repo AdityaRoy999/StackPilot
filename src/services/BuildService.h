@@ -63,6 +63,11 @@ public:
                                   const std::string& version,
                                   const std::vector<BuildEnvVar>& envVars = {},
                                   LogCallback onLogLine = nullptr) const;
+    BuildResult buildFromGeneratedSource(const std::string& deploymentId,
+                                         const std::string& generatedSourcePath,
+                                         const std::string& version,
+                                         const std::vector<BuildEnvVar>& envVars = {},
+                                         LogCallback onLogLine = nullptr) const;
     BuildResult buildAndRunOnRemoteDocker(const std::string& deploymentId,
                                           const SshConnectionConfig& sshConfig,
                                           const std::string& remotePath,
@@ -92,6 +97,15 @@ public:
                                                   int containerPort,
                                                   const std::vector<BuildEnvVar>& envVars = {},
                                                   LogCallback onLogLine = nullptr) const;
+    BuildResult buildGeneratedSourceAndRunOnRemoteDocker(const std::string& deploymentId,
+                                                         const SshConnectionConfig& sshConfig,
+                                                         const std::string& generatedSourcePath,
+                                                         const std::string& remoteWorkspacePath,
+                                                         const std::string& version,
+                                                         const std::string& projectName,
+                                                         int containerPort,
+                                                         const std::vector<BuildEnvVar>& envVars = {},
+                                                         LogCallback onLogLine = nullptr) const;
 
 private:
     std::filesystem::path workspaceRoot_;

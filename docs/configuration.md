@@ -8,6 +8,9 @@ DOKSCP is configured through environment variables. Local development usually us
 | --- | --- |
 | `DOKSCP_ENV` | `development` or `production`. |
 | `DOKSCP_DOMAIN` | Public production domain used by Caddy and compose. |
+| `DOKSCP_CADDY_SITE_ADDRESS` | Caddy site address. Use the real domain for automatic HTTPS. |
+| `ACME_EMAIL` | Email used by Caddy for ACME certificate registration. |
+| `DOKSCP_HTTP_PORT` / `DOKSCP_HTTPS_PORT` | Host ports mapped to Caddy HTTP/HTTPS. |
 | `FRONTEND_PUBLIC_URL` | Public dashboard URL. |
 | `BACKEND_PUBLIC_URL` | Public backend URL. |
 | `CORS_ALLOWED_ORIGIN` | Comma-separated allowed browser origins. |
@@ -33,6 +36,7 @@ DOKSCP is configured through environment variables. Local development usually us
 | `JWT_EXPIRY_SECONDS` | JWT lifetime. |
 | `TOKEN_ENCRYPTION_KEY` | Encrypts stored secrets. Use at least 48 random characters. |
 | `GITHUB_WEBHOOK_SECRET` | Verifies GitHub webhook signatures. |
+| `GRAFANA_ADMIN_PASSWORD` | Required Grafana admin password for Compose stacks. |
 
 ## Build and Source Artifacts
 

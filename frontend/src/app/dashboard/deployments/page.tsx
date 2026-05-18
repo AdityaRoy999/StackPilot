@@ -5,7 +5,7 @@ import api from "@/lib/api";
 import { AxiosError } from "axios";
 import { Card, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Bot, Cpu, HardDrive, Loader2, Terminal, RefreshCw, CheckCircle, XCircle, Server, Maximize2, Minimize2, Pause, Play, Trash2, AlertTriangle, RotateCcw, Globe, Thermometer, Gauge, Search, SlidersHorizontal, ChevronLeft, ChevronRight, X, ExternalLink } from "lucide-react";
+import { Activity, Bot, Cpu, HardDrive, Loader2, Terminal, RefreshCw, CheckCircle, XCircle, Server, Maximize2, Minimize2, Pause, Play, Trash2, AlertTriangle, RotateCcw, Globe, Thermometer, Gauge, Search, SlidersHorizontal, ChevronLeft, ChevronRight, X, ExternalLink, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
@@ -70,6 +70,8 @@ interface Deployment {
     image_name?: string;
     provider?: string;
     exposure_mode?: string;
+    container_port?: number;
+    runtime_url?: string;
   };
   created_at: string;
 }
@@ -301,6 +303,46 @@ function shortCommit(sha: string) {
   return sha ? sha.slice(0, 7) : "-";
 }
 
+function humanizeApplicationName(value: string) {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function deploymentDisplayName(deployment: Pick<Deployment, "project_name">) {
+  const rawName = deployment.project_name || "Deployment";
+  const legacyAiName = rawName.match(/^AI\s+(.+?)\s+\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/i);
+  if (legacyAiName?.[1]) {
+    return humanizeApplicationName(legacyAiName[1]);
+  }
+  return rawName;
+}
+
+function deploymentRuntimeUrl(deployment: Deployment, runtime?: KubernetesRuntime) {
+  return runtime?.runtime_url || deployment.runtime_url || deployment.runtime_snapshot?.runtime_url || "";
+}
+
+function defaultRuntimePortForDeployment(deployment: Deployment) {
+  const name = deploymentDisplayName(deployment).toLowerCase();
+  const image = `${deployment.image_name || ""} ${deployment.runtime_snapshot?.image_name || ""}`.toLowerCase();
+  const combined = `${name} ${image}`;
+
+  if (combined.includes("minio")) return 9001;
+  if (combined.includes("grafana")) return 3000;
+  if (combined.includes("prometheus")) return 9090;
+  if (combined.includes("rabbitmq")) return 15672;
+  if (combined.includes("adminer")) return 8080;
+  if (combined.includes("mongo")) return 27017;
+  if (combined.includes("mariadb") || combined.includes("mysql")) return 3306;
+  if (combined.includes("postgres")) return 5432;
+  if (combined.includes("redis")) return 6379;
+  if (combined.includes("nginx") || combined.includes("caddy")) return 80;
+
+  return deployment.runtime_snapshot?.container_port || 3000;
+}
+
 function normalizeRuntimeExposureMode(value: string | undefined): RuntimeExposureMode {
   return value?.toLowerCase() === "ingress" ? "ingress" : "nodeport";
 }
@@ -485,6 +527,7 @@ export default function DeploymentsPage() {
         normalizedSearchQuery.length === 0 ||
         [
           deployment.project_name,
+          deploymentDisplayName(deployment),
           deployment.environment_name,
           deployment.branch,
           deployment.version,
@@ -784,10 +827,27 @@ export default function DeploymentsPage() {
                 {visibleDeployments.map((dep) => {
                   const commitSha = realCommitSha(dep);
                   const commitUrl = githubCommitUrl(dep);
+                  const displayName = deploymentDisplayName(dep);
+                  const liveUrl = deploymentRuntimeUrl(dep);
                   return (
                   <TableRow key={dep.id} className="hover:bg-muted/30 transition-colors group">
                     <TableCell className="px-6 py-4">
-                      <div className="font-medium text-foreground">{dep.project_name}</div>
+                      {liveUrl ? (
+                        <a
+                          href={liveUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex min-w-0 max-w-[28rem] items-center gap-1 font-medium text-foreground hover:text-primary hover:underline"
+                          title={`Open runtime: ${liveUrl}`}
+                        >
+                          <span className="min-w-0 truncate">{displayName}</span>
+                          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                        </a>
+                      ) : (
+                        <div className="max-w-[28rem] truncate font-medium text-foreground" title={displayName}>
+                          {displayName}
+                        </div>
+                      )}
                       {dep.environment_name && (
                         <div className="mt-0.5 text-xs text-muted-foreground">
                           {dep.environment_name}
@@ -1422,9 +1482,10 @@ function RuntimeDialog({
   onViewLogs: (deploymentId: string) => void;
   onChanged: () => void;
 }) {
+  const displayName = deploymentDisplayName(deployment);
   const [namespaceInput, setNamespaceInput] = useState(deployment.k8s_namespace || "dokscp-apps");
   const [replicasDraft, setReplicasDraft] = useState<string | null>(null);
-  const [portInput, setPortInput] = useState("3000");
+  const [portInput, setPortInput] = useState(() => String(defaultRuntimePortForDeployment(deployment)));
   const [resourcePreset, setResourcePreset] = useState<RuntimeResourcePreset>("small");
   const [healthPath, setHealthPath] = useState("/");
   const [eventsOpen, setEventsOpen] = useState(false);
@@ -1564,6 +1625,7 @@ function RuntimeDialog({
   });
 
   const runtime: KubernetesRuntime | undefined = runtimeQuery.data?.runtime;
+  const liveRuntimeUrl = deploymentRuntimeUrl(deployment, runtime);
   const isRemoteDocker =
     runtime?.provider === "remote_docker" ||
     deployment.runtime_provider === "remote_docker" ||
@@ -1664,8 +1726,8 @@ function RuntimeDialog({
 
   return (
     <Dialog open={!!deployment} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="!flex !w-[min(92vw,48rem)] !max-w-[min(92vw,48rem)] !max-h-[86dvh] !flex-col overflow-hidden rounded-xl border-border bg-card p-0 sm:!w-[min(90vw,48rem)] sm:!max-w-[min(90vw,48rem)]">
-        <DialogHeader className="shrink-0 px-5 pt-5">
+      <DialogContent className="!flex !w-[min(94vw,56rem)] !max-w-[56rem] !max-h-[90dvh] !flex-col overflow-hidden rounded-xl border-border bg-card p-0">
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
           <div className="flex items-start justify-between gap-4 pr-10">
             <div className="min-w-0">
               <DialogTitle className="flex items-center gap-2">
@@ -1674,10 +1736,10 @@ function RuntimeDialog({
               </DialogTitle>
               <DialogDescription className="mt-2">
                 {isRemoteDocker
-                  ? `Monitor the live remote Docker runtime for ${deployment.project_name}.`
+                  ? `Monitor the live remote Docker runtime for ${displayName}.`
                   : isLocalDocker
-                    ? `Run and monitor the local Docker container for ${deployment.project_name}.`
-                  : `Manage the live runtime for ${deployment.project_name}.`}
+                    ? `Run and monitor the local Docker container for ${displayName}.`
+                  : `Manage the live runtime for ${displayName}.`}
               </DialogDescription>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => onViewLogs(deployment.id)} className="shrink-0">
@@ -1687,11 +1749,11 @@ function RuntimeDialog({
           </div>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-0">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-0">
           {!isRemoteDocker && !isLocalDocker && (
             <>
-              <div className="grid shrink-0 gap-4 md:grid-cols-3">
-                <div className="min-w-0 space-y-2">
+              <div className="grid shrink-0 gap-3 pt-4 md:grid-cols-3">
+                <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="runtime-namespace">Namespace</Label>
                   <Input
                     id="runtime-namespace"
@@ -1699,7 +1761,7 @@ function RuntimeDialog({
                     onChange={(event) => setNamespaceInput(event.target.value)}
                   />
                 </div>
-                <div className="min-w-0 space-y-2">
+                <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="runtime-replicas">Replicas</Label>
                   <Input
                     id="runtime-replicas"
@@ -1709,7 +1771,7 @@ function RuntimeDialog({
                     onChange={(event) => setReplicasDraft(event.target.value)}
                   />
                 </div>
-                <div className="min-w-0 space-y-2">
+                <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="runtime-port">Container Port</Label>
                   <Input
                     id="runtime-port"
@@ -1723,7 +1785,7 @@ function RuntimeDialog({
                 </div>
               </div>
 
-              <div className="mt-4 shrink-0 space-y-2">
+              <div className="mt-3 shrink-0 space-y-1.5">
                 <Label>Exposure Mode</Label>
                 <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/30 p-1">
                   <Button
@@ -1757,8 +1819,8 @@ function RuntimeDialog({
               </div>
 
               {!isDeployed && (
-                <div className="mt-4 grid shrink-0 gap-4 md:grid-cols-[1fr_1.4fr]">
-                  <div className="space-y-2">
+                <div className="mt-3 grid shrink-0 gap-3 md:grid-cols-[1fr_1.4fr]">
+                  <div className="space-y-1.5">
                     <Label>Resource Preset</Label>
                     <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-1">
                       {(["small", "medium", "large"] as RuntimeResourcePreset[]).map((preset) => (
@@ -1774,7 +1836,7 @@ function RuntimeDialog({
                       ))}
                     </div>
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="runtime-health-path">Health Check Path</Label>
                     <Input
                       id="runtime-health-path"
@@ -1788,7 +1850,7 @@ function RuntimeDialog({
             </>
           )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto py-5 pr-1">
+          <div className="min-h-[340px] flex-1 overflow-y-auto py-4 pr-1">
             <div className="grid gap-4">
               <div className="min-w-0 rounded-xl border border-border bg-muted/30 p-4 text-sm">
                 <div className="grid gap-3.5">
@@ -1913,14 +1975,14 @@ function RuntimeDialog({
                   <div className="min-w-0">
                     <span className="text-muted-foreground">Runtime URL</span>
                     <div className="min-w-0 break-all">
-                      {runtime?.runtime_url || deployment.runtime_url ? (
+                      {liveRuntimeUrl ? (
                         <a
-                          href={runtime?.runtime_url || deployment.runtime_url}
+                          href={liveRuntimeUrl}
                           target="_blank"
                           rel="noreferrer"
                           className="text-primary hover:underline"
                         >
-                          {runtime?.runtime_url || deployment.runtime_url}
+                          {liveRuntimeUrl}
                         </a>
                       ) : (
                         <span className="text-foreground">-</span>
@@ -2082,7 +2144,7 @@ function RuntimeDialog({
               Kubernetes Events
             </DialogTitle>
             <DialogDescription>
-              Pod scheduling, rollout, probe, and ingress diagnostics for {deployment.project_name}.
+              Pod scheduling, rollout, probe, and ingress diagnostics for {displayName}.
             </DialogDescription>
           </DialogHeader>
           <div className="min-h-0 flex-1 overflow-auto p-6">
@@ -2116,6 +2178,7 @@ function MetricsDialog({
 }) {
   const [history, setHistory] = useState<RuntimeMetricPoint[]>([]);
   const [browserGpuName] = useState(() => detectBrowserGpuName());
+  const displayName = deploymentDisplayName(deployment);
 
   const metricsQuery = useQuery({
     queryKey: ["deployment-metrics", deployment.id],
@@ -2201,7 +2264,7 @@ function MetricsDialog({
                 Runtime Metrics
               </DialogTitle>
               <DialogDescription className="mt-2">
-                Live usage for {deployment.project_name}. Updates every few seconds.
+                Live usage for {displayName}. Updates every few seconds.
               </DialogDescription>
             </div>
             <Badge variant="outline" className="shrink-0 capitalize">
@@ -2476,38 +2539,49 @@ function DeleteDeploymentDialog({
     ? "Unchecked only removes the runtime resources and database record. Checked also removes the image from the remote host."
     : "Unchecked only removes the runtime resources and database record. Checked also removes the image from this host.";
   const expectedText = deployment.project_name;
+  const displayName = deploymentDisplayName(deployment);
   const canDelete = confirmation.trim() === expectedText && !isDeleting;
+  const copyConfirmationText = async () => {
+    try {
+      await navigator.clipboard.writeText(expectedText);
+      setConfirmation(expectedText);
+      toast.success("Confirmation text copied");
+    } catch {
+      toast.error("Unable to copy confirmation text");
+    }
+  };
 
   return (
     <Dialog open={!!deployment} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-[420px]">
-        <DialogHeader className="gap-2">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-destructive/20 bg-destructive/10">
-            <AlertTriangle className="h-6 w-6 text-destructive" />
-          </div>
-          <DialogTitle className="text-center text-lg font-bold text-foreground">Delete Deployment?</DialogTitle>
-          <DialogDescription className="text-center text-sm">
-            This removes the deployment record from the database. If a live runtime exists, it will be removed first.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="!w-[min(94vw,720px)] !max-w-[720px] max-h-[calc(100vh-2rem)] overflow-x-hidden overflow-y-auto p-0">
+        <div className="min-w-0 space-y-5 px-6 pt-6">
+          <DialogHeader className="gap-2">
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-destructive/20 bg-destructive/10">
+              <AlertTriangle className="h-6 w-6 text-destructive" />
+            </div>
+            <DialogTitle className="text-center text-lg font-bold text-foreground">Delete Deployment?</DialogTitle>
+            <DialogDescription className="mx-auto max-w-[58ch] text-center text-sm">
+              This removes the deployment record from the database. If a live runtime exists, it will be removed first.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm">
-          <div className="flex items-center justify-between gap-4">
+        <div className="rounded-xl border border-border bg-muted/30 p-4 text-sm">
+          <div className="grid grid-cols-[88px,minmax(0,1fr)] items-start gap-4">
             <span className="text-muted-foreground">Project</span>
-            <span className="max-w-[13rem] truncate text-right font-medium text-foreground">{deployment.project_name}</span>
+            <span className="min-w-0 break-words text-right font-medium text-foreground">{displayName}</span>
           </div>
-          <div className="mt-2 flex items-center justify-between gap-4">
+          <div className="mt-2 grid grid-cols-[88px,minmax(0,1fr)] items-start gap-4">
             <span className="text-muted-foreground">Version</span>
-            <span className="font-medium text-foreground">{deployment.version}</span>
+            <span className="min-w-0 break-words text-right font-medium text-foreground">{deployment.version}</span>
           </div>
-          <div className="mt-2 flex items-center justify-between gap-4">
+          <div className="mt-2 grid grid-cols-[88px,minmax(0,1fr)] items-start gap-4">
             <span className="text-muted-foreground">Status</span>
-            <span className="font-medium text-foreground">{formatRuntimeStatus(deployment.status)}</span>
+            <span className="min-w-0 break-words text-right font-medium text-foreground">{formatRuntimeStatus(deployment.status)}</span>
           </div>
           {hasBuildImage && (
-            <div className="mt-2 flex items-start justify-between gap-4">
+            <div className="mt-2 grid grid-cols-[88px,minmax(0,1fr)] items-start gap-4">
               <span className="text-muted-foreground">Image</span>
-              <span className="max-w-[13rem] break-all text-right font-mono text-xs text-foreground">
+              <span className="min-w-0 break-all text-right font-mono text-xs text-foreground">
                 {savedImageName}
               </span>
             </div>
@@ -2515,7 +2589,7 @@ function DeleteDeploymentDialog({
         </div>
 
         {canDeleteBuildImage && (
-          <div className="rounded-xl border border-border bg-muted/20 p-3 text-sm">
+          <div className="rounded-xl border border-border bg-muted/20 p-4 text-sm">
             <div className="flex items-start gap-3">
               <Checkbox
                 id="delete-deployment-image"
@@ -2523,18 +2597,24 @@ function DeleteDeploymentDialog({
                 onCheckedChange={(checked) => setDeleteImage(checked === true)}
                 className="mt-1"
               />
-              <Label htmlFor="delete-deployment-image" className="min-w-0 cursor-pointer text-sm font-normal">
-                <span className="block font-medium text-foreground">{deleteImageTitle}</span>
-                <span className="block text-xs text-muted-foreground">{deleteImageHint}</span>
+              <Label htmlFor="delete-deployment-image" className="grid min-w-0 flex-1 cursor-pointer gap-2 text-sm font-normal md:grid-cols-[minmax(220px,0.85fr),minmax(0,1.15fr)] md:gap-6">
+                <span className="font-medium text-foreground">{deleteImageTitle}</span>
+                <span className="text-xs leading-relaxed text-muted-foreground">{deleteImageHint}</span>
               </Label>
             </div>
           </div>
         )}
 
         <div className="space-y-2">
-          <Label htmlFor="delete-deployment-confirm" className="text-sm">
-            Type <span className="font-semibold text-foreground">{expectedText}</span> to confirm
-          </Label>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr),auto] sm:items-center">
+            <Label htmlFor="delete-deployment-confirm" className="min-w-0 text-sm leading-relaxed">
+              Type <span className="break-words font-semibold text-foreground">{expectedText}</span> to confirm
+            </Label>
+            <Button type="button" variant="outline" size="sm" onClick={copyConfirmationText} className="shrink-0">
+              <Copy className="mr-2 h-3.5 w-3.5" />
+              Copy
+            </Button>
+          </div>
           <Input
             id="delete-deployment-confirm"
             value={confirmation}
@@ -2543,9 +2623,10 @@ function DeleteDeploymentDialog({
             autoComplete="off"
           />
         </div>
+        </div>
 
-        <DialogFooter className="flex gap-2 sm:justify-center">
-          <Button type="button" variant="ghost" onClick={onClose} className="flex-1">
+        <DialogFooter className="mt-5 grid grid-cols-2 gap-3 border-t border-border bg-muted/30 px-6 py-5 sm:flex-row sm:justify-center">
+          <Button type="button" variant="ghost" onClick={onClose} className="w-full min-w-0">
             Cancel
           </Button>
           <Button
@@ -2553,7 +2634,7 @@ function DeleteDeploymentDialog({
             variant="destructive"
             onClick={() => onConfirm(deleteImage === true)}
             disabled={!canDelete}
-            className="flex-1"
+            className="w-full min-w-0"
           >
             {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
             Delete

@@ -91,8 +91,9 @@ export function McpIntegrations() {
   const tokens = query.data?.tokens || [];
 
   const getIdeConfig = (token: string) => {
-    const serverPath = "C:/Users/adiro/OneDrive/Desktop/ALL websites/DOKSCP/mcp-server/src/index.js";
-    const localProjectsRoot = "C:/Users/adiro/OneDrive/Desktop/ALL websites/DOKSCP/local-projects";
+    const serverPath = process.env.NEXT_PUBLIC_DOKSCP_MCP_SERVER_PATH || "/absolute/path/to/DOKSCP/mcp-server/src/index.js";
+    const localProjectsRoot =
+      process.env.NEXT_PUBLIC_DOKSCP_LOCAL_PROJECTS_HOST_ROOT || "/absolute/path/to/DOKSCP/local-projects";
     
     const config = {
       mcpServers: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { 
@@ -13,7 +13,6 @@ import {
   Sun, 
   Moon, 
   Laptop,
-  Menu,
   Activity,
   Star,
   Network,
@@ -58,10 +57,6 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   });
   const [themeDialogOpen, setThemeDialogOpen] = useState(false);
   const { theme, setTheme } = useTheme();
-  const currentPage = useMemo(
-    () => navigation.find((item) => item.href === pathname)?.name || "Dashboard",
-    [pathname]
-  );
   const activeThemeValue = theme === "light" || theme === "dark" || theme === "system" ? theme : "system";
   const activeTheme = themeOptions.find((option) => option.value === activeThemeValue) ?? themeOptions[2];
   const ActiveThemeIcon = activeTheme.icon;
@@ -117,7 +112,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         "overflow-hidden",
         isCollapsed
           ? "h-10 w-10 grid-cols-[40px_0fr] gap-0 justify-items-center px-0"
-          : cn("h-12 w-full grid-cols-[40px_1fr] gap-3 px-0", item.nested && "ml-3 w-[calc(100%-0.75rem)]"),
+          : cn("h-10 w-full grid-cols-[40px_1fr] gap-3 px-0", item.nested && "ml-3 w-[calc(100%-0.75rem)]"),
         isActive
           ? "bg-accent text-foreground shadow-sm"
           : "text-muted-foreground hover:bg-accent/70 hover:text-foreground"
@@ -188,7 +183,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                         "grid items-center rounded-xl p-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground",
                         isCollapsed
                           ? "h-10 w-10 grid-cols-[40px_0fr] gap-0 justify-items-center"
-                          : "h-12 w-full grid-cols-[40px_1fr] gap-3"
+                          : "h-10 w-full grid-cols-[40px_1fr] gap-3"
                       )}
                       aria-label="Theme"
                     >
@@ -212,7 +207,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                         "grid items-center rounded-xl p-0 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive",
                         isCollapsed
                           ? "h-10 w-10 grid-cols-[40px_0fr] gap-0 justify-items-center"
-                          : "h-12 w-full grid-cols-[40px_1fr] gap-3"
+                          : "h-10 w-full grid-cols-[40px_1fr] gap-3"
                       )}
                       aria-label="Logout"
                     >
@@ -262,23 +257,6 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="z-10 flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-5 md:px-8">
-           <div className="flex items-center gap-4">
-             <Button variant="ghost" size="icon" className="md:hidden">
-               <Menu className="h-5 w-5" />
-             </Button>
-             <h2 className="text-sm font-semibold uppercase text-muted-foreground">
-               {currentPage}
-             </h2>
-           </div>
-           <div className="flex items-center gap-3">
-             <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-border bg-accent">
-               <div className="flex h-full w-full items-center justify-center bg-primary text-xs font-bold text-primary-foreground">
-                 AD
-               </div>
-             </div>
-           </div>
-        </header>
         <main className="flex-1 overflow-y-auto bg-background/50 p-5 scrollbar-thin md:p-8">
           {children}
         </main>

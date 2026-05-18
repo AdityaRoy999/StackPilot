@@ -170,6 +170,63 @@ interface InfrastructureInventory {
   warnings: string[];
 }
 
+const EMPTY_VISUAL_INVENTORY: InfrastructureInventory = {
+  status: "unknown",
+  mode: "local",
+  timestamp: "",
+  docker: {
+    available: false,
+    container_count: 0,
+    image_count: 0,
+    containers: [],
+    stats: [],
+  },
+  kubernetes: {
+    available: false,
+    namespace_count: 0,
+    node_count: 0,
+    pod_count: 0,
+    deployment_count: 0,
+    service_count: 0,
+    event_count: 0,
+    nodes: [],
+    pods: [],
+    deployments: [],
+    services: [],
+    events: [],
+    node_metrics: [],
+    pod_metrics: [],
+  },
+  warnings: [],
+};
+
+function normalizeVisualInventory(data?: Partial<InfrastructureInventory> | null): InfrastructureInventory {
+  const docker = data?.docker || EMPTY_VISUAL_INVENTORY.docker;
+  const kubernetes = data?.kubernetes || EMPTY_VISUAL_INVENTORY.kubernetes;
+  return {
+    ...EMPTY_VISUAL_INVENTORY,
+    ...data,
+    docker: {
+      ...EMPTY_VISUAL_INVENTORY.docker,
+      ...docker,
+      containers: Array.isArray(docker.containers) ? docker.containers : [],
+      stats: Array.isArray(docker.stats) ? docker.stats : [],
+    },
+    kubernetes: {
+      ...EMPTY_VISUAL_INVENTORY.kubernetes,
+      ...kubernetes,
+      nodes: Array.isArray(kubernetes.nodes) ? kubernetes.nodes : [],
+      pods: Array.isArray(kubernetes.pods) ? kubernetes.pods : [],
+      deployments: Array.isArray(kubernetes.deployments) ? kubernetes.deployments : [],
+      services: Array.isArray(kubernetes.services) ? kubernetes.services : [],
+      events: Array.isArray(kubernetes.events) ? kubernetes.events : [],
+      node_metrics: Array.isArray(kubernetes.node_metrics) ? kubernetes.node_metrics : [],
+      pod_metrics: Array.isArray(kubernetes.pod_metrics) ? kubernetes.pod_metrics : [],
+    },
+    warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+  };
+}
+
 interface SshConnection {
   id: string;
   name: string;
@@ -382,7 +439,7 @@ export function ClusterVisualization() {
     queryKey: ["infrastructure-inventory-visualization", targetConnectionId],
     queryFn: async () => {
       const response = await api.get<InfrastructureInventory>(`/infrastructure/inventory${targetQueryValue}`);
-      return response.data;
+      return normalizeVisualInventory(response.data);
     },
     refetchInterval: 15000,
   });

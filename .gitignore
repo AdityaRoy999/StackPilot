@@ -1,5 +1,6 @@
 # Build
 build/
+build-*/
 cmake-build-*/
 out/
 dist/
@@ -90,4 +91,5 @@ deployment-create.json
 local-projects/
 uploads/builds/
 uploads/source-artifacts/
+uploads/ssh/
 uploads/tmp/

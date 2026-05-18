@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { EditProjectDialog } from "@/components/EditProjectDialog";
 import { DeleteProjectDialog } from "@/components/DeleteProjectDialog";
-import { ExternalLink, Code2, Loader2, Play, CheckCircle, Clock, Server, Search } from "lucide-react";
+import { ExternalLink, Code2, Loader2, Play, CheckCircle, Clock, Server, Search, Boxes } from "lucide-react";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -20,8 +20,13 @@ interface Project {
   name: string;
   description: string;
   repo_url: string;
-  source_type: "github" | "ssh" | "local";
+  source_type: "github" | "ssh" | "local" | "application";
   source_path?: string;
+  application_template_id?: string;
+  application_config?: {
+    template_name?: string;
+    image?: string;
+  };
   env_var_count?: number;
   status: string;
   created_at: string;
@@ -49,6 +54,19 @@ interface DeploymentListItem {
 interface DeploymentsCache {
   deployments?: DeploymentListItem[];
   count?: number;
+}
+
+function displayProjectName(project: Project) {
+  if (project.source_type !== "application") return project.name;
+
+  const legacyAiName = project.name.match(/^AI\s+(.+?)\s+\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/);
+  if (!legacyAiName) return project.name;
+
+  return legacyAiName[1]
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export default function DashboardPage() {
@@ -187,7 +205,7 @@ export default function DashboardPage() {
                 <div className="flex items-start justify-between">
                   <div className="space-y-1.5">
                     <CardTitle className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">
-                      {project.name}
+                      {displayProjectName(project)}
                     </CardTitle>
                     <div className="flex items-center text-xs text-muted-foreground">
                       <Clock className="w-3.5 h-3.5 mr-1" />
@@ -211,10 +229,14 @@ export default function DashboardPage() {
               </CardHeader>
               
               <CardContent className="flex-1">
-                {(project.repo_url || project.source_path) && (
+                {projectSourceLabel(project) && (
                   <div className="flex items-center text-[11px] font-mono text-muted-foreground bg-muted/50 p-2 rounded border border-border/50 overflow-hidden">
-                    <Code2 className="h-3 w-3 mr-2 text-muted-foreground/70 flex-shrink-0" />
-                    <span className="truncate">{project.source_type === "ssh" ? project.source_path : project.repo_url}</span>
+                    {project.source_type === "application" ? (
+                      <Boxes className="h-3 w-3 mr-2 text-muted-foreground/70 flex-shrink-0" />
+                    ) : (
+                      <Code2 className="h-3 w-3 mr-2 text-muted-foreground/70 flex-shrink-0" />
+                    )}
+                    <span className="truncate">{projectSourceLabel(project)}</span>
                   </div>
                 )}
                 {(project.env_var_count ?? 0) > 0 && (
@@ -238,14 +260,14 @@ export default function DashboardPage() {
                 <Button 
                   size="sm" 
                   onClick={() => deployMutation.mutate(project)}
-                  disabled={deployingId === project.id || (project.source_type === "github" ? !project.repo_url : !project.source_path)}
+                  disabled={deployingId === project.id || !projectCanDeploy(project)}
                 >
                   {deployingId === project.id ? (
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   ) : (
                     <Play className="w-4 h-4 mr-2 fill-current" />
                   )}
-                  {(project.source_type === "github" ? project.repo_url : project.source_path) ? "Deploy" : "Connect Source"}
+                  {projectCanDeploy(project) ? "Deploy" : "Connect Source"}
                 </Button>
               </CardFooter>
             </Card>
@@ -255,3 +277,14 @@ export default function DashboardPage() {
     </div>
   );
 }
+  const projectSourceLabel = (project: Project) => {
+    if (project.source_type === "application") {
+      return project.application_config?.template_name || project.application_template_id || "Application";
+    }
+    return project.source_type === "ssh" ? project.source_path : project.source_type === "local" ? project.source_path : project.repo_url;
+  };
+
+  const projectCanDeploy = (project: Project) => {
+    if (project.source_type === "application") return Boolean(project.application_template_id);
+    return project.source_type === "github" ? Boolean(project.repo_url) : Boolean(project.source_path);
+  };

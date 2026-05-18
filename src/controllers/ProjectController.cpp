@@ -5,6 +5,7 @@
 #include "ProjectController.h"
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
+#include "../services/ApplicationCatalog.h"
 #include "../services/BuildService.h"
 #include "../services/DeploymentCleanupService.h"
 #include "../services/JobQueueService.h"
@@ -38,7 +39,8 @@ namespace {
 std::mutex projectDeploymentLogMutex;
 
 bool isSupportedSourceType(const std::string& sourceType) {
-    return sourceType == "github" || sourceType == "ssh" || sourceType == "local" || sourceType == "artifact";
+    return sourceType == "github" || sourceType == "ssh" || sourceType == "local" ||
+           sourceType == "artifact" || sourceType == "application";
 }
 
 bool isSupportedExecutionMode(const std::string& executionMode) {
@@ -1221,6 +1223,26 @@ Json::Value projectRowToJson(const pqxx::row& row) {
     pj["ssh_connection_id"] = row["ssh_connection_id"].is_null() ? "" : row["ssh_connection_id"].as<std::string>();
     pj["source_path"] = row["source_path"].is_null() ? "" : row["source_path"].as<std::string>();
     try {
+        pj["application_template_id"] =
+            row["application_template_id"].is_null() ? "" : row["application_template_id"].as<std::string>();
+        if (!row["application_config"].is_null()) {
+            Json::Value parsed;
+            Json::CharReaderBuilder builder;
+            std::string errors;
+            std::istringstream stream(row["application_config"].as<std::string>());
+            if (Json::parseFromStream(builder, stream, &parsed, &errors) && parsed.isObject()) {
+                pj["application_config"] = parsed;
+            } else {
+                pj["application_config"] = Json::Value(Json::objectValue);
+            }
+        } else {
+            pj["application_config"] = Json::Value(Json::objectValue);
+        }
+    } catch (...) {
+        pj["application_template_id"] = "";
+        pj["application_config"] = Json::Value(Json::objectValue);
+    }
+    try {
         pj["execution_mode"] = row["execution_mode"].is_null() ? "local" : row["execution_mode"].as<std::string>();
     } catch (...) {
         pj["execution_mode"] = "local";
@@ -1329,7 +1351,12 @@ void ProjectController::createProject(
         if (localHttpsEnabled) {
             runtimeScheme = "https";
         }
-        const std::vector<BuildEnvVar> envVars = parseEnvVars(*body);
+        std::string applicationTemplateId =
+            (*body).isMember("application_template_id") ? trim((*body)["application_template_id"].asString()) : "";
+        Json::Value applicationConfig = (*body).isMember("application_config") && (*body)["application_config"].isObject()
+            ? (*body)["application_config"]
+            : Json::Value(Json::objectValue);
+        std::vector<BuildEnvVar> envVars = parseEnvVars(*body);
 
         if (name.empty()) {
             Json::Value err; err["error"] = "Project name is required";
@@ -1373,6 +1400,12 @@ void ProjectController::createProject(
         }
         if (sourceType == "local" && sourcePath.empty()) {
             Json::Value err; err["error"] = "Local source projects require a local source path";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k400BadRequest);
+            callback(resp); return;
+        }
+        if (sourceType == "application" && !ApplicationCatalog::isSupportedTemplate(applicationTemplateId)) {
+            Json::Value err; err["error"] = "Choose a supported application template";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
             resp->setStatusCode(drogon::k400BadRequest);
             callback(resp); return;
@@ -1431,6 +1464,51 @@ void ProjectController::createProject(
                 SshService sshService;
                 if (!sshService.isValidRemotePath(sourcePath)) {
                     Json::Value err; err["error"] = "Remote artifact workspace path must be an absolute Linux path";
+                    auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                    resp->setStatusCode(drogon::k400BadRequest);
+                    callback(resp); return;
+                }
+            }
+        } else if (sourceType == "application") {
+            repoUrl.clear();
+            githubPat.clear();
+            sshConnectionId.clear();
+            const auto missingApplicationFields =
+                ApplicationCatalog::missingRequiredFields(applicationTemplateId, (*body)["application_config"]);
+            if (!missingApplicationFields.empty()) {
+                Json::Value err;
+                err["error"] = "Missing required application configuration";
+                err["missing_fields"] = Json::Value(Json::arrayValue);
+                for (const auto& field : missingApplicationFields) {
+                    err["missing_fields"].append(field);
+                }
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp); return;
+            }
+            applicationConfig = ApplicationCatalog::sanitizedConfig(applicationTemplateId, applicationConfig);
+            auto applicationEnvVars = ApplicationCatalog::envVarsForConfig(applicationTemplateId, (*body)["application_config"]);
+            std::unordered_map<std::string, std::string> merged;
+            for (const auto& envVar : envVars) {
+                merged[envVar.key] = envVar.value;
+            }
+            for (const auto& envVar : applicationEnvVars) {
+                merged[envVar.key] = envVar.value;
+            }
+            envVars.clear();
+            for (const auto& item : merged) {
+                envVars.push_back({item.first, item.second});
+            }
+            std::sort(envVars.begin(), envVars.end(), [](const BuildEnvVar& left, const BuildEnvVar& right) {
+                return left.key < right.key;
+            });
+            if (executionMode == "remote_host" && sourcePath.empty()) {
+                sourcePath = "/tmp";
+            }
+            if (executionMode == "remote_host" && !sourcePath.empty()) {
+                SshService sshService;
+                if (!sshService.isValidRemotePath(sourcePath)) {
+                    Json::Value err; err["error"] = "Remote application workspace path must be an absolute Linux path";
                     auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
                     resp->setStatusCode(drogon::k400BadRequest);
                     callback(resp); return;
@@ -1526,10 +1604,10 @@ void ProjectController::createProject(
         const std::string encryptedGithubPat = TokenCrypto::encrypt(githubPat);
 
         auto result = txn.exec_params(
-            "INSERT INTO projects (user_id, name, description, repo_url, github_pat, source_type, ssh_connection_id, source_path, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme, local_https_enabled) "
-            "VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid, $8, $9, NULLIF($10, '')::uuid, $11, $12, $13, $14) "
-            "RETURNING id, user_id, name, description, repo_url, github_pat, source_type, ssh_connection_id, source_path, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme, local_https_enabled, status, created_at",
-            userId, name, description, repoUrl, encryptedGithubPat, sourceType, sshConnectionId, sourcePath, executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme, localHttpsEnabled
+            "INSERT INTO projects (user_id, name, description, repo_url, github_pat, source_type, ssh_connection_id, source_path, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme, local_https_enabled, application_template_id, application_config) "
+            "VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid, $8, $9, NULLIF($10, '')::uuid, $11, $12, $13, $14, $15, $16::jsonb) "
+            "RETURNING id, user_id, name, description, repo_url, github_pat, source_type, ssh_connection_id, source_path, application_template_id, application_config::text AS application_config, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme, local_https_enabled, status, created_at",
+            userId, name, description, repoUrl, encryptedGithubPat, sourceType, sshConnectionId, sourcePath, executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme, localHttpsEnabled, applicationTemplateId, compactJson(applicationConfig)
         );
         const std::string projectId = result[0]["id"].as<std::string>();
         replaceProjectEnvVars(txn, projectId, envVars);
@@ -1594,6 +1672,7 @@ void ProjectController::listProjects(
 
         auto result = txn.exec_params(
             "SELECT p.id, p.user_id, p.name, p.description, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
+            "p.application_template_id, p.application_config::text AS application_config, "
             "p.execution_mode, p.remote_connection_id, p.remote_runtime_type, p.remote_k8s_exposure, p.runtime_scheme, p.local_https_enabled, p.status, p.created_at, "
             "(SELECT COUNT(*)::int FROM project_env_vars pe WHERE pe.project_id = p.id) AS env_var_count "
             "FROM projects p WHERE p.user_id = $1 ORDER BY p.created_at DESC", userId
@@ -1639,6 +1718,7 @@ void ProjectController::getProject(
 
         auto result = txn.exec_params(
             "SELECT p.id, p.user_id, p.name, p.description, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
+            "p.application_template_id, p.application_config::text AS application_config, "
             "p.execution_mode, p.remote_connection_id, p.remote_runtime_type, p.remote_k8s_exposure, p.runtime_scheme, p.local_https_enabled, p.status, p.created_at, p.updated_at, "
             "(SELECT COUNT(*)::int FROM project_env_vars pe WHERE pe.project_id = p.id) AS env_var_count "
             "FROM projects p WHERE p.id = $1 AND p.user_id = $2", id, userId

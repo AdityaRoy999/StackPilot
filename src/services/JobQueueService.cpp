@@ -7,6 +7,7 @@
 #include "../controllers/LogWebSocketController.h"
 #include "../db/Database.h"
 #include "../utils/TokenCrypto.h"
+#include "ApplicationCatalog.h"
 #include "BuildService.h"
 #include "DeploymentCleanupService.h"
 #include "KubernetesService.h"
@@ -114,6 +115,20 @@ std::string compactJson(const Json::Value& value) {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
     return Json::writeString(builder, value.isNull() ? Json::Value(Json::objectValue) : value);
+}
+
+Json::Value parseJsonObject(const std::string& raw) {
+    if (trim(raw).empty()) {
+        return Json::Value(Json::objectValue);
+    }
+    Json::Value parsed;
+    Json::CharReaderBuilder builder;
+    std::string errors;
+    std::istringstream stream(raw);
+    if (!Json::parseFromStream(builder, stream, &parsed, &errors) || !parsed.isObject()) {
+        return Json::Value(Json::objectValue);
+    }
+    return parsed;
 }
 
 bool shouldSkipDeploymentJob(const std::string& status) {
@@ -907,6 +922,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             "e.cleanup_previous_on_success, e.current_deployment_id AS previous_current_deployment_id, "
             "sa.storage_path AS artifact_storage_path, "
             "p.name AS project_name, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
+            "p.application_template_id, p.application_config::text AS application_config, "
             "COALESCE(e.execution_mode, p.execution_mode) AS execution_mode, "
             "COALESCE(e.remote_runtime_type, p.remote_runtime_type) AS remote_runtime_type, "
             "COALESCE(e.remote_k8s_exposure, p.remote_k8s_exposure) AS remote_k8s_exposure, "
@@ -1112,6 +1128,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         const std::string branch = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
         const std::string commitSha = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
         const std::string sourcePath = row["source_path"].is_null() ? "" : row["source_path"].as<std::string>();
+        const std::string applicationTemplateId =
+            row["application_template_id"].is_null() ? "" : row["application_template_id"].as<std::string>();
+        const Json::Value applicationConfig =
+            parseJsonObject(row["application_config"].is_null() ? "" : row["application_config"].as<std::string>());
         const std::string sourceArtifactId = row["source_artifact_id"].is_null() ? "" : row["source_artifact_id"].as<std::string>();
         const std::string artifactStoragePath = row["artifact_storage_path"].is_null() ? "" : row["artifact_storage_path"].as<std::string>();
         const std::string projectToken = row["github_pat"].is_null() ? "" : TokenCrypto::decrypt(row["github_pat"].as<std::string>());
@@ -1161,6 +1181,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             txn.commit();
             throw std::runtime_error("Deployment source artifact is missing or no longer available");
         }
+        if (sourceType == "application" && !ApplicationCatalog::isSupportedTemplate(applicationTemplateId)) {
+            txn.commit();
+            throw std::runtime_error("Deployment application template is missing or no longer supported");
+        }
 
         SshConnectionConfig sshConfig;
         if (sourceType == "ssh") {
@@ -1202,6 +1226,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         );
         if (!sourceArtifactId.empty()) {
             sourceSnapshot["source_artifact_id"] = sourceArtifactId;
+        }
+        if (sourceType == "application") {
+            sourceSnapshot["application_template_id"] = applicationTemplateId;
+            sourceSnapshot["application_config"] = applicationConfig;
         }
         if (!remoteConnectionId.empty()) {
             sourceSnapshot["remote_connection_id"] = remoteConnectionId;
@@ -1253,6 +1281,26 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     job.deploymentId,
                     remoteExecutionConfig,
                     artifactStoragePath,
+                    sourcePath.empty() ? "/tmp" : sourcePath,
+                    version,
+                    projectName,
+                    3000,
+                    envVars,
+                    logSink
+                );
+            } else if (sourceType == "application") {
+                auto generatedSource = ApplicationCatalog::materializeSource(
+                    job.deploymentId,
+                    projectName,
+                    applicationTemplateId,
+                    applicationConfig,
+                    std::filesystem::temp_directory_path()
+                );
+                logSink("Generated application template source: " + applicationTemplateId);
+                buildResult = buildService.buildGeneratedSourceAndRunOnRemoteDocker(
+                    job.deploymentId,
+                    remoteExecutionConfig,
+                    generatedSource.string(),
                     sourcePath.empty() ? "/tmp" : sourcePath,
                     version,
                     projectName,
@@ -1363,6 +1411,22 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             buildResult = buildService.buildFromArtifact(
                 job.deploymentId,
                 artifactStoragePath,
+                version,
+                envVars,
+                logSink
+            );
+        } else if (sourceType == "application") {
+            auto generatedSource = ApplicationCatalog::materializeSource(
+                job.deploymentId,
+                projectName,
+                applicationTemplateId,
+                applicationConfig,
+                std::filesystem::temp_directory_path()
+            );
+            logSink("Generated application template source: " + applicationTemplateId);
+            buildResult = buildService.buildFromGeneratedSource(
+                job.deploymentId,
+                generatedSource.string(),
                 version,
                 envVars,
                 logSink

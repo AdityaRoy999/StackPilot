@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
+  Boxes,
   CheckCircle2,
   ChevronRight,
   FolderTree,
@@ -105,7 +106,7 @@ interface SshBrowseResponse {
   entries: SshBrowseEntry[];
 }
 
-type SourceType = "github" | "ssh" | "local";
+type SourceType = "github" | "ssh" | "local" | "application";
 type ExecutionMode = "local" | "remote_host";
 type RuntimeScheme = "http" | "https";
 type RemoteRuntimeType = "docker" | "kubernetes";
@@ -131,6 +132,207 @@ interface ProjectEnvironmentDraft {
   require_ci: boolean;
   cleanup_previous_on_success: boolean;
   env_vars: ProjectEnvVar[];
+}
+
+interface ApplicationField {
+  id: string;
+  label: string;
+  envKey: string;
+  type: "text" | "password" | "port";
+  defaultValue: string;
+  required?: boolean;
+  secret?: boolean;
+}
+
+interface ApplicationTemplate {
+  id: string;
+  name: string;
+  category: string;
+  image: string;
+  description: string;
+  primaryPort: number;
+  fields: ApplicationField[];
+}
+
+const APPLICATION_TEMPLATES: ApplicationTemplate[] = [
+  {
+    id: "postgres",
+    name: "PostgreSQL",
+    category: "Database",
+    image: "postgres:16-alpine",
+    description: "Relational database with persistent storage.",
+    primaryPort: 5432,
+    fields: [
+      { id: "database", label: "Database", envKey: "POSTGRES_DB", type: "text", defaultValue: "app", required: true },
+      { id: "username", label: "Username", envKey: "POSTGRES_USER", type: "text", defaultValue: "app", required: true },
+      { id: "password", label: "Password", envKey: "POSTGRES_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "15432", required: true },
+    ],
+  },
+  {
+    id: "mysql",
+    name: "MySQL",
+    category: "Database",
+    image: "mysql:8.4",
+    description: "MySQL server with configurable database and user.",
+    primaryPort: 3306,
+    fields: [
+      { id: "database", label: "Database", envKey: "MYSQL_DATABASE", type: "text", defaultValue: "app", required: true },
+      { id: "username", label: "Username", envKey: "MYSQL_USER", type: "text", defaultValue: "app", required: true },
+      { id: "password", label: "Password", envKey: "MYSQL_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "root_password", label: "Root Password", envKey: "MYSQL_ROOT_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "13306", required: true },
+    ],
+  },
+  {
+    id: "mariadb",
+    name: "MariaDB",
+    category: "Database",
+    image: "mariadb:11",
+    description: "MySQL-compatible database with persistent storage.",
+    primaryPort: 3306,
+    fields: [
+      { id: "database", label: "Database", envKey: "MYSQL_DATABASE", type: "text", defaultValue: "app", required: true },
+      { id: "username", label: "Username", envKey: "MYSQL_USER", type: "text", defaultValue: "app", required: true },
+      { id: "password", label: "Password", envKey: "MYSQL_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "root_password", label: "Root Password", envKey: "MYSQL_ROOT_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "13307", required: true },
+    ],
+  },
+  {
+    id: "redis",
+    name: "Redis",
+    category: "Cache",
+    image: "redis:7-alpine",
+    description: "Fast in-memory cache and queue backend.",
+    primaryPort: 6379,
+    fields: [
+      { id: "password", label: "Password", envKey: "REDIS_PASSWORD", type: "password", defaultValue: "", secret: true },
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "16379", required: true },
+    ],
+  },
+  {
+    id: "mongo",
+    name: "MongoDB",
+    category: "Database",
+    image: "mongo:7",
+    description: "Document database with root credentials.",
+    primaryPort: 27017,
+    fields: [
+      { id: "username", label: "Root Username", envKey: "MONGO_INITDB_ROOT_USERNAME", type: "text", defaultValue: "admin", required: true },
+      { id: "password", label: "Root Password", envKey: "MONGO_INITDB_ROOT_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "27018", required: true },
+    ],
+  },
+  {
+    id: "rabbitmq",
+    name: "RabbitMQ",
+    category: "Queue",
+    image: "rabbitmq:3-management-alpine",
+    description: "Message broker with the management UI enabled.",
+    primaryPort: 5672,
+    fields: [
+      { id: "username", label: "Username", envKey: "RABBITMQ_DEFAULT_USER", type: "text", defaultValue: "admin", required: true },
+      { id: "password", label: "Password", envKey: "RABBITMQ_DEFAULT_PASS", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "Broker Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "15672", required: true },
+      { id: "public_ui_port", label: "Management Port", envKey: "APP_PUBLIC_UI_PORT", type: "port", defaultValue: "15673", required: true },
+    ],
+  },
+  {
+    id: "nats",
+    name: "NATS",
+    category: "Queue",
+    image: "nats:2-alpine",
+    description: "Lightweight message broker with monitoring.",
+    primaryPort: 4222,
+    fields: [
+      { id: "public_port", label: "Client Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "14222", required: true },
+      { id: "public_ui_port", label: "Monitor Port", envKey: "APP_PUBLIC_UI_PORT", type: "port", defaultValue: "18222", required: true },
+    ],
+  },
+  {
+    id: "minio",
+    name: "MinIO",
+    category: "Storage",
+    image: "minio/minio:latest",
+    description: "S3-compatible object storage with a browser console.",
+    primaryPort: 9000,
+    fields: [
+      { id: "username", label: "Root User", envKey: "MINIO_ROOT_USER", type: "text", defaultValue: "minioadmin", required: true },
+      { id: "password", label: "Root Password", envKey: "MINIO_ROOT_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "API Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "19000", required: true },
+      { id: "public_ui_port", label: "Console Port", envKey: "APP_PUBLIC_UI_PORT", type: "port", defaultValue: "19001", required: true },
+    ],
+  },
+  {
+    id: "grafana",
+    name: "Grafana",
+    category: "Monitoring",
+    image: "grafana/grafana-oss:11.5.2",
+    description: "Dashboard and observability UI.",
+    primaryPort: 3000,
+    fields: [
+      { id: "username", label: "Admin User", envKey: "GF_SECURITY_ADMIN_USER", type: "text", defaultValue: "admin", required: true },
+      { id: "password", label: "Admin Password", envKey: "GF_SECURITY_ADMIN_PASSWORD", type: "password", defaultValue: "", required: true, secret: true },
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "13000", required: true },
+    ],
+  },
+  {
+    id: "prometheus",
+    name: "Prometheus",
+    category: "Monitoring",
+    image: "prom/prometheus:v2.55.1",
+    description: "Metrics collector and query UI.",
+    primaryPort: 9090,
+    fields: [
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "19090", required: true },
+    ],
+  },
+  {
+    id: "adminer",
+    name: "Adminer",
+    category: "Utility",
+    image: "adminer:latest",
+    description: "Lightweight database administration UI.",
+    primaryPort: 8080,
+    fields: [
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "18080", required: true },
+    ],
+  },
+  {
+    id: "nginx",
+    name: "Nginx",
+    category: "Web",
+    image: "nginx:alpine",
+    description: "Simple web server starter application.",
+    primaryPort: 80,
+    fields: [
+      { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port", defaultValue: "8088", required: true },
+    ],
+  },
+];
+
+function randomSecret(length = 28) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint8Array(length);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => chars[byte % chars.length]).join("");
+}
+
+function initialApplicationConfig(template: ApplicationTemplate) {
+  return Object.fromEntries(
+    template.fields.map((field) => [field.id, field.secret && !field.defaultValue ? randomSecret() : field.defaultValue])
+  );
+}
+
+function conciseApplicationProjectName(template: ApplicationTemplate) {
+  return template.name;
 }
 
 function GuideSection({ heading, items }: { heading: string; items: string[] }) {
@@ -215,6 +417,11 @@ export function CreateProjectDialog() {
   const [remoteTerminalCwd, setRemoteTerminalCwd] = useState("");
   const [helpOpen, setHelpOpen] = useState(false);
   const [environments, setEnvironments] = useState<ProjectEnvironmentDraft[]>(() => defaultProjectEnvironments());
+  const [applicationTemplateId, setApplicationTemplateId] = useState(APPLICATION_TEMPLATES[0].id);
+  const [applicationSearch, setApplicationSearch] = useState("");
+  const [applicationConfig, setApplicationConfig] = useState<Record<string, string>>(() =>
+    initialApplicationConfig(APPLICATION_TEMPLATES[0])
+  );
 
   const queryClient = useQueryClient();
   const meQuery = useQuery({
@@ -250,6 +457,17 @@ export function CreateProjectDialog() {
   const effectiveRemoteK8sExposure: RemoteK8sExposure =
     remoteRuntimeType === "kubernetes" ? remoteK8sExposure : "nodeport";
   const effectiveLocalHttpsEnabled = executionMode === "local" && effectiveRuntimeScheme === "https";
+  const selectedApplicationTemplate =
+    APPLICATION_TEMPLATES.find((template) => template.id === applicationTemplateId) ?? APPLICATION_TEMPLATES[0];
+  const filteredApplicationTemplates = useMemo(() => {
+    const query = applicationSearch.trim().toLowerCase();
+    if (!query) return APPLICATION_TEMPLATES;
+    return APPLICATION_TEMPLATES.filter((template) =>
+      [template.name, template.category, template.image, template.description].some((value) =>
+        value.toLowerCase().includes(query)
+      )
+    );
+  }, [applicationSearch]);
 
   const fetchReposMutation = useMutation({
     mutationFn: async (pat?: string) => {
@@ -361,9 +579,9 @@ export function CreateProjectDialog() {
     mutationFn: async () => {
       const environmentPayload = environments.map((environment) => ({
         name: environment.name.trim().toLowerCase(),
-        branch: environment.branch.trim(),
+        branch: sourceType === "application" ? "application" : environment.branch.trim(),
         auto_deploy: environment.auto_deploy,
-        require_ci: environment.require_ci,
+        require_ci: sourceType === "application" ? false : environment.require_ci,
         cleanup_previous_on_success: environment.cleanup_previous_on_success,
         env_vars: environment.env_vars,
         execution_mode: executionMode,
@@ -396,6 +614,22 @@ export function CreateProjectDialog() {
               source_type: "local",
               source_path: localSourcePath,
               execution_mode: "local",
+              remote_runtime_type: remoteRuntimeType,
+              remote_k8s_exposure: effectiveRemoteK8sExposure,
+              runtime_scheme: effectiveRuntimeScheme,
+              local_https_enabled: effectiveLocalHttpsEnabled,
+            }
+          : sourceType === "application"
+          ? {
+              name,
+              description,
+              env_vars: envVars,
+              source_type: "application",
+              application_template_id: applicationTemplateId,
+              application_config: applicationConfig,
+              source_path: executionMode === "remote_host" ? githubRemoteWorkspacePath || "/tmp" : "",
+              execution_mode: executionMode,
+              remote_connection_id: executionMode === "remote_host" ? sshConnectionId : "",
               remote_runtime_type: remoteRuntimeType,
               remote_k8s_exposure: effectiveRemoteK8sExposure,
               runtime_scheme: effectiveRuntimeScheme,
@@ -464,6 +698,9 @@ export function CreateProjectDialog() {
     setShowRemoteTerminal(false);
     setRemoteTerminalCwd("");
     setEnvironments(defaultProjectEnvironments());
+    setApplicationTemplateId(APPLICATION_TEMPLATES[0].id);
+    setApplicationSearch("");
+    setApplicationConfig(initialApplicationConfig(APPLICATION_TEMPLATES[0]));
   };
 
   const handleFetchRepos = () => {
@@ -485,6 +722,21 @@ export function CreateProjectDialog() {
     fetchBranchesMutation.mutate(repo.clone_url);
   };
 
+  const handleApplicationTemplateSelect = (template: ApplicationTemplate) => {
+    setApplicationTemplateId(template.id);
+    setApplicationConfig(initialApplicationConfig(template));
+    if (!name.trim() || APPLICATION_TEMPLATES.some((item) => item.id === name.trim())) {
+      setName(conciseApplicationProjectName(template));
+    }
+    if (!description.trim()) setDescription(template.description);
+  };
+
+  const handleApplicationSourceSelect = () => {
+    setSourceType("application");
+    if (!name.trim()) setName(conciseApplicationProjectName(selectedApplicationTemplate));
+    if (!description.trim()) setDescription(selectedApplicationTemplate.description);
+  };
+
   const handleBrowseCurrentPath = () => {
     if (!sshConnectionId) {
       toast.error("Choose an SSH connection first");
@@ -492,13 +744,15 @@ export function CreateProjectDialog() {
     }
     const defaultRemoteHome = getRemoteHomePath(activeSshConnection?.username);
     const targetPath =
-      sourceType === "github"
+      sourceType === "github" || sourceType === "application"
         ? sshBrowsePath || githubRemoteWorkspacePath || defaultRemoteHome
         : sshBrowsePath || sshSourcePath || defaultRemoteHome;
     const normalizedPath =
       activeSshConnection?.username === "root" && targetPath === "/home/root" ? "/root" : targetPath;
     if (normalizedPath !== targetPath) {
       if (sourceType === "github") {
+        setGithubRemoteWorkspacePath(normalizedPath);
+      } else if (sourceType === "application") {
         setGithubRemoteWorkspacePath(normalizedPath);
       } else {
         setSshSourcePath(normalizedPath);
@@ -509,7 +763,10 @@ export function CreateProjectDialog() {
   };
 
   const handleBrowseParent = () => {
-    const current = sourceType === "github" ? sshBrowsePath || githubRemoteWorkspacePath : sshBrowsePath || sshSourcePath;
+    const current =
+      sourceType === "github" || sourceType === "application"
+        ? sshBrowsePath || githubRemoteWorkspacePath
+        : sshBrowsePath || sshSourcePath;
     if (!current || current === "/") {
       browseSshMutation.mutate("/");
       return;
@@ -521,7 +778,7 @@ export function CreateProjectDialog() {
   };
 
   const handleSelectSshDirectory = (entry: SshBrowseEntry) => {
-    if (sourceType === "github") {
+    if (sourceType === "github" || sourceType === "application") {
       setGithubRemoteWorkspacePath(entry.path);
     } else {
       setSshSourcePath(entry.path);
@@ -605,8 +862,26 @@ export function CreateProjectDialog() {
       toast.error("Choose a local source path");
       return;
     }
+    if (sourceType === "application") {
+      if (!selectedApplicationTemplate) {
+        toast.error("Choose an application template");
+        return;
+      }
+      if (executionMode === "remote_host" && !sshConnectionId) {
+        toast.error("Choose a saved SSH/VPS connection for server-side application deploys");
+        return;
+      }
+      const missingField = selectedApplicationTemplate.fields.find(
+        (field) => field.required && !String(applicationConfig[field.id] || "").trim()
+      );
+      if (missingField) {
+        toast.error(`${missingField.label} is required`);
+        return;
+      }
+    }
     const normalizedNames = environments.map((environment) => environment.name.trim().toLowerCase());
-    const normalizedBranches = environments.map((environment) => environment.branch.trim());
+    const normalizedBranches =
+      sourceType === "application" ? environments.map(() => "application") : environments.map((environment) => environment.branch.trim());
     if (normalizedNames.some((value) => !value) || normalizedBranches.some((value) => !value)) {
       toast.error("Every environment needs a name and branch");
       return;
@@ -777,7 +1052,9 @@ export function CreateProjectDialog() {
             Branch Environments
           </Label>
           <p className="mt-1 text-sm text-muted-foreground">
-            Map GitHub branches to deployable environments and choose how CI and replacement cleanup behave.
+            {sourceType === "application"
+              ? "Application catalog projects use environments for target settings and variables. The source branch is fixed internally."
+              : "Map GitHub branches to deployable environments and choose how CI and replacement cleanup behave."}
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={addEnvironment}>
@@ -805,7 +1082,9 @@ export function CreateProjectDialog() {
                 <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Branch
                 </Label>
-                {sourceType === "github" && branches.length > 0 ? (
+                {sourceType === "application" ? (
+                  <Input value="application" disabled className="bg-muted/40 text-muted-foreground" />
+                ) : sourceType === "github" && branches.length > 0 ? (
                   <Select
                     value={environment.branch}
                     onValueChange={(value) => value && updateEnvironment(environment.id, { branch: value })}
@@ -869,9 +1148,14 @@ export function CreateProjectDialog() {
                   environment.require_ci && "border-blue-500/40 bg-blue-500/10 text-blue-500"
                 )}
                 onClick={() => updateEnvironment(environment.id, { require_ci: !environment.require_ci })}
+                disabled={sourceType === "application"}
               >
                 <ShieldCheck className="mr-2 h-4 w-4" />
-                {environment.require_ci ? "Require CI checks" : "Do not wait for CI"}
+                {sourceType === "application"
+                  ? "CI checks do not apply"
+                  : environment.require_ci
+                    ? "Require CI checks"
+                    : "Do not wait for CI"}
               </Button>
               <Button
                 type="button"
@@ -930,7 +1214,7 @@ export function CreateProjectDialog() {
                 Create New Project
               </DialogTitle>
               <DialogDescription>
-                Choose GitHub, a saved SSH/VPS folder, or an allowed local folder as the project source.
+                Choose GitHub, a saved SSH/VPS folder, an allowed local folder, or a ready-made application template.
               </DialogDescription>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={() => setHelpOpen(true)} className="shrink-0">
@@ -944,7 +1228,7 @@ export function CreateProjectDialog() {
           <form onSubmit={handleSubmit} className="space-y-5 pb-2">
             <div className="space-y-3">
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Project Source</Label>
-              <div className={cn(segmentedTabsListClass, "grid-cols-3")}>
+              <div className={cn(segmentedTabsListClass, "grid-cols-4")}>
                   <Button
                     type="button"
                     variant="ghost"
@@ -962,6 +1246,15 @@ export function CreateProjectDialog() {
                   >
                     <Server className="mr-2 h-4 w-4" />
                     SSH / VPS
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={cn(segmentedButtonClass, sourceType === "application" && segmentedButtonActiveClass)}
+                    onClick={handleApplicationSourceSelect}
+                  >
+                    <Boxes className="mr-2 h-4 w-4" />
+                    Apps
                   </Button>
                   <Button
                     type="button"
@@ -1362,6 +1655,263 @@ export function CreateProjectDialog() {
                       )}
                     </div>
                   )}
+                </div>
+              </div>
+            ) : sourceType === "application" ? (
+              <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-4">
+                <div className="grid gap-4 lg:grid-cols-[minmax(0,0.95fr),minmax(0,1.25fr)]">
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Application Catalog
+                      </Label>
+                      <Input
+                        value={applicationSearch}
+                        onChange={(event) => setApplicationSearch(event.target.value)}
+                        placeholder="Search databases, queues, monitoring..."
+                        className="bg-muted/40"
+                      />
+                    </div>
+                    <div className="max-h-[330px] space-y-2 overflow-y-auto pr-1 scrollbar-thin">
+                      {filteredApplicationTemplates.map((template) => {
+                        const isActive = template.id === applicationTemplateId;
+                        return (
+                          <button
+                            key={template.id}
+                            type="button"
+                            onClick={() => handleApplicationTemplateSelect(template)}
+                            className={cn(
+                              "w-full rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-accent",
+                              isActive && "border-primary/50 bg-accent"
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <Boxes className="h-4 w-4 text-muted-foreground" />
+                                  <span className="font-medium text-foreground">{template.name}</span>
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">{template.description}</p>
+                                <p className="mt-2 truncate font-mono text-[11px] text-muted-foreground">
+                                  {template.image}
+                                </p>
+                              </div>
+                              <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                {template.category}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Selected Application
+                          </Label>
+                          <h3 className="mt-1 text-lg font-semibold text-foreground">{selectedApplicationTemplate.name}</h3>
+                          <p className="mt-1 text-sm text-muted-foreground">{selectedApplicationTemplate.description}</p>
+                        </div>
+                        <div className="rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                          port {selectedApplicationTemplate.primaryPort}
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        {selectedApplicationTemplate.fields.map((field) => (
+                          <div key={field.id} className="space-y-2">
+                            <Label
+                              htmlFor={`application-${field.id}`}
+                              className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                            >
+                              {field.label}
+                            </Label>
+                            <div className="flex gap-2">
+                              <Input
+                                id={`application-${field.id}`}
+                                type={field.type === "password" ? "password" : field.type === "port" ? "number" : "text"}
+                                value={applicationConfig[field.id] || ""}
+                                min={field.type === "port" ? 1 : undefined}
+                                max={field.type === "port" ? 65535 : undefined}
+                                onChange={(event) =>
+                                  setApplicationConfig((current) => ({ ...current, [field.id]: event.target.value }))
+                                }
+                                placeholder={field.defaultValue || field.envKey}
+                                autoComplete="off"
+                                className="bg-muted/40"
+                              />
+                              {field.secret ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setApplicationConfig((current) => ({ ...current, [field.id]: randomSecret() }))
+                                  }
+                                  className="shrink-0"
+                                >
+                                  Generate
+                                </Button>
+                              ) : null}
+                            </div>
+                            <p className="font-mono text-[11px] text-muted-foreground">{field.envKey}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
+                      <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Execution Target
+                      </Label>
+                      <div className={cn(segmentedTabsListClass, "grid-cols-2")}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className={cn(segmentedButtonClass, executionMode === "local" && segmentedButtonActiveClass)}
+                          onClick={() => setExecutionMode("local")}
+                        >
+                          <HardDrive className="mr-2 h-4 w-4" />
+                          Run locally
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className={cn(segmentedButtonClass, executionMode === "remote_host" && segmentedButtonActiveClass)}
+                          onClick={() => setExecutionMode("remote_host")}
+                        >
+                          <Server className="mr-2 h-4 w-4" />
+                          Run on server
+                        </Button>
+                      </div>
+
+                      {renderRuntimePreferences()}
+
+                      {executionMode === "remote_host" && (
+                        <div className="space-y-3">
+                          <div className="grid gap-3 lg:grid-cols-[1fr,auto]">
+                            <div className="grid gap-2">
+                              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                Server Connection
+                              </Label>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-full justify-between bg-muted/40 px-3 font-normal"
+                                onClick={() => setShowSshConnectionPicker((current) => !current)}
+                              >
+                                <span className={cn("truncate", !activeSshConnection && "text-muted-foreground")}>
+                                  {activeSshConnection
+                                    ? `${activeSshConnection.name} - ${activeSshConnection.username}@${activeSshConnection.host}${activeSshConnection.connection_type === "ssh" ? `:${activeSshConnection.port}` : ""}`
+                                    : "Select a saved connection"}
+                                </span>
+                                <ChevronRight className={cn("h-4 w-4 text-muted-foreground transition-transform", showSshConnectionPicker && "rotate-90")} />
+                              </Button>
+                            </div>
+                            <div className="self-end">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => queryClient.invalidateQueries({ queryKey: ["ssh-connections"] })}
+                                disabled={sshConnectionsQuery.isFetching}
+                              >
+                                {sshConnectionsQuery.isFetching ? (
+                                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="mr-2 h-4 w-4" />
+                                )}
+                                Refresh
+                              </Button>
+                            </div>
+                          </div>
+
+                          {showSshConnectionPicker && (
+                            <div className="max-h-[180px] overflow-y-auto rounded-lg border border-border bg-card scrollbar-thin">
+                              {sshConnections && sshConnections.length > 0 ? (
+                                sshConnections.map((connection) => {
+                                  const isActive = connection.id === sshConnectionId;
+                                  return (
+                                    <button
+                                      key={connection.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSshConnectionId(connection.id);
+                                        const defaultPath = getRemoteHomePath(connection.username);
+                                        setGithubRemoteWorkspacePath((current) => current || defaultPath);
+                                        setRemoteTerminalCwd(defaultPath);
+                                        setSshBrowsePath("");
+                                        setSshEntries([]);
+                                        setHasBrowsedSshPath(false);
+                                        setShowRemoteTerminal(false);
+                                        setShowSshConnectionPicker(false);
+                                      }}
+                                      className={cn(
+                                        "flex w-full items-start justify-between gap-3 border-b border-border/60 px-3 py-3 text-left transition-colors last:border-b-0 hover:bg-accent",
+                                        isActive && "bg-accent"
+                                      )}
+                                    >
+                                      <div className="min-w-0">
+                                        <div className="truncate font-medium text-foreground">{connection.name}</div>
+                                        <div className="truncate text-sm text-muted-foreground">
+                                          {connection.username}@{connection.host}
+                                          {connection.connection_type === "ssh" ? `:${connection.port}` : ""}
+                                        </div>
+                                      </div>
+                                      {isActive ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" /> : null}
+                                    </button>
+                                  );
+                                })
+                              ) : (
+                                <div className="px-3 py-4 text-sm text-muted-foreground">
+                                  No saved SSH connections yet. Create one in Settings first.
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {activeSshConnection && (
+                            <div className="space-y-2">
+                              <Label
+                                htmlFor="applicationRemoteWorkspacePath"
+                                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                              >
+                                Remote Workspace Path
+                              </Label>
+                              <div className="flex gap-2">
+                                <Input
+                                  id="applicationRemoteWorkspacePath"
+                                  value={githubRemoteWorkspacePath}
+                                  onChange={(event) => setGithubRemoteWorkspacePath(event.target.value)}
+                                  placeholder={`${getRemoteHomePath(activeSshConnection.username)}/dokscp-workspaces`}
+                                  className="bg-muted/40"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={handleBrowseCurrentPath}
+                                  disabled={!sshConnectionId || browseSshMutation.isPending}
+                                >
+                                  {browseSshMutation.isPending ? (
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <FolderTree className="mr-2 h-4 w-4" />
+                                  )}
+                                  Browse
+                                </Button>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                DOKSCP generates a compose source bundle here, then builds and runs it on the selected server.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : sourceType === "ssh" ? (
@@ -1781,12 +2331,15 @@ export function CreateProjectDialog() {
         </DialogHeader>
 
         <Tabs defaultValue="github" className="max-h-[56vh] overflow-hidden">
-              <TabsList className={cn(segmentedTabsListClass, "grid-cols-3")}>
+              <TabsList className={cn(segmentedTabsListClass, "grid-cols-4")}>
             <TabsTrigger value="github" className={selectedTabClass}>
               GitHub
             </TabsTrigger>
             <TabsTrigger value="ssh" className={selectedTabClass}>
               SSH / VPS
+            </TabsTrigger>
+            <TabsTrigger value="application" className={selectedTabClass}>
+              Apps
             </TabsTrigger>
             <TabsTrigger value="local" className={selectedTabClass}>
               Local
@@ -1826,6 +2379,24 @@ export function CreateProjectDialog() {
                 items={[
                   "The terminal lets you run normal shell commands on the selected connection.",
                   "You can git clone, install missing tools, inspect files, then choose the final project folder.",
+                ]}
+              />
+            </TabsContent>
+
+            <TabsContent value="application" className="space-y-3">
+              <GuideSection
+                heading="Application source"
+                items={[
+                  "Use this when you want DOKSCP to generate a deployable compose project from a known application image.",
+                  "Pick an application, configure ports and credentials, then deploy locally or on a saved server.",
+                  "Secrets are stored as project environment variables; the generated source keeps only non-secret metadata.",
+                ]}
+              />
+              <GuideSection
+                heading="Catalog scope"
+                items={[
+                  "The catalog starts with common databases, queues, monitoring tools, storage, and utilities.",
+                  "Each template is still a normal Docker image workflow, so more application types can be added without changing the deployment engine.",
                 ]}
               />
             </TabsContent>

@@ -25,6 +25,7 @@ DB_PASSWORD=replace-with-a-local-password
 DB_NAME=dokscp_platform
 JWT_SECRET=replace-with-at-least-48-random-characters
 TOKEN_ENCRYPTION_KEY=replace-with-at-least-48-random-characters
+GRAFANA_ADMIN_PASSWORD=replace-with-a-local-grafana-password
 CORS_ALLOWED_ORIGIN=http://localhost:3000
 FRONTEND_PUBLIC_URL=http://localhost:3000
 BACKEND_PUBLIC_URL=http://localhost:8090

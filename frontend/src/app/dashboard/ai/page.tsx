@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import {
   BrainCircuit,
   Check,
-  CheckCircle2,
   ChevronDown,
   ClipboardCopy,
   Clock,
   Loader2,
+  Plus,
   Send,
   Settings,
   Star,
@@ -72,6 +72,8 @@ interface AiResponse {
   model?: string;
   provider?: string;
   run_id?: string;
+  session_id?: string;
+  session_title?: string;
 }
 
 interface Project {
@@ -98,6 +100,36 @@ interface ChatMessage {
   role: Role;
   content: string;
   meta?: string;
+}
+
+interface AiChatSession {
+  id: string;
+  title: string;
+  session_type: string;
+  project_id?: string;
+  preview?: string;
+  message_count?: number;
+  last_model?: string;
+  memory_summary?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface AiChatMessage {
+  id: string;
+  role: Role | "tool";
+  content: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+interface AgentApplicationTemplate {
+  id: string;
+  name: string;
+  aliases: string[];
+  defaultPort: string;
+  config: (password: string, rootPassword: string) => Record<string, string>;
+  summary: (config: Record<string, string>) => string[];
 }
 
 const commands = [
@@ -131,14 +163,172 @@ const commands = [
     usage: "/analyze <project-id>",
     description: "Classify a project and infer runtime, entrypoint, framework, and port.",
   },
+  {
+    name: "/app",
+    icon: Star,
+    usage: "/app mysql",
+    description: "Create and deploy an Application-source service such as MySQL, PostgreSQL, Redis, Grafana, or MinIO.",
+  },
 ] as const;
+
+const agentApplicationTemplates: AgentApplicationTemplate[] = [
+  {
+    id: "mysql",
+    name: "MySQL database",
+    aliases: ["mysql", "my sql"],
+    defaultPort: "13306",
+    config: (password, rootPassword) => ({
+      public_port: "13306",
+      database: "app",
+      username: "app",
+      password,
+      root_password: rootPassword,
+    }),
+    summary: (config) => [
+      `Database: ${config.database}`,
+      `Username: ${config.username}`,
+      `Password: ${config.password}`,
+      `Root password: ${config.root_password}`,
+      `Host port: ${config.public_port}`,
+    ],
+  },
+  {
+    id: "postgres",
+    name: "PostgreSQL database",
+    aliases: ["postgres", "postgresql", "postgre"],
+    defaultPort: "15432",
+    config: (password) => ({
+      public_port: "15432",
+      database: "app",
+      username: "app",
+      password,
+    }),
+    summary: (config) => [
+      `Database: ${config.database}`,
+      `Username: ${config.username}`,
+      `Password: ${config.password}`,
+      `Host port: ${config.public_port}`,
+    ],
+  },
+  {
+    id: "redis",
+    name: "Redis cache",
+    aliases: ["redis", "cache"],
+    defaultPort: "16379",
+    config: (password) => ({
+      public_port: "16379",
+      password,
+    }),
+    summary: (config) => [`Password: ${config.password}`, `Host port: ${config.public_port}`],
+  },
+  {
+    id: "mongo",
+    name: "MongoDB database",
+    aliases: ["mongo", "mongodb"],
+    defaultPort: "27018",
+    config: (password) => ({
+      public_port: "27018",
+      username: "admin",
+      password,
+    }),
+    summary: (config) => [`Username: ${config.username}`, `Password: ${config.password}`, `Host port: ${config.public_port}`],
+  },
+  {
+    id: "mariadb",
+    name: "MariaDB database",
+    aliases: ["mariadb", "maria db"],
+    defaultPort: "13307",
+    config: (password, rootPassword) => ({
+      public_port: "13307",
+      database: "app",
+      username: "app",
+      password,
+      root_password: rootPassword,
+    }),
+    summary: (config) => [
+      `Database: ${config.database}`,
+      `Username: ${config.username}`,
+      `Password: ${config.password}`,
+      `Root password: ${config.root_password}`,
+      `Host port: ${config.public_port}`,
+    ],
+  },
+  {
+    id: "rabbitmq",
+    name: "RabbitMQ broker",
+    aliases: ["rabbitmq", "rabbit mq", "queue"],
+    defaultPort: "15672",
+    config: (password) => ({
+      public_port: "15672",
+      public_ui_port: "15673",
+      username: "admin",
+      password,
+    }),
+    summary: (config) => [
+      `Username: ${config.username}`,
+      `Password: ${config.password}`,
+      `Broker port: ${config.public_port}`,
+      `Management UI port: ${config.public_ui_port}`,
+    ],
+  },
+  {
+    id: "minio",
+    name: "MinIO object storage",
+    aliases: ["minio", "s3", "object storage"],
+    defaultPort: "19000",
+    config: (password) => ({
+      public_port: "19000",
+      public_ui_port: "19001",
+      username: "minioadmin",
+      password,
+    }),
+    summary: (config) => [
+      `Root user: ${config.username}`,
+      `Root password: ${config.password}`,
+      `S3 API port: ${config.public_port}`,
+      `Console port: ${config.public_ui_port}`,
+    ],
+  },
+  {
+    id: "grafana",
+    name: "Grafana",
+    aliases: ["grafana", "dashboard", "monitoring dashboard"],
+    defaultPort: "13000",
+    config: (password) => ({
+      public_port: "13000",
+      username: "admin",
+      password,
+    }),
+    summary: (config) => [`Admin user: ${config.username}`, `Admin password: ${config.password}`, `Host port: ${config.public_port}`],
+  },
+  {
+    id: "prometheus",
+    name: "Prometheus",
+    aliases: ["prometheus", "metrics"],
+    defaultPort: "19090",
+    config: () => ({
+      public_port: "19090",
+    }),
+    summary: (config) => [`Host port: ${config.public_port}`],
+  },
+  {
+    id: "adminer",
+    name: "Adminer",
+    aliases: ["adminer", "database admin"],
+    defaultPort: "18080",
+    config: () => ({
+      public_port: "18080",
+    }),
+    summary: (config) => [`Host port: ${config.public_port}`],
+  },
+];
 
 const starterMessages: ChatMessage[] = [
   {
     id: "welcome",
     role: "assistant",
     content:
-      "I can reason about deployments and run real platform actions. Try /diagnose with a failed deployment, /build to queue a build, /deploy to launch Kubernetes, or ask a normal question.",
+      "I can reason about deployments and run real platform actions. Try “deploy a MySQL database”, /app redis, /diagnose with a failed deployment, /build to queue a build, or ask a normal question.",
     meta: "DOKSCP Agent",
   },
 ];
@@ -156,6 +346,27 @@ function shortId(id?: string, size = 8) {
   if (!id) return "-";
   if (id.length <= size + 4) return id;
   return `${id.slice(0, size)}...${id.slice(-4)}`;
+}
+
+function preferredApplicationEndpointPort(config: Record<string, string>, fallbackPort: string | number) {
+  return config.public_ui_port || config.public_port || String(fallbackPort);
+}
+
+function redactSecretLine(line: string) {
+  return /(password|secret|token|api key|apikey|private key)/i.test(line)
+    ? line.replace(/:\s*.+$/, ": saved in project environment")
+    : line;
+}
+
+function safeApplicationSummary(template: AgentApplicationTemplate, config: Record<string, string>) {
+  return template.summary(config).map(redactSecretLine);
+}
+
+function sanitizeHistoryContent(content: string) {
+  return content
+    .split("\n")
+    .map(redactSecretLine)
+    .join("\n");
 }
 
 function errorMessage(error: unknown, fallback: string) {
@@ -303,7 +514,35 @@ function arrayFromResponse<T>(value: unknown, keys: string[] = []): T[] {
   return [];
 }
 
+function randomSecret(prefix = "dokscp") {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return `${prefix}_${Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("")}`;
+}
+
+function findApplicationIntent(message: string) {
+  const normalized = message.toLowerCase();
+  const explicit =
+    normalized.startsWith("/app ") ||
+    normalized.includes(" database") ||
+    /\b(deploy|create|provision|install|run)\b/.test(normalized);
+  if (!explicit) return null;
+  return agentApplicationTemplates.find((template) =>
+    template.aliases.some((alias) => normalized.includes(alias))
+  ) || null;
+}
+
+function conciseApplicationProjectName(template: AgentApplicationTemplate) {
+  return template.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 export default function AiAgentPage() {
+  const queryClient = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>(starterMessages);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<AiMode>("fast");
@@ -317,6 +556,7 @@ export default function AiAgentPage() {
   const [settingsModelOpen, setSettingsModelOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
   const [deploymentOpen, setDeploymentOpen] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState("");
   const [provider, setProvider] = useState<AiProvider>("nvidia_nim");
   const [compatibleBaseUrl, setCompatibleBaseUrl] = useState("");
   const [compatibleApiKey, setCompatibleApiKey] = useState("");
@@ -367,6 +607,16 @@ export default function AiAgentPage() {
     refetchInterval: 8000,
   });
 
+  const sessionsQuery = useQuery({
+    queryKey: ["ai-chat-sessions"],
+    queryFn: async () => {
+      const res = await api.get("/ai/sessions");
+      const data = res.data as { sessions?: AiChatSession[] };
+      return data.sessions || [];
+    },
+    refetchInterval: 12000,
+  });
+
   const discoveredModels = arrayFromResponse<AiModel>(modelsQuery.data?.models, []);
   const providerFallbackModels: AiModel[] =
     provider === "openai_compatible"
@@ -386,6 +636,8 @@ export default function AiAgentPage() {
   const availableModels = discoveredModels.length > 0 ? discoveredModels : providerFallbackModels;
   const projects = arrayFromResponse<Project>(projectsQuery.data);
   const deployments = arrayFromResponse<Deployment>(deploymentsQuery.data);
+  const sessions = sessionsQuery.data || [];
+  const activeSession = sessions.find((session) => session.id === activeSessionId);
   const fastModels = availableModels.filter((model) => modelMode(model) === "fast");
   const thinkingModels = availableModels.filter((model) => modelMode(model) === "thinking");
   const modeModels = mode === "thinking" ? thinkingModels : fastModels;
@@ -405,10 +657,18 @@ export default function AiAgentPage() {
   const diagnoseDeployments = deployments
     .slice()
     .sort((a, b) => Number(b.status === "failed") - Number(a.status === "failed"));
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+  }, [input]);
 
   useEffect(() => {
     if (settingsHydratedRef.current || !settingsQuery.data) return;
@@ -456,6 +716,114 @@ export default function AiAgentPage() {
     ]);
   };
 
+  const startNewChat = () => {
+    setActiveSessionId("");
+    setMessages(starterMessages);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", "/dashboard/ai");
+    }
+  };
+
+  const loadSession = async (sessionId: string) => {
+    const res = await api.get(`/ai/sessions/${sessionId}`);
+    const data = res.data as { session?: AiChatSession; messages?: AiChatMessage[] };
+    setActiveSessionId(sessionId);
+    setMessages(
+      (data.messages || [])
+        .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "system")
+        .map((message) => ({
+          id: message.id,
+          role: message.role as Role,
+          content: message.content,
+          meta:
+            typeof message.metadata?.model === "string"
+              ? `${message.metadata.model}`
+              : message.role === "user"
+                ? "You"
+                : data.session?.last_model || undefined,
+        }))
+    );
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `/dashboard/ai?session_id=${sessionId}`);
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || activeSessionId) return;
+    const sessionId = new URLSearchParams(window.location.search).get("session_id");
+    if (sessionId) {
+      const handle = window.setTimeout(() => {
+        loadSession(sessionId).catch(() => {
+          setMessages([
+            ...starterMessages,
+            {
+              id: `session-load-error-${Date.now()}`,
+              role: "assistant",
+              content: "I could not load that chat. It may have been deleted or belongs to another account.",
+              meta: "Error",
+            },
+          ]);
+        });
+      }, 0);
+      return () => window.clearTimeout(handle);
+    }
+  }, [activeSessionId]);
+
+  const deployApplicationTemplate = async (template: AgentApplicationTemplate) => {
+    const password = randomSecret(template.id);
+    const rootPassword = randomSecret(`${template.id}_root`);
+    const config = template.config(password, rootPassword);
+    const projectName = conciseApplicationProjectName(template);
+
+    const projectRes = await api.post("/projects", {
+      name: projectName,
+      description: `Created from AI chat request for ${template.name}.`,
+      source_type: "application",
+      application_template_id: template.id,
+      application_config: config,
+      source_path: "",
+      execution_mode: "local",
+      remote_runtime_type: "docker",
+      remote_k8s_exposure: "ingress",
+      runtime_scheme: "http",
+      local_https_enabled: false,
+      env_vars: [],
+    });
+    const projectId = projectRes.data?.project?.id as string | undefined;
+    if (!projectId) {
+      throw new Error("Application project was created but the API did not return a project id.");
+    }
+
+    const deploymentRes = await api.post(`/projects/${projectId}/deployments`, {
+      version: "v-ai-app",
+      commit_hash: "",
+    });
+    const deploymentId = deploymentRes.data?.deployment?.id as string | undefined;
+    if (!deploymentId) {
+      throw new Error("Application deployment was created but the API did not return a deployment id.");
+    }
+
+    const triggerRes = await api.post(`/deployments/${deploymentId}/trigger`);
+    return {
+      projectName,
+      projectId,
+      deploymentId,
+      config,
+      triggerMessage: triggerRes.data?.message || "Build queued.",
+    };
+  };
+
+  const shouldAttachDeploymentContext = (text: string) => {
+    if (!selectedDeploymentId) return false;
+    const normalized = text.toLowerCase();
+    return (
+      normalized.startsWith("/diagnose") ||
+      /\b(failed|failure|error|logs?|diagnose|debug|why|fix|runtime|health|crash|port|container|compose|kubernetes|deploy|build)\b/.test(
+        normalized
+      )
+    );
+  };
+
   const runAgentMutation = useMutation({
     mutationFn: async (message: string) => {
       const res = await api.post(
@@ -465,8 +833,9 @@ export default function AiAgentPage() {
           command: message.startsWith("/") ? message.split(/\s+/)[0] : "",
           model: activeModelId,
           model_mode: mode,
+          session_id: activeSessionId || undefined,
           project_id: selectedProjectId,
-          deployment_id: selectedDeploymentId,
+          deployment_id: shouldAttachDeploymentContext(message) ? selectedDeploymentId : "",
           runtime: {
             permissions: {
               agent_access_mode: agentAccessMode,
@@ -474,18 +843,31 @@ export default function AiAgentPage() {
               require_confirmation: agentAccessMode !== "full_access",
             },
           },
-          history: messages.slice(-8).map((item) => ({ role: item.role, content: item.content })),
+          history: messages.slice(-8).map((item) => ({ role: item.role, content: sanitizeHistoryContent(item.content) })),
         },
         { timeout: 90000 }
       );
       return res.data as AiResponse;
     },
+    onMutate: () => {
+      window.setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] });
+      }, 700);
+    },
     onSuccess: (result) => {
+      if (result.session_id && result.session_id !== activeSessionId) {
+        setActiveSessionId(result.session_id);
+        if (typeof window !== "undefined") {
+          window.history.replaceState(null, "", `/dashboard/ai?session_id=${result.session_id}`);
+        }
+      }
       appendMessage({
         role: "assistant",
         content: formatAiOutput(result),
         meta: `${result.model || activeModelId} | ${Math.round((result.confidence || 0) * 100)}%`,
       });
+      queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] });
+      sessionsQuery.refetch();
     },
     onError: (error) => {
       appendMessage({ role: "assistant", content: errorMessage(error, "Agent chat failed."), meta: "Error" });
@@ -573,6 +955,30 @@ export default function AiAgentPage() {
         };
       }
 
+      if (command === "/app") {
+        const template = agentApplicationTemplates.find((item) =>
+          item.id === firstArg?.toLowerCase() || item.aliases.includes((firstArg || "").toLowerCase())
+        );
+        if (!template) {
+          throw new Error("Usage: /app mysql | postgres | redis | mongo | mariadb | rabbitmq | minio | grafana | prometheus | adminer");
+        }
+        if (agentAccessMode !== "full_access") {
+          return {
+            title: "Approval required",
+            body: "Application deployment can create containers and secrets. Switch Agent Permissions to Full access, then run the command again.",
+          };
+        }
+        const result = await deployApplicationTemplate(template);
+        return {
+          title: "Application deploy started",
+          body:
+            `Created ${result.projectName} and queued deployment ${shortId(result.deploymentId)}.\n\n` +
+            `Expected local endpoint: localhost:${preferredApplicationEndpointPort(result.config, template.defaultPort)}\n\n` +
+            `**Configuration**\n${safeApplicationSummary(template, result.config).map((line) => `- ${line}`).join("\n")}\n\n` +
+            `${result.triggerMessage}`,
+        };
+      }
+
       if (command === "/help") {
         return {
           title: "Commands",
@@ -603,11 +1009,42 @@ export default function AiAgentPage() {
 
   const isDeployIntent = (text: string) => {
     const normalized = text.toLowerCase();
-    return /\bdeploy\b/.test(normalized) || /\bship\b/.test(normalized) || /\brun\b/.test(normalized);
+    return (
+      /\bdeploy\b/.test(normalized) ||
+      /\bship\b/.test(normalized) ||
+      /\brun\b/.test(normalized) ||
+      /\bcreate\b/.test(normalized) ||
+      /\bprovision\b/.test(normalized) ||
+      /\binstall\b/.test(normalized)
+    );
   };
 
   const autonomousDeployMutation = useMutation({
     mutationFn: async (message: string) => {
+      const applicationTemplate = findApplicationIntent(message);
+      if (applicationTemplate) {
+        if (agentAccessMode !== "full_access") {
+          return {
+            title: "Approval required",
+            body:
+              `I can create and deploy a ${applicationTemplate.name} for you, including generated credentials stored as project environment variables and a local Compose runtime.\n\n` +
+              "Switch Agent Permissions to Full access, or run an explicit command after enabling it: " +
+              `/app ${applicationTemplate.id}`,
+          };
+        }
+
+        const result = await deployApplicationTemplate(applicationTemplate);
+        return {
+          title: "Application deploy started",
+          body:
+            `I created ${result.projectName} and queued deployment ${shortId(result.deploymentId)}.\n\n` +
+            `Expected local endpoint: localhost:${preferredApplicationEndpointPort(result.config, applicationTemplate.defaultPort)}\n\n` +
+            `**Configuration**\n${safeApplicationSummary(applicationTemplate, result.config).map((line) => `- ${line}`).join("\n")}\n\n` +
+            "The deployment will move to running after Docker Compose finishes starting the service. " +
+            `${result.triggerMessage}`,
+        };
+      }
+
       const project = findProjectForText(message);
       if (!project) {
         return {
@@ -763,7 +1200,7 @@ export default function AiAgentPage() {
           onClick={() => chooseCommand(command.name)}
           className="flex w-full items-start gap-3 rounded-md px-2 py-2 text-left outline-none hover:bg-accent hover:text-accent-foreground"
         >
-          <FilledStarIcon className="mt-0.5 h-4 w-4 text-primary" />
+          <FilledStarIcon className="mt-0.5 size-4 shrink-0 text-primary" />
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium">{command.usage}</span>
             <span className="block text-xs text-muted-foreground">{command.description}</span>
@@ -775,12 +1212,13 @@ export default function AiAgentPage() {
 
   return (
     <>
-      <div className="flex h-[calc(100dvh-8rem)] min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-card text-card-foreground">
-        <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3">
+      <div className="flex h-[calc(100dvh-2.5rem)] min-h-0 overflow-hidden rounded-xl border border-border bg-card text-card-foreground">
+        <section className="flex min-w-0 flex-1 flex-col bg-background/40">
+        <header className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <FilledStarIcon className="h-5 w-5 text-primary" />
-              <h1 className="font-semibold">Agent Playground</h1>
+              <h1 className="font-semibold">{activeSession?.title || "DOKSCP Agent"}</h1>
               <Badge variant="outline">{mode === "thinking" ? "thinking" : "fast"}</Badge>
             </div>
             <p className="mt-1 truncate text-xs text-muted-foreground">
@@ -788,10 +1226,13 @@ export default function AiAgentPage() {
                 ? `Deployment: ${selectedDeployment.project_name} | ${selectedDeployment.status}`
                 : selectedProject
                   ? `Project: ${selectedProject.name}`
-                  : "Use natural language or slash commands."}
+                  : "Ask naturally, run slash commands, and continue previous chats from History."}
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="icon" className="h-10 w-10" aria-label="New chat" onClick={startNewChat}>
+              <Plus className="h-4 w-4" />
+            </Button>
             <Badge variant="outline" className="hidden max-w-52 truncate md:inline-flex">
               {shortId(activeModelId, 16)}
             </Badge>
@@ -813,8 +1254,8 @@ export default function AiAgentPage() {
           </div>
         </header>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
-          <div className="mx-auto flex max-w-4xl flex-col gap-5">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
+          <div className="mx-auto flex max-w-5xl flex-col gap-6">
             {messages.map((message) => (
               <div
                 key={message.id}
@@ -827,7 +1268,7 @@ export default function AiAgentPage() {
                 )}
                 <div
                   className={cn(
-                    "max-w-[min(44rem,85%)] rounded-xl px-4 py-3",
+                    "max-w-[min(56rem,88%)] rounded-2xl px-5 py-4",
                     message.role === "user" ? "bg-primary text-primary-foreground" : "border border-border bg-background"
                   )}
                 >
@@ -862,8 +1303,8 @@ export default function AiAgentPage() {
           </div>
         </div>
 
-        <div className="sticky bottom-0 z-20 shrink-0 border-t border-border bg-card p-4">
-          <div className="mx-auto max-w-4xl">
+        <div className="sticky bottom-0 z-20 shrink-0 bg-card/95 px-4 pb-3 pt-2 backdrop-blur">
+          <div className="mx-auto max-w-5xl">
             {diagnoseDeploymentPickerOpen && (
               <div className="mb-2 max-h-72 overflow-y-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl">
                 <div className="px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -906,7 +1347,7 @@ export default function AiAgentPage() {
                         setShowCommands(false);
                       }}
                     >
-                      <FilledStarIcon className="mt-0.5 h-4 w-4 text-primary" />
+                      <FilledStarIcon className="mt-0.5 size-4 shrink-0 text-primary" />
                       <span>
                         <span className="block text-sm font-medium">{command.usage}</span>
                         <span className="text-xs text-muted-foreground">{command.description}</span>
@@ -916,8 +1357,9 @@ export default function AiAgentPage() {
               </div>
             )}
 
-            <div className="rounded-xl border border-border bg-background p-2">
+            <div className="rounded-2xl border border-border bg-background px-3 py-2 shadow-sm">
               <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(event) => {
                   setInput(event.target.value);
@@ -930,9 +1372,10 @@ export default function AiAgentPage() {
                   }
                 }}
                 placeholder="Ask the agent, or type / for commands..."
-                className="min-h-20 w-full resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-muted-foreground"
+                rows={1}
+                className="max-h-44 min-h-10 w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground"
               />
-              <div className="flex items-center justify-between gap-2 border-t border-border pt-2">
+              <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="relative">
                     <Button
@@ -973,7 +1416,7 @@ export default function AiAgentPage() {
                         setDeploymentOpen(false);
                       }}
                     >
-                      <FilledStarIcon className="h-4 w-4" />
+                      <FilledStarIcon className="size-4 shrink-0" />
                       Commands
                       <ChevronDown className="ml-1 h-3.5 w-3.5" />
                     </Button>
@@ -990,12 +1433,9 @@ export default function AiAgentPage() {
                 </Button>
               </div>
             </div>
-            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              Commands execute platform APIs. AI reasoning stays separate from irreversible actions.
-            </div>
           </div>
         </div>
+        </section>
       </div>
 
       <Dialog

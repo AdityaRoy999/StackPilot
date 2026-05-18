@@ -27,12 +27,12 @@ The tool stages the local workspace into the host `local-projects` folder, creat
   "mcpServers": {
     "dokscp-platform": {
       "command": "node",
-      "args": ["C:/Users/adiro/OneDrive/Desktop/ALL websites/DOKSCP/mcp-server/src/index.js"],
+      "args": ["/absolute/path/to/DOKSCP/mcp-server/src/index.js"],
       "env": {
         "DOKSCP_MCP_TOKEN": "dokscp_mcp_xxx",
         "DOKSCP_API_URL": "http://localhost:8090/api/v1",
         "DOKSCP_FRONTEND_URL": "http://localhost:3000",
-        "DOKSCP_LOCAL_PROJECTS_HOST_ROOT": "C:/Users/adiro/OneDrive/Desktop/ALL websites/DOKSCP/local-projects",
+        "DOKSCP_LOCAL_PROJECTS_HOST_ROOT": "/absolute/path/to/DOKSCP/local-projects",
         "DOKSCP_LOCAL_PROJECTS_CONTAINER_ROOT": "/app/local-projects"
       }
     }
@@ -47,7 +47,7 @@ Generate `DOKSCP_MCP_TOKEN` in the DOKSCP dashboard under Settings > MCP Integra
 The backend container can only read folders mounted under `/app/local-projects`. The MCP server makes arbitrary IDE projects deployable by copying the requested local project into:
 
 ```text
-C:/Users/adiro/OneDrive/Desktop/ALL websites/DOKSCP/local-projects
+/absolute/path/to/DOKSCP/local-projects
 ```
 
 It does not copy common generated or sensitive folders such as `.git`, `node_modules`, `.venv`, `.env`, `dist`, `build`, and `uploads`.
@@ -57,7 +57,7 @@ It does not copy common generated or sensitive folders such as `.git`, `node_mod
 Protocol and health smoke test:
 
 ```powershell
-cd "C:\Users\adiro\OneDrive\Desktop\ALL websites\DOKSCP\mcp-server"
+cd "/absolute/path/to/DOKSCP/mcp-server"
 npm run smoke
 ```
 

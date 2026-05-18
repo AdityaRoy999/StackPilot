@@ -5,6 +5,7 @@
 #include "DeploymentController.h"
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
+#include "../services/ApplicationCatalog.h"
 #include "../services/BuildService.h"
 #include "../services/DeploymentCleanupService.h"
 #include "../services/JobQueueService.h"
@@ -956,6 +957,21 @@ std::string makeDockerMetricsCommand(const std::string& containerName) {
         makeHostMetricsCommandSegment();
 }
 
+std::string makeDockerComposeMetricsCommand(const std::string& composeProject) {
+    const std::string projectFilter = shellQuote("label=com.docker.compose.project=" + composeProject);
+    return
+        "names=$(docker ps --filter " + projectFilter + " --format '{{.Names}}'); "
+        "all_names=$(docker ps -a --filter " + projectFilter + " --format '{{.Names}}'); "
+        "running=$(printf '%s\\n' \"$names\" | sed '/^$/d' | wc -l | tr -d ' '); "
+        "total=$(printf '%s\\n' \"$all_names\" | sed '/^$/d' | wc -l | tr -d ' '); "
+        "echo provider=compose; echo project=" + shellQuote(composeProject) + "; echo running=$running; echo total=$total; "
+        "if [ -n \"$names\" ]; then "
+        "docker stats --no-stream --format 'stats={{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}' $names 2>&1; "
+        "docker inspect --format 'inspect=status={{.State.Status}}|restart_count={{.RestartCount}}|image={{.Config.Image}}' $names 2>&1; "
+        "fi; " +
+        makeHostMetricsCommandSegment();
+}
+
 Json::Value parseDockerMetrics(const std::string& output,
                                const std::string& provider,
                                const std::string& deploymentId) {
@@ -978,6 +994,9 @@ Json::Value parseDockerMetrics(const std::string& output,
     host["gpu_name"] = "";
     host["host_memory_total_bytes"] = Json::Value();
     host["sensor_scope"] = "container";
+
+    int runningServices = -1;
+    int totalServices = -1;
 
     std::istringstream stream(output);
     std::string line;
@@ -1009,6 +1028,10 @@ Json::Value parseDockerMetrics(const std::string& output,
                 payload["available"] = true;
                 payload["message"] = "Live Docker metrics";
             }
+        } else if (line.rfind("running=", 0) == 0) {
+            runningServices = static_cast<int>(parseMetricNumber(line.substr(8)));
+        } else if (line.rfind("total=", 0) == 0) {
+            totalServices = static_cast<int>(parseMetricNumber(line.substr(6)));
         } else if (line.rfind("inspect=", 0) == 0) {
             const auto fields = splitString(line.substr(8), '|');
             for (const auto& field : fields) {
@@ -1054,6 +1077,57 @@ Json::Value parseDockerMetrics(const std::string& output,
                 }
             }
         }
+    }
+
+    if (series.size() > 1) {
+        double cpuPercent = 0.0;
+        long long memoryBytes = 0;
+        long long memoryLimitBytes = 0;
+        long long networkRxBytes = 0;
+        long long networkTxBytes = 0;
+        long long blockReadBytes = 0;
+        long long blockWriteBytes = 0;
+        int pids = 0;
+
+        for (Json::ArrayIndex i = 0; i < series.size(); ++i) {
+            const auto& item = series[i];
+            cpuPercent += item.get("cpu_percent", 0.0).asDouble();
+            memoryBytes += item.get("memory_bytes", Json::Int64(0)).asInt64();
+            memoryLimitBytes += item.get("memory_limit_bytes", Json::Int64(0)).asInt64();
+            networkRxBytes += item.get("network_rx_bytes", Json::Int64(0)).asInt64();
+            networkTxBytes += item.get("network_tx_bytes", Json::Int64(0)).asInt64();
+            blockReadBytes += item.get("block_read_bytes", Json::Int64(0)).asInt64();
+            blockWriteBytes += item.get("block_write_bytes", Json::Int64(0)).asInt64();
+            pids += item.get("pids", 0).asInt();
+        }
+
+        Json::Value aggregate;
+        aggregate["name"] = provider == "local_compose" || provider == "remote_compose" ? "compose stack" : "docker runtime";
+        aggregate["cpu_percent"] = cpuPercent;
+        aggregate["memory_bytes"] = Json::Int64(memoryBytes);
+        aggregate["memory_limit_bytes"] = Json::Int64(memoryLimitBytes);
+        aggregate["memory_percent"] = memoryLimitBytes > 0
+            ? (static_cast<double>(memoryBytes) / static_cast<double>(memoryLimitBytes)) * 100.0
+            : 0.0;
+        aggregate["network_rx_bytes"] = Json::Int64(networkRxBytes);
+        aggregate["network_tx_bytes"] = Json::Int64(networkTxBytes);
+        aggregate["block_read_bytes"] = Json::Int64(blockReadBytes);
+        aggregate["block_write_bytes"] = Json::Int64(blockWriteBytes);
+        aggregate["pids"] = pids;
+        summary = aggregate;
+    }
+
+    if (runningServices >= 0) {
+        summary["ready_pods"] = runningServices;
+        payload["running_services"] = runningServices;
+    } else if (series.size() > 0) {
+        summary["ready_pods"] = static_cast<int>(series.size());
+    }
+    if (totalServices >= 0) {
+        summary["pod_count"] = totalServices;
+        payload["total_services"] = totalServices;
+    } else if (series.size() > 0) {
+        summary["pod_count"] = static_cast<int>(series.size());
     }
 
     payload["summary"] = summary;
@@ -1726,6 +1800,7 @@ void DeploymentController::triggerBuild(
 
         auto deploymentRows = txn.exec_params(
             "SELECT d.id, d.version, d.status, p.name AS project_name, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
+            "p.application_template_id, p.application_config::text AS application_config, "
             "p.execution_mode, p.remote_runtime_type, p.remote_k8s_exposure, p.remote_connection_id, p.runtime_scheme, p.local_https_enabled, "
             "u.github_access_token, COALESCE(s.connection_type, 'ssh') AS connection_type, s.host, s.port, s.username, s.auth_type, "
             "s.password_encrypted, s.private_key_encrypted, s.known_hosts_entry, "
@@ -1767,6 +1842,11 @@ void DeploymentController::triggerBuild(
         const std::string repoUrl = deploymentRows[0]["repo_url"].as<std::string>();
         const std::string sourcePath =
             deploymentRows[0]["source_path"].is_null() ? "" : deploymentRows[0]["source_path"].as<std::string>();
+        const std::string applicationTemplateId =
+            deploymentRows[0]["application_template_id"].is_null() ? "" : deploymentRows[0]["application_template_id"].as<std::string>();
+        const Json::Value applicationConfig = parseJsonObject(
+            deploymentRows[0]["application_config"].is_null() ? "" : deploymentRows[0]["application_config"].as<std::string>()
+        );
         const std::string projectToken = TokenCrypto::decrypt(deploymentRows[0]["github_pat"].as<std::string>());
         const std::string linkedGitHubToken =
             deploymentRows[0]["github_access_token"].is_null()
@@ -1912,7 +1992,7 @@ void DeploymentController::triggerBuild(
         broadcastDeploymentSummary(deploymentId);
 
         // Run build in a background thread to avoid blocking the HTTP thread
-        std::thread buildThread([deploymentId, repoUrl, version, githubPat, sourceType, sourcePath, sshConfig, executionMode, remoteExecutionConfig, remoteRuntimeType, remoteK8sExposure, runtimeScheme, localHttpsEnabled, projectName, envVars]() {
+        std::thread buildThread([deploymentId, repoUrl, version, githubPat, sourceType, sourcePath, applicationTemplateId, applicationConfig, sshConfig, executionMode, remoteExecutionConfig, remoteRuntimeType, remoteK8sExposure, runtimeScheme, localHttpsEnabled, projectName, envVars]() {
             try {
                 BuildService buildService;
                 const auto logSink = [deploymentId](const std::string& line) {
@@ -1933,6 +2013,26 @@ void DeploymentController::triggerBuild(
                             githubPat,
                             "",
                             "",
+                            projectName,
+                            3000,
+                            envVars,
+                            logSink
+                        );
+                    } else if (sourceType == "application") {
+                        auto generatedSource = ApplicationCatalog::materializeSource(
+                            deploymentId,
+                            projectName,
+                            applicationTemplateId,
+                            applicationConfig,
+                            std::filesystem::temp_directory_path()
+                        );
+                        logSink("Generated application template source: " + applicationTemplateId);
+                        buildResult = buildService.buildGeneratedSourceAndRunOnRemoteDocker(
+                            deploymentId,
+                            remoteExecutionConfig,
+                            generatedSource.string(),
+                            sourcePath.empty() ? "/tmp" : sourcePath,
+                            version,
                             projectName,
                             3000,
                             envVars,
@@ -2033,6 +2133,22 @@ void DeploymentController::triggerBuild(
                     buildResult = buildService.buildFromLocalSource(
                         deploymentId,
                         sourcePath,
+                        version,
+                        envVars,
+                        logSink
+                    );
+                } else if (sourceType == "application") {
+                    auto generatedSource = ApplicationCatalog::materializeSource(
+                        deploymentId,
+                        projectName,
+                        applicationTemplateId,
+                        applicationConfig,
+                        std::filesystem::temp_directory_path()
+                    );
+                    logSink("Generated application template source: " + applicationTemplateId);
+                    buildResult = buildService.buildFromGeneratedSource(
+                        deploymentId,
+                        generatedSource.string(),
                         version,
                         envVars,
                         logSink
@@ -3326,23 +3442,14 @@ void DeploymentController::getDeploymentMetrics(
             }
             const SshConnectionConfig remoteConfig = rowToRemoteRuntimeConfig(row);
             txn.commit();
-            const std::string command =
-                "running=$(docker ps --filter " + shellQuote("label=com.docker.compose.project=" + remoteContainerName) +
-                " --format '{{.Names}}' | wc -l | tr -d ' '); "
-                "total=$(docker ps -a --filter " + shellQuote("label=com.docker.compose.project=" + remoteContainerName) +
-                " --format '{{.Names}}' | wc -l | tr -d ' '); "
-                "echo provider=remote_compose; echo project=" + shellQuote(remoteContainerName) +
-                "; echo running=$running; echo total=$total";
             SshService sshService;
-            const auto result = sshService.runRemoteCommand(remoteConfig, "/tmp", command, 12);
-            Json::Value payload;
-            payload["deployment_id"] = deploymentId;
-            payload["provider"] = "remote_compose";
-            payload["available"] = result.success && valueFromKeyValueOutput(result.output, "running") != "0";
-            payload["running_services"] = valueFromKeyValueOutput(result.output, "running");
-            payload["total_services"] = valueFromKeyValueOutput(result.output, "total");
-            payload["message"] = payload["available"].asBool() ? "Remote Compose services are running." : "No running Compose services were found.";
-            payload["timestamp"] = trantor::Date::now().toFormattedString(false);
+            const auto result = sshService.runRemoteCommand(remoteConfig, "/tmp", makeDockerComposeMetricsCommand(remoteContainerName), 12);
+            Json::Value payload = parseDockerMetrics(result.output + "\n" + result.error, "remote_compose", deploymentId);
+            if (!result.success && !payload["available"].asBool()) {
+                payload["message"] = result.error.empty() ? "Unable to collect remote Compose metrics." : result.error;
+            } else if (!payload["available"].asBool()) {
+                payload["message"] = "No running Compose services were found.";
+            }
             callback(drogon::HttpResponse::newHttpJsonResponse(payload));
             return;
         }
@@ -3423,22 +3530,13 @@ void DeploymentController::getDeploymentMetrics(
 
         if (isLocalCompose && !remoteContainerName.empty()) {
             std::string output;
-            const std::string command =
-                "running=$(docker ps --filter " + shellQuote("label=com.docker.compose.project=" + remoteContainerName) +
-                " --format '{{.Names}}' | wc -l | tr -d ' '); "
-                "total=$(docker ps -a --filter " + shellQuote("label=com.docker.compose.project=" + remoteContainerName) +
-                " --format '{{.Names}}' | wc -l | tr -d ' '); "
-                "echo provider=local_compose; echo project=" + shellQuote(remoteContainerName) +
-                "; echo running=$running; echo total=$total";
-            const int exitCode = runLocalCommand("timeout 12s sh -lc " + shellQuote(command), output);
-            Json::Value payload;
-            payload["deployment_id"] = deploymentId;
-            payload["provider"] = "local_compose";
-            payload["available"] = exitCode == 0 && valueFromKeyValueOutput(output, "running") != "0";
-            payload["running_services"] = valueFromKeyValueOutput(output, "running");
-            payload["total_services"] = valueFromKeyValueOutput(output, "total");
-            payload["message"] = payload["available"].asBool() ? "Compose services are running." : "No running Compose services were found.";
-            payload["timestamp"] = trantor::Date::now().toFormattedString(false);
+            const int exitCode = runLocalCommand("timeout 12s sh -lc " + shellQuote(makeDockerComposeMetricsCommand(remoteContainerName)), output);
+            Json::Value payload = parseDockerMetrics(output, "local_compose", deploymentId);
+            if (exitCode != 0 && !payload["available"].asBool()) {
+                payload["message"] = "Unable to collect local Compose metrics.";
+            } else if (!payload["available"].asBool()) {
+                payload["message"] = "No running Compose services were found.";
+            }
             callback(drogon::HttpResponse::newHttpJsonResponse(payload));
             return;
         }

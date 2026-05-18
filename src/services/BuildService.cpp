@@ -209,13 +209,51 @@ write_env_value() {
     printf '%s=%s\n' "$key" "$value" >> .env
   fi
 }
+read_env_value() {
+  key="$1"
+  sed -n "s/^${key}=//p" .env 2>/dev/null | tail -n1 | tr -d '"' | tr -d "'" || true
+}
+next_port_after() {
+  port="$1"
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$port" -lt 65535 ]; then echo $((port + 1)); else return 1; fi
+}
+rewrite_conflicting_application_ports() {
+  changed=0
+  app_public_port=$(read_env_value APP_PUBLIC_PORT)
+  if [ -n "$app_public_port" ]; then
+    next_public=$(next_port_after "$app_public_port" || true)
+    if [ -n "$next_public" ]; then
+      app_public_next=$(choose_port "$next_public" 13306 13307 15432 16379 27018 15672 14222 18080 18088 19000 19090 13000 3307 5433 6380 5673 4223 8082 8089 9002 9091 3001)
+      if [ -n "$app_public_next" ] && [ "$app_public_next" != "$app_public_port" ]; then
+        write_env_value APP_PUBLIC_PORT "$app_public_next"
+        echo "Application port conflict detected; retrying with APP_PUBLIC_PORT=$app_public_next"
+        changed=1
+      fi
+    fi
+  fi
+  app_public_ui_port=$(read_env_value APP_PUBLIC_UI_PORT)
+  if [ -n "$app_public_ui_port" ]; then
+    next_ui=$(next_port_after "$app_public_ui_port" || true)
+    if [ -n "$next_ui" ]; then
+      app_ui_next=$(choose_port "$next_ui" 15673 18222 19001 19002 9002 8223 3002 8083 9092)
+      if [ -n "$app_ui_next" ] && [ "$app_ui_next" != "$app_public_ui_port" ]; then
+        write_env_value APP_PUBLIC_UI_PORT "$app_ui_next"
+        echo "Application UI port conflict detected; retrying with APP_PUBLIC_UI_PORT=$app_ui_next"
+        changed=1
+      fi
+    fi
+  fi
+  return "$changed"
+}
 compose_up_exit=0
 compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
 printf '%s\n' "$compose_up_output"
 if [ "$compose_up_exit" -ne 0 ]; then
-  if printf '%s\n' "$compose_up_output" | grep -qi 'address already in use'; then
-    http_port=$(choose_port 80 8080 8081 8082 8090 8000 3000)
-    https_port=$(choose_port 443 8443 9443 10443 4443)
+  if printf '%s\n' "$compose_up_output" | grep -Eqi 'address already in use|ports are not available|only one usage of each socket address|bind:'; then
+    rewrite_conflicting_application_ports || true
+    http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
+    https_port=$(choose_port 8443 9443 10443 4443)
     write_env_value DOKSCP_HTTP_PORT "$http_port"
     write_env_value DOKSCP_HTTPS_PORT "$https_port"
     echo "Host port conflict detected; retrying Compose with DOKSCP_HTTP_PORT=$http_port and DOKSCP_HTTPS_PORT=$https_port"
@@ -919,6 +957,60 @@ BuildResult BuildService::buildFromArtifact(const std::string& deploymentId,
     return buildFromPreparedSource(deploymentId, sourceDir, logFile, version, envVars, onLogLine);
 }
 
+BuildResult BuildService::buildFromGeneratedSource(const std::string& deploymentId,
+                                                   const std::string& generatedSourcePath,
+                                                   const std::string& version,
+                                                   const std::vector<BuildEnvVar>& envVars,
+                                                   LogCallback onLogLine) const {
+    BuildResult result;
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    const fs::path generatedSource = fs::weakly_canonical(generatedSourcePath, ec);
+    if (ec || !fs::exists(generatedSource, ec) || !fs::is_directory(generatedSource, ec)) {
+        result.error = "Generated application source is missing or unreadable";
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    const fs::path deploymentDir = workspaceRoot_ / deploymentId;
+    const fs::path sourceDir = deploymentDir / "source";
+    const fs::path logFile = deploymentDir / "build.log";
+
+    if (fs::exists(deploymentDir, ec)) {
+        fs::remove_all(deploymentDir, ec);
+    }
+    fs::create_directories(deploymentDir, ec);
+    if (ec) {
+        result.error = "Unable to prepare generated application build workspace";
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    {
+        std::ofstream logOut(logFile, std::ios::trunc);
+        logOut << "Starting generated application build for deployment " << deploymentId << "\n"
+               << "Generated source: " << generatedSource.string() << "\n\n";
+        if (onLogLine) {
+            onLogLine("Starting generated application build for deployment " + deploymentId);
+            onLogLine("Generated source: " + generatedSource.string());
+            onLogLine("");
+        }
+    }
+
+    std::string copyReason;
+    if (!copyLocalSourceTree(generatedSource, sourceDir, copyReason)) {
+        result.error = copyReason;
+        appendLogLine(logFile, copyReason, onLogLine);
+        result.logs = readFileBounded(logFile);
+        return result;
+    }
+
+    return buildFromPreparedSource(deploymentId, sourceDir, logFile, version, envVars, onLogLine);
+}
+
 BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymentId,
                                                     const SshConnectionConfig& sshConfig,
                                                     const std::string& remotePath,
@@ -1106,6 +1198,68 @@ BuildResult BuildService::buildArtifactAndRunOnRemoteDocker(const std::string& d
     );
 }
 
+BuildResult BuildService::buildGeneratedSourceAndRunOnRemoteDocker(const std::string& deploymentId,
+                                                                   const SshConnectionConfig& sshConfig,
+                                                                   const std::string& generatedSourcePath,
+                                                                   const std::string& remoteWorkspacePath,
+                                                                   const std::string& version,
+                                                                   const std::string& projectName,
+                                                                   int containerPort,
+                                                                   const std::vector<BuildEnvVar>& envVars,
+                                                                   LogCallback onLogLine) const {
+    BuildResult result;
+    namespace fs = std::filesystem;
+
+    std::error_code ec;
+    const fs::path generatedSource = fs::weakly_canonical(generatedSourcePath, ec);
+    if (ec || !fs::exists(generatedSource, ec) || !fs::is_directory(generatedSource, ec)) {
+        result.error = "Generated application source is missing or unreadable";
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    const fs::path deploymentDir = workspaceRoot_ / deploymentId;
+    fs::create_directories(deploymentDir, ec);
+    if (ec) {
+        result.error = "Unable to prepare generated application artifact workspace";
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
+
+    const fs::path archive = deploymentDir / "generated-application-source.tar";
+    const fs::path logFile = deploymentDir / "build.log";
+    {
+        std::ofstream logOut(logFile, std::ios::app);
+        logOut << "Packaging generated application source for remote Docker\n";
+    }
+    if (onLogLine) onLogLine("Packaging generated application source for remote Docker");
+
+    const std::string tarCommand =
+        "tar --format=ustar --no-xattrs --no-acls -cf " + shellQuote(archive.string()) +
+        " -C " + shellQuote(generatedSource.string()) + " .";
+    const int tarExit = runCommandCapture(tarCommand, logFile, true, std::max(60, cloneTimeoutSeconds_), onLogLine);
+    if (tarExit != 0) {
+        result.error = tarExit == 124 ? "Generated application packaging timed out" : "Generated application packaging failed";
+        appendLogLine(logFile, result.error, onLogLine);
+        result.logs = readFileBounded(logFile);
+        return result;
+    }
+
+    return buildArtifactAndRunOnRemoteDocker(
+        deploymentId,
+        sshConfig,
+        archive.string(),
+        remoteWorkspacePath,
+        version,
+        projectName,
+        containerPort,
+        envVars,
+        onLogLine
+    );
+}
+
 BuildResult BuildService::buildRepositoryAndRunOnRemoteDocker(const std::string& deploymentId,
                                                               const SshConnectionConfig& sshConfig,
                                                               const std::string& repoUrl,
@@ -1257,9 +1411,9 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             "if [ -n \"$domain\" ]; then if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; fi; "
             "if [ -z \"$runtime\" ]; then "
             "  for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
-            "    for port in 80 443 3000 8080 8000 5000 5173; do "
+            "    for port in 80 443 3000 8080 8000 5000 5173 15672 9001 8222 9090 3100 5432 3306 6379 27017 5672 9000 4222; do "
             "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
-            "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
+            "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
             "    done; "
             "  done; "
             "fi; "

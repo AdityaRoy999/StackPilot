@@ -231,9 +231,9 @@ Json::Value JwtHelper::verifyRequestToken(const drogon::HttpRequestPtr& req) {
         return Json::Value(Json::nullValue);
     }
 
-    // Check if this is an MCP Bearer token (dokscp_mcp_ prefix)
+    // MCP tokens are scoped to MCP endpoints. Normal API auth must reject them.
     if (token.rfind("dokscp_mcp_", 0) == 0) {
-        return verifyMcpToken(token);
+        return Json::Value(Json::nullValue);
     }
 
     Json::Value payload = verifyToken(token);
