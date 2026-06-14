@@ -5,7 +5,7 @@
 
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 class AuditLogger {
 public:
@@ -28,4 +28,4 @@ public:
     static std::string userAgent(const drogon::HttpRequestPtr& req);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

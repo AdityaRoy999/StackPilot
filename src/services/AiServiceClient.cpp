@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <sstream>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -89,7 +89,7 @@ AiServiceClient& AiServiceClient::instance() {
 }
 
 std::string AiServiceClient::serviceUrl() const {
-    const char* value = std::getenv("DOKSCP_AI_SERVICE_URL");
+    const char* value = std::getenv("STACKPILOT_AI_SERVICE_URL");
     std::string url = (value && *value) ? value : "http://ai-service:8010";
     while (!url.empty() && url.back() == '/') {
         url.pop_back();
@@ -98,7 +98,7 @@ std::string AiServiceClient::serviceUrl() const {
 }
 
 long AiServiceClient::timeoutSeconds() const {
-    const char* value = std::getenv("DOKSCP_AI_SERVICE_TIMEOUT_SECONDS");
+    const char* value = std::getenv("STACKPILOT_AI_SERVICE_TIMEOUT_SECONDS");
     if (!value || !*value) {
         return 60;
     }
@@ -121,4 +121,4 @@ AiServiceResult AiServiceClient::postWorkflow(const std::string& path, const Jso
     return performRequest(serviceUrl() + path, "POST", compactJson(payload), timeoutSeconds());
 }
 
-} // namespace dokscp
+} // namespace stackpilot

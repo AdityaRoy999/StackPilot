@@ -737,7 +737,7 @@ const segmentedButtonActiveClass =
                           id="edit-remoteWorkspace"
                           value={sourcePath}
                           onChange={(e) => setSourcePath(e.target.value)}
-                          placeholder="/root/dokscp-workspaces"
+                          placeholder="/root/stackpilot-workspaces"
                           className="bg-muted/40"
                         />
                         <Button

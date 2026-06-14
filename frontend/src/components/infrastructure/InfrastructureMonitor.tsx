@@ -43,8 +43,8 @@ interface InfrastructureInventory {
       image: string;
       status: string;
       ports: string;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "docker";
@@ -56,8 +56,8 @@ interface InfrastructureInventory {
       tag: string;
       id: string;
       size: string;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "docker";
@@ -77,8 +77,8 @@ interface InfrastructureInventory {
       name: string;
       status: string;
       created_at: string;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "kubernetes";
@@ -101,8 +101,8 @@ interface InfrastructureInventory {
         reason: string;
         message: string;
       }>;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "kubernetes";
@@ -119,8 +119,8 @@ interface InfrastructureInventory {
       restart_count: number;
       containers_ready: number;
       container_count: number;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "kubernetes";
@@ -144,8 +144,8 @@ interface InfrastructureInventory {
         reason: string;
         message: string;
       }>;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "kubernetes";
@@ -165,8 +165,8 @@ interface InfrastructureInventory {
         target_port: string | number;
         node_port: number;
       }>;
-      managed_by_dokscp: boolean;
-      claimed_by_dokscp: boolean;
+      managed_by_stackpilot: boolean;
+      claimed_by_StackPilot: boolean;
       claim_id: string;
       ownership_state: string;
       provider_type: "kubernetes";
@@ -423,7 +423,7 @@ export function InfrastructureMonitor() {
       ...data.kubernetes.deployments,
       ...data.kubernetes.services,
     ];
-    return resources.filter((resource) => resource.claimed_by_dokscp).length;
+    return resources.filter((resource) => resource.claimed_by_StackPilot).length;
   }, [inventoryQuery.data]);
 
   const namespaces = inventoryQuery.data?.kubernetes.namespaces || [];
@@ -616,17 +616,17 @@ export function InfrastructureMonitor() {
 
   const renderControls = (resource: ClaimableInfrastructureResource) => {
     const supportsLogs =
-      resource.claimed_by_dokscp &&
+      resource.claimed_by_StackPilot &&
       ((resource.provider_type === "docker" && resource.resource_type === "container") ||
         (resource.provider_type === "kubernetes" && ["pod", "deployment"].includes(resource.resource_type)));
     const supportsRestart =
-      resource.claimed_by_dokscp &&
+      resource.claimed_by_StackPilot &&
       ((resource.provider_type === "docker" && resource.resource_type === "container") ||
         (resource.provider_type === "kubernetes" && resource.resource_type === "deployment"));
     const supportsDockerState =
-      resource.claimed_by_dokscp && resource.provider_type === "docker" && resource.resource_type === "container";
+      resource.claimed_by_StackPilot && resource.provider_type === "docker" && resource.resource_type === "container";
     const supportsScale =
-      resource.claimed_by_dokscp && resource.provider_type === "kubernetes" && resource.resource_type === "deployment";
+      resource.claimed_by_StackPilot && resource.provider_type === "kubernetes" && resource.resource_type === "deployment";
     const dockerIsRunning =
       "status" in resource &&
       typeof resource.status === "string" &&
@@ -658,7 +658,7 @@ export function InfrastructureMonitor() {
       </Button>
     ) : null;
 
-    if (resource.claimed_by_dokscp) {
+    if (resource.claimed_by_StackPilot) {
       return (
         <div className="flex flex-wrap items-center gap-2">
           {detailsButton}
@@ -864,7 +864,7 @@ export function InfrastructureMonitor() {
         </div>
       );
     }
-    if (resource.managed_by_dokscp) {
+    if (resource.managed_by_stackpilot) {
       return (
         <div className="flex flex-wrap items-center gap-2">
           {detailsButton}
@@ -889,7 +889,7 @@ export function InfrastructureMonitor() {
   };
 
   const renderOwner = (resource: ClaimableInfrastructureResource) => {
-    if (resource.claimed_by_dokscp) {
+    if (resource.claimed_by_StackPilot) {
       return (
         <Badge variant="default">
           <ShieldCheck className="h-3 w-3" />
@@ -897,7 +897,7 @@ export function InfrastructureMonitor() {
         </Badge>
       );
     }
-    if (resource.managed_by_dokscp) return <Badge variant="default">DOKSCP</Badge>;
+    if (resource.managed_by_stackpilot) return <Badge variant="default">StackPilot</Badge>;
     return <Badge variant="outline">External</Badge>;
   };
 
@@ -947,8 +947,8 @@ export function InfrastructureMonitor() {
       ["Type", detailsResource.resource_type],
       ["Name", resourceName(detailsResource)],
       ["Owner", detailsResource.ownership_state],
-      ["Managed by DOKSCP", detailsResource.managed_by_dokscp ? "yes" : "no"],
-      ["Claimed", detailsResource.claimed_by_dokscp ? "yes" : "no"],
+      ["Managed by StackPilot", detailsResource.managed_by_stackpilot ? "yes" : "no"],
+      ["Claimed", detailsResource.claimed_by_StackPilot ? "yes" : "no"],
     ];
     if ("status" in detailsResource) rows.push(["Status", detailsResource.status || "-"]);
     if ("phase" in detailsResource) rows.push(["Phase", detailsResource.phase || "-"]);
@@ -979,7 +979,7 @@ export function InfrastructureMonitor() {
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight">Infrastructure Monitor</h1>
           <p className="mt-2 max-w-3xl text-lg text-muted-foreground">
-            Observe, claim, and control Docker and Kubernetes resources on the DOKSCP host or a saved SSH server.
+            Observe, claim, and control Docker and Kubernetes resources on the StackPilot host or a saved SSH server.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:items-end">
@@ -989,7 +989,7 @@ export function InfrastructureMonitor() {
             </SelectTrigger>
             <SelectContent align="end" className="min-w-[280px]">
               <SelectItem value="local">
-                Local DOKSCP host
+                Local StackPilot host
               </SelectItem>
               {(connectionsQuery.data || []).map((connection) => (
                 <SelectItem key={connection.id} value={connection.id}>

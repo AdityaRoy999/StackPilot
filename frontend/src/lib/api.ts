@@ -6,7 +6,7 @@ const api = axios.create({
   timeout: 25000,
   headers: {
     "Content-Type": "application/json",
-    "X-DOKSCP-CSRF": "1",
+    "X-stackpilot-CSRF": "1",
   },
 });
 

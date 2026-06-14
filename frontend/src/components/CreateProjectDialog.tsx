@@ -1550,7 +1550,7 @@ export function CreateProjectDialog() {
                                 id="githubRemoteWorkspacePath"
                                 value={githubRemoteWorkspacePath}
                                 onChange={(e) => setGithubRemoteWorkspacePath(e.target.value)}
-                                placeholder={`${getRemoteHomePath(activeSshConnection.username)}/dokscp-workspaces`}
+                                placeholder={`${getRemoteHomePath(activeSshConnection.username)}/stackpilot-workspaces`}
                                 className="bg-muted/40"
                               />
                               <Button
@@ -1568,8 +1568,8 @@ export function CreateProjectDialog() {
                               </Button>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              DOKSCP will clone each GitHub deployment under this folder in an isolated
-                              <span className="font-mono"> dokscp-builds/&lt;deployment-id&gt;</span> workspace.
+                              StackPilot will clone each GitHub deployment under this folder in an isolated
+                              <span className="font-mono"> stackpilot-builds/&lt;deployment-id&gt;</span> workspace.
                             </p>
                           </div>
 
@@ -1886,7 +1886,7 @@ export function CreateProjectDialog() {
                                   id="applicationRemoteWorkspacePath"
                                   value={githubRemoteWorkspacePath}
                                   onChange={(event) => setGithubRemoteWorkspacePath(event.target.value)}
-                                  placeholder={`${getRemoteHomePath(activeSshConnection.username)}/dokscp-workspaces`}
+                                  placeholder={`${getRemoteHomePath(activeSshConnection.username)}/stackpilot-workspaces`}
                                   className="bg-muted/40"
                                 />
                                 <Button
@@ -1904,7 +1904,7 @@ export function CreateProjectDialog() {
                                 </Button>
                               </div>
                               <p className="text-xs text-muted-foreground">
-                                DOKSCP generates a compose source bundle here, then builds and runs it on the selected server.
+                                StackPilot generates a compose source bundle here, then builds and runs it on the selected server.
                               </p>
                             </div>
                           )}
@@ -2352,8 +2352,8 @@ export function CreateProjectDialog() {
                 heading="GitHub source"
                 items={[
                   "Use GitHub OAuth or a PAT to load public and private repositories.",
-                  "Pick a repository, then DOKSCP stores the project record and creates the first Docker deployment.",
-                  "If you choose Run on server, select the server and a remote workspace path. The repo is cloned under dokscp-builds/<deployment-id> inside that path.",
+                  "Pick a repository, then StackPilot stores the project record and creates the first Docker deployment.",
+                  "If you choose Run on server, select the server and a remote workspace path. The repo is cloned under stackpilot-builds/<deployment-id> inside that path.",
                 ]}
               />
               <GuideSection
@@ -2371,7 +2371,7 @@ export function CreateProjectDialog() {
                 items={[
                   "Use this when the source folder already exists on a saved server or Tailscale machine.",
                   "Browse to the actual project folder, not only the parent folder.",
-                  "Run locally copies the remote source to DOKSCP and builds on this machine. Run on server builds and runs on that same remote server.",
+                  "Run locally copies the remote source to StackPilot and builds on this machine. Run on server builds and runs on that same remote server.",
                 ]}
               />
               <GuideSection
@@ -2387,7 +2387,7 @@ export function CreateProjectDialog() {
               <GuideSection
                 heading="Application source"
                 items={[
-                  "Use this when you want DOKSCP to generate a deployable compose project from a known application image.",
+                  "Use this when you want StackPilot to generate a deployable compose project from a known application image.",
                   "Pick an application, configure ports and credentials, then deploy locally or on a saved server.",
                   "Secrets are stored as project environment variables; the generated source keeps only non-secret metadata.",
                 ]}
@@ -2405,7 +2405,7 @@ export function CreateProjectDialog() {
               <GuideSection
                 heading="Local source"
                 items={[
-                  "Use this for folders already available on the host running DOKSCP.",
+                  "Use this for folders already available on the host running StackPilot.",
                   "Local projects must live inside the allowed local source roots configured for the backend container.",
                   "Direct arbitrary laptop paths are intentionally blocked; mount or import the project into the allowed root so builds are reproducible and safe.",
                 ]}

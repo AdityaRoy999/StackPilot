@@ -22,7 +22,7 @@
 #include <sstream>
 #include <spdlog/spdlog.h>
 
-namespace dokscp {
+namespace stackpilot {
 namespace {
 
 std::string trim(const std::string& value) {
@@ -277,4 +277,4 @@ void SourceArtifactController::getArtifact(
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

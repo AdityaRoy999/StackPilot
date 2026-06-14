@@ -18,7 +18,7 @@
 #include <spdlog/spdlog.h>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 namespace {
 
 std::string trim(const std::string& value) {
@@ -56,11 +56,11 @@ std::string hmacSha256Hex(const std::string& key, const std::string& body) {
 bool verifySignature(const drogon::HttpRequestPtr& req, const std::string& rawBody) {
     const char* secretEnv = std::getenv("GITHUB_WEBHOOK_SECRET");
     if (!secretEnv || !*secretEnv) {
-        const char* allowUnsigned = std::getenv("DOKSCP_ALLOW_UNSIGNED_GITHUB_WEBHOOKS");
+        const char* allowUnsigned = std::getenv("STACKPILOT_ALLOW_UNSIGNED_GITHUB_WEBHOOKS");
         if (allowUnsigned && *allowUnsigned) {
             const std::string normalized = toLower(trim(allowUnsigned));
             if (normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on") {
-                spdlog::warn("Accepting unsigned GitHub webhook because DOKSCP_ALLOW_UNSIGNED_GITHUB_WEBHOOKS is enabled");
+                spdlog::warn("Accepting unsigned GitHub webhook because STACKPILOT_ALLOW_UNSIGNED_GITHUB_WEBHOOKS is enabled");
                 return true;
             }
         }
@@ -703,4 +703,4 @@ void GitHubWebhookController::handleWebhook(
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

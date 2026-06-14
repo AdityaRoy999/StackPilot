@@ -342,7 +342,7 @@ export default function LoggingMonitoringPage() {
               <CheckCircle2 className="h-4 w-4 text-primary" />
               Platform
             </CardTitle>
-            <CardDescription>{data?.service || "dokscp-backend"}</CardDescription>
+            <CardDescription>{data?.service || "stackpilot-backend"}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{isLoading ? "-" : data?.status || "degraded"}</div>

@@ -7,7 +7,7 @@
 #include <json/json.h>
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct DeploymentCleanupOptions {
     bool deleteDatabaseRow = false;
@@ -35,5 +35,5 @@ public:
                                               const DeploymentCleanupOptions& options) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot
 

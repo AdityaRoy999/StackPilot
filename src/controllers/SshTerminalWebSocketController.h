@@ -12,7 +12,7 @@
 #include <string>
 #include <thread>
 
-namespace dokscp {
+namespace stackpilot {
 
 class SshTerminalWebSocketController : public drogon::WebSocketController<SshTerminalWebSocketController> {
 public:
@@ -40,4 +40,4 @@ private:
     static void closeSession(const std::shared_ptr<TerminalSession>& session);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

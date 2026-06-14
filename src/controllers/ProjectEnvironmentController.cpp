@@ -18,7 +18,7 @@
 #include <thread>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 namespace {
 
 Json::Value environmentRowToJson(const pqxx::row& row) {
@@ -246,7 +246,7 @@ Json::Value maybeRegisterWebhookForEnvironment(const std::string& repoUrl,
         return warnings;
     }
     if (githubAppWebhookModeEnabled()) {
-        warnings.append("GitHub App webhook mode is enabled. DOKSCP will use the central GitHub App webhook instead of creating a repository webhook.");
+        warnings.append("GitHub App webhook mode is enabled. StackPilot will use the central GitHub App webhook instead of creating a repository webhook.");
         return warnings;
     }
     std::string backendPublicUrl = envOrEmpty("BACKEND_PUBLIC_URL");
@@ -254,7 +254,7 @@ Json::Value maybeRegisterWebhookForEnvironment(const std::string& repoUrl,
     while (!backendPublicUrl.empty() && backendPublicUrl.back() == '/') backendPublicUrl.pop_back();
     const std::string webhookSecret = envOrEmpty("GITHUB_WEBHOOK_SECRET");
     if (webhookSecret.empty()) {
-        warnings.append("Auto deploy needs GITHUB_WEBHOOK_SECRET before DOKSCP can register a production GitHub webhook.");
+        warnings.append("Auto deploy needs GITHUB_WEBHOOK_SECRET before StackPilot can register a production GitHub webhook.");
         return warnings;
     }
     if (!looksPublicHttpsUrl(backendPublicUrl)) {
@@ -287,7 +287,7 @@ Json::Value maybeRegisterWebhookForEnvironment(const std::string& repoUrl,
             hookReq->addHeader("Authorization", "Bearer " + token);
             hookReq->addHeader("Accept", "application/vnd.github+json");
             hookReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
-            hookReq->addHeader("User-Agent", "DOKSCP-Platform");
+            hookReq->addHeader("User-Agent", "stackpilot-Platform");
             client->sendRequest(hookReq, [fullName](drogon::ReqResult result, const drogon::HttpResponsePtr& response) {
                 if (result != drogon::ReqResult::Ok || !response) {
                     spdlog::warn("GitHub webhook registration failed for {}: transport error", fullName);
@@ -662,4 +662,4 @@ void ProjectEnvironmentController::deleteEnvironment(
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

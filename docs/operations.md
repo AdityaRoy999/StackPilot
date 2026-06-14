@@ -25,9 +25,9 @@ docker compose ps
 ## Logs
 
 ```bash
-docker logs dokscp-backend
-docker logs dokscp-ai-service
-docker logs dokscp-frontend
+docker logs stackpilot-backend
+docker logs stackpilot-ai-service
+docker logs stackpilot-frontend
 ```
 
 Deployment logs are stored in PostgreSQL and exposed in the dashboard.
@@ -35,7 +35,7 @@ Deployment logs are stored in PostgreSQL and exposed in the dashboard.
 ## Database Backup
 
 ```bash
-docker exec dokscp-postgres pg_dump -U "$DB_USER" "$DB_NAME" > dokscp-backup.sql
+docker exec stackpilot-postgres pg_dump -U "$DB_USER" "$DB_NAME" > stackpilot-backup.sql
 ```
 
 Restore into a fresh database after verifying the target environment.
@@ -50,11 +50,11 @@ Prometheus scrapes backend metrics. Grafana reads Prometheus and Loki. Loki stor
 
 Important metrics include:
 
-- `dokscp_database_connected`
-- `dokscp_projects_total`
-- `dokscp_deployments_total`
-- `dokscp_deployment_jobs_total`
-- `dokscp_deployment_failures_last_24h`
+- `STACKPILOT_database_connected`
+- `STACKPILOT_projects_total`
+- `STACKPILOT_deployments_total`
+- `STACKPILOT_deployment_jobs_total`
+- `STACKPILOT_deployment_failures_last_24h`
 
 ## Updating
 

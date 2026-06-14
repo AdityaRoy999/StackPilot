@@ -6,7 +6,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class GitHubWebhookController : public drogon::HttpController<GitHubWebhookController> {
 public:
@@ -18,5 +18,5 @@ public:
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback);
 };
 
-} // namespace dokscp
+} // namespace stackpilot
 

@@ -16,7 +16,7 @@
 #include <sstream>
 #include <sys/wait.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -185,7 +185,7 @@ std::string replaceAll(std::string value, const std::string& needle, const std::
 
 KubernetesService::KubernetesService()
     : kubeconfigPath_(getEnvOrDefault("KUBECONFIG_PATH", "")),
-      defaultNamespace_(getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps")),
+      defaultNamespace_(getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps")),
       serviceType_(getEnvOrDefault("K8S_SERVICE_TYPE", "NodePort")),
       exposureMode_(getEnvOrDefault("K8S_EXPOSURE_MODE", "")),
       nodeHost_(getEnvOrDefault("K8S_NODE_HOST", "localhost")),
@@ -339,7 +339,7 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
     }
 
     const std::filesystem::path manifestPath =
-        std::filesystem::temp_directory_path() / ("dokscp-k8s-" + options.deploymentId + ".yaml");
+        std::filesystem::temp_directory_path() / ("stackpilot-k8s-" + options.deploymentId + ".yaml");
     const auto deployStamp = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
@@ -408,7 +408,7 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
             << "      labels:\n"
             << "        app: " << result.deploymentName << "\n"
             << "      annotations:\n"
-            << "        dokscp.io/deployed-at: \"" << deployStamp << "\"\n"
+            << "        StackPilot.io/deployed-at: \"" << deployStamp << "\"\n"
             << "    spec:\n"
             << (!serviceAccountName_.empty() ? "      serviceAccountName: " + serviceAccountName_ + "\n" : "")
             << "      securityContext:\n"
@@ -681,15 +681,15 @@ KubernetesRuntimeInfo KubernetesService::deployComposeStack(const KubernetesDepl
             "compose_cmd='docker compose'; "
             "if ! docker compose version >/dev/null 2>&1; then "
             "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
-            "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
+            "  else echo __STACKPILOT_COMPOSE_MISSING__; exit 20; fi; "
             "fi; "
             "$compose_cmd -f " + shellQuote(composeFile) +
             " -p " + shellQuote(composeProjectName) +
             " config --format json 2>/dev/null"
         );
     if (runCommand(configCommand, output) != 0) {
-        result.error = output.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos
-            ? "Docker Compose is not available to the DOKSCP backend"
+        result.error = output.find("__STACKPILOT_COMPOSE_MISSING__") != std::string::npos
+            ? "Docker Compose is not available to the StackPilot backend"
             : "Failed to read Docker Compose config for Kubernetes conversion";
         result.logs = logs.str() + output;
         return result;
@@ -807,7 +807,7 @@ KubernetesRuntimeInfo KubernetesService::deployComposeStack(const KubernetesDepl
     }
 
     const std::filesystem::path manifestPath =
-        std::filesystem::temp_directory_path() / ("dokscp-compose-k8s-" + options.deploymentId + ".yaml");
+        std::filesystem::temp_directory_path() / ("stackpilot-compose-k8s-" + options.deploymentId + ".yaml");
     {
         std::ofstream manifest(manifestPath, std::ios::trunc);
         manifest << manifestText;
@@ -1156,7 +1156,7 @@ KubernetesRuntimeInfo KubernetesService::removeComposeStack(const std::string& n
         return result;
     }
 
-    const std::string selector = "dokscp.io/compose-project=" + stackName;
+    const std::string selector = "StackPilot.io/compose-project=" + stackName;
     std::ostringstream logs;
     logs << "[compose-k8s] Removing Kubernetes stack " << stackName << "\n";
 
@@ -1288,7 +1288,7 @@ std::string KubernetesService::sanitizeDnsLabel(const std::string& value) const 
         out.pop_back();
     }
     if (out.empty()) {
-        out = "dokscp-runtime";
+        out = "stackpilot-runtime";
     }
     if (out.size() > 50) {
         out.resize(50);
@@ -1555,4 +1555,4 @@ std::string KubernetesService::serviceTypeForExposure(const std::string& exposur
     return "NodePort";
 }
 
-} // namespace dokscp
+} // namespace stackpilot

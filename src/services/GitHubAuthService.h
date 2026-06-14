@@ -7,7 +7,7 @@
 #include <functional>
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct GitHubIdentity {
     std::string id;
@@ -36,4 +36,4 @@ private:
     std::string getClientSecret() const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

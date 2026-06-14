@@ -1483,7 +1483,7 @@ function RuntimeDialog({
   onChanged: () => void;
 }) {
   const displayName = deploymentDisplayName(deployment);
-  const [namespaceInput, setNamespaceInput] = useState(deployment.k8s_namespace || "dokscp-apps");
+  const [namespaceInput, setNamespaceInput] = useState(deployment.k8s_namespace || "stackpilot-apps");
   const [replicasDraft, setReplicasDraft] = useState<string | null>(null);
   const [portInput, setPortInput] = useState(() => String(defaultRuntimePortForDeployment(deployment)));
   const [resourcePreset, setResourcePreset] = useState<RuntimeResourcePreset>("small");
@@ -2056,7 +2056,7 @@ function RuntimeDialog({
                 )}
                 <div className="mt-4 rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
                   {isRemoteDocker
-                    ? "This runtime is running on the connected remote host. The container lifecycle is managed over SSH/Tailscale, while build and deployment logs still stay visible in DOKSCP."
+                    ? "This runtime is running on the connected remote host. The container lifecycle is managed over SSH/Tailscale, while build and deployment logs still stay visible in StackPilot."
                     : `Current target: ${currentDesiredReplicas} replica${currentDesiredReplicas === 1 ? "" : "s"}.${isDeployed ? ` Ready now: ${currentReadyReplicas}.` : ""} ${activeExposureMode === "ingress" ? "Requests should flow through the ingress layer." : "Requests are currently exposed directly through the Kubernetes service."}`}
                 </div>
               </div>

@@ -31,7 +31,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -282,12 +282,12 @@ bool isGitHubOAuthConfigured() {
 }
 
 bool isProductionEnvironment() {
-    const std::string value = toLower(getEnvOrDefault("DOKSCP_ENV", getEnvOrDefault("NODE_ENV", "development")));
+    const std::string value = toLower(getEnvOrDefault("STACKPILOT_ENV", getEnvOrDefault("NODE_ENV", "development")));
     return value == "production" || value == "prod";
 }
 
 std::string registrationMode() {
-    std::string mode = toLower(trim(getEnvOrDefault("DOKSCP_AUTH_REGISTRATION_MODE")));
+    std::string mode = toLower(trim(getEnvOrDefault("STACKPILOT_AUTH_REGISTRATION_MODE")));
     if (mode.empty()) {
         mode = isProductionEnvironment() ? "first_user_only" : "open";
     }
@@ -298,7 +298,7 @@ std::string registrationMode() {
 }
 
 bool inviteCodeAccepted(const Json::Value* body) {
-    const std::string expected = trim(getEnvOrDefault("DOKSCP_AUTH_INVITE_CODE"));
+    const std::string expected = trim(getEnvOrDefault("STACKPILOT_AUTH_INVITE_CODE"));
     if (expected.empty()) {
         return true;
     }
@@ -311,10 +311,10 @@ bool inviteCodeAccepted(const Json::Value* body) {
 bool registrationAllowed(pqxx::work& txn, const Json::Value* body, std::string& reason) {
     const std::string mode = registrationMode();
     if (mode == "disabled") {
-        reason = "New account registration is disabled on this DOKSCP instance.";
+        reason = "New account registration is disabled on this StackPilot instance.";
         return false;
     }
-    if ((mode == "invite" || !getEnvOrDefault("DOKSCP_AUTH_INVITE_CODE").empty()) && !inviteCodeAccepted(body)) {
+    if ((mode == "invite" || !getEnvOrDefault("STACKPILOT_AUTH_INVITE_CODE").empty()) && !inviteCodeAccepted(body)) {
         reason = "A valid invite code is required to create a new account.";
         return false;
     }
@@ -324,7 +324,7 @@ bool registrationAllowed(pqxx::work& txn, const Json::Value* body, std::string& 
             ? 0
             : countRows[0][0].as<long long>();
         if (userCount > 0) {
-            reason = "This production DOKSCP instance already has an owner account. Ask the owner to create or invite additional users.";
+            reason = "This production StackPilot instance already has an owner account. Ask the owner to create or invite additional users.";
             return false;
         }
     }
@@ -333,7 +333,7 @@ bool registrationAllowed(pqxx::work& txn, const Json::Value* body, std::string& 
 
 Json::Value registrationClosedPayload(const std::string& reason) {
     Json::Value err;
-    err["error"] = reason.empty() ? "New account registration is not allowed on this DOKSCP instance." : reason;
+    err["error"] = reason.empty() ? "New account registration is not allowed on this StackPilot instance." : reason;
     err["registration_mode"] = registrationMode();
     return err;
 }
@@ -1917,4 +1917,4 @@ void AuthController::handleOptions(
     callback(resp);
 }
 
-} // namespace dokscp
+} // namespace stackpilot

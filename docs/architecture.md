@@ -1,13 +1,13 @@
 # Architecture
 
-DOKSCP is split into a control plane, a dashboard, an AI service, an MCP bridge, and runtime integrations.
+StackPilot is split into a control plane, a dashboard, an AI service, an MCP bridge, and runtime integrations.
 
 ## Services
 
 - `backend`: C++ Drogon API server, build queue worker, deployment controller, runtime cleanup engine, webhook receiver, MCP token APIs.
 - `frontend`: Next.js dashboard for projects, deployments, AI, logs, monitoring, settings, SSH connections, and MCP tokens.
 - `ai-service`: FastAPI service that talks to NVIDIA NIM or OpenAI-compatible providers.
-- `mcp-server`: Node.js MCP server that lets IDE agents deploy local or GitHub projects through DOKSCP.
+- `mcp-server`: Node.js MCP server that lets IDE agents deploy local or GitHub projects through StackPilot.
 - `postgres`: durable system of record.
 - `redis`: deployment job queue.
 - `prometheus`, `grafana`, `loki`, `promtail`, `cadvisor`: observability stack.
@@ -16,8 +16,8 @@ DOKSCP is split into a control plane, a dashboard, an AI service, an MCP bridge,
 
 ```mermaid
 flowchart LR
-    Browser["Dashboard"] --> Backend["DOKSCP backend"]
-    IDE["IDE agent via MCP"] --> MCP["DOKSCP MCP server"]
+    Browser["Dashboard"] --> Backend["StackPilot backend"]
+    IDE["IDE agent via MCP"] --> MCP["StackPilot MCP server"]
     MCP --> Backend
     GitHub["GitHub webhook"] --> Backend
     Backend --> Postgres["PostgreSQL"]
@@ -38,11 +38,11 @@ flowchart LR
 
 ## Build Strategy
 
-DOKSCP first uses deterministic source detection and Dockerfile generators. If deterministic generation cannot confidently build the project, the AI Dockerfile planner can analyze the source tree and propose a Dockerfile plan. The build remains auditable through logs and stored deployment snapshots.
+StackPilot first uses deterministic source detection and Dockerfile generators. If deterministic generation cannot confidently build the project, the AI Dockerfile planner can analyze the source tree and propose a Dockerfile plan. The build remains auditable through logs and stored deployment snapshots.
 
 ## Runtime Strategy
 
-DOKSCP can build only, run in Docker, deploy to local Kubernetes, deploy to remote Docker, or deploy to remote Kubernetes. Runtime snapshots record provider, image, URL, namespace, service, ingress, replicas, health path, and scheme.
+StackPilot can build only, run in Docker, deploy to local Kubernetes, deploy to remote Docker, or deploy to remote Kubernetes. Runtime snapshots record provider, image, URL, namespace, service, ingress, replicas, health path, and scheme.
 
 ## Cleanup Strategy
 

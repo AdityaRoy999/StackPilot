@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct KubernetesDeployOptions {
     std::string deploymentId;
@@ -140,4 +140,4 @@ private:
     bool runJsonCommand(const std::string& command, Json::Value& output, std::string& rawOutput) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

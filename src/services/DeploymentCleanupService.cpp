@@ -25,7 +25,7 @@
 #include <process.h>
 #endif
 
-namespace dokscp {
+namespace stackpilot {
 namespace {
 
 std::string trim(const std::string& value) {
@@ -171,13 +171,13 @@ SshOperationResult removeLocalDockerImage(const std::string& imageName) {
     const std::string command =
         "timeout 60s sh -lc " +
         shellQuote("if command -v docker >/dev/null 2>&1; then docker image rm -f " +
-                   shellQuote(imageName) + " || true; echo __DOKSCP_LOCAL_IMAGE_CLEANUP_DONE__; "
-                   "else echo __DOKSCP_DOCKER_MISSING__; exit 11; fi");
+                   shellQuote(imageName) + " || true; echo __STACKPILOT_LOCAL_IMAGE_CLEANUP_DONE__; "
+                   "else echo __STACKPILOT_DOCKER_MISSING__; exit 11; fi");
     std::string output;
     const int exitCode = runCommand(command, output);
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_LOCAL_IMAGE_CLEANUP_DONE__") == std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_LOCAL_IMAGE_CLEANUP_DONE__") == std::string::npos) {
         result.error = exitCode == 124 ? "Docker image cleanup timed out" : "Failed to remove Docker image";
         return result;
     }
@@ -204,13 +204,13 @@ SshOperationResult removeLocalDockerContainer(const std::string& containerName) 
     const std::string command =
         "timeout 60s sh -lc " +
         shellQuote("if command -v docker >/dev/null 2>&1; then docker rm -f " +
-                   shellQuote(cleaned) + " >/dev/null 2>&1 || true; echo __DOKSCP_LOCAL_CONTAINER_REMOVED__; "
-                   "else echo __DOKSCP_DOCKER_MISSING__; exit 11; fi");
+                   shellQuote(cleaned) + " >/dev/null 2>&1 || true; echo __STACKPILOT_LOCAL_CONTAINER_REMOVED__; "
+                   "else echo __STACKPILOT_DOCKER_MISSING__; exit 11; fi");
     std::string output;
     const int exitCode = runCommand(command, output);
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_LOCAL_CONTAINER_REMOVED__") == std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_LOCAL_CONTAINER_REMOVED__") == std::string::npos) {
         result.error = exitCode == 124 ? "Local Docker runtime cleanup timed out" : "Failed to remove local Docker runtime";
         return result;
     }
@@ -363,11 +363,11 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
                 "$compose_cmd -f " + shellQuote(composeFile) +
                 " -p " + shellQuote(composeProject) +
                 std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + "; "
-                "echo __DOKSCP_COMPOSE_REMOVED__";
+                "echo __STACKPILOT_COMPOSE_REMOVED__";
             const auto removal = sshService.runRemoteCommand(rowToRemoteRuntimeConfig(row), "/", command, 180);
             result.logs += removal.output;
             appendDeploymentLogBlock(deploymentId, removal.output);
-            if (!removal.success || removal.output.find("__DOKSCP_COMPOSE_REMOVED__") == std::string::npos) {
+            if (!removal.success || removal.output.find("__STACKPILOT_COMPOSE_REMOVED__") == std::string::npos) {
                 result.error = removal.error.empty() ? "Failed to remove remote Compose runtime before deleting deployment" : removal.error;
                 return result;
             }
@@ -392,13 +392,13 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
                     "$compose_cmd -f " + shellQuote(composeFile) +
                     " -p " + shellQuote(composeProject) +
                     std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + "; "
-                    "echo __DOKSCP_COMPOSE_REMOVED__"
+                    "echo __STACKPILOT_COMPOSE_REMOVED__"
                 );
             std::string output;
             const int exitCode = runCommand(command, output);
             result.logs += output;
             appendDeploymentLogBlock(deploymentId, output);
-            if (exitCode != 0 || output.find("__DOKSCP_COMPOSE_REMOVED__") == std::string::npos) {
+            if (exitCode != 0 || output.find("__STACKPILOT_COMPOSE_REMOVED__") == std::string::npos) {
                 result.error = "Failed to remove local Compose runtime before deleting deployment";
                 return result;
             }
@@ -440,11 +440,11 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
                     "$compose_cmd -f " + shellQuote(composeFile) +
                     " -p " + shellQuote(composeProject) +
                     " down --remove-orphans --rmi local || true; "
-                    "echo __DOKSCP_COMPOSE_IMAGES_REMOVED__";
+                    "echo __STACKPILOT_COMPOSE_IMAGES_REMOVED__";
                 const auto imageRemoval = sshService.runRemoteCommand(rowToRemoteRuntimeConfig(row), "/", command, 180);
                 result.logs += imageRemoval.output;
                 appendDeploymentLogBlock(deploymentId, imageRemoval.output);
-                if (!imageRemoval.success || imageRemoval.output.find("__DOKSCP_COMPOSE_IMAGES_REMOVED__") == std::string::npos) {
+                if (!imageRemoval.success || imageRemoval.output.find("__STACKPILOT_COMPOSE_IMAGES_REMOVED__") == std::string::npos) {
                     result.error = imageRemoval.error.empty() ? "Failed to clean remote Compose images" : imageRemoval.error;
                     return result;
                 }
@@ -472,13 +472,13 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
                         "$compose_cmd -f " + shellQuote(composeFile) +
                         " -p " + shellQuote(composeProject) +
                         " down --remove-orphans --rmi local || true; "
-                        "echo __DOKSCP_COMPOSE_IMAGES_REMOVED__"
+                        "echo __STACKPILOT_COMPOSE_IMAGES_REMOVED__"
                     );
                 std::string output;
                 const int exitCode = runCommand(command, output);
                 result.logs += output;
                 appendDeploymentLogBlock(deploymentId, output);
-                if (exitCode != 0 || output.find("__DOKSCP_COMPOSE_IMAGES_REMOVED__") == std::string::npos) {
+                if (exitCode != 0 || output.find("__STACKPILOT_COMPOSE_IMAGES_REMOVED__") == std::string::npos) {
                     result.error = "Failed to clean local Compose images";
                     return result;
                 }
@@ -547,14 +547,14 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
         if (options.deleteRemoteWorkspace && hasRemoteHost && executionMode == "remote_host" &&
             (sourceType == "github" || sourceType == "artifact")) {
             const std::string remoteWorkspace = joinRemotePath(
-                joinRemotePath(sourcePath.empty() ? "/tmp" : sourcePath, "dokscp-builds"),
+                joinRemotePath(sourcePath.empty() ? "/tmp" : sourcePath, "stackpilot-builds"),
                 sanitizeRemoteWorkspaceSegment(deploymentId)
             );
             SshService sshService;
             const auto cleanup = sshService.runRemoteCommand(
                 rowToRemoteRuntimeConfig(row),
                 "/",
-                "rm -rf -- " + shellQuote(remoteWorkspace) + " && echo __DOKSCP_REMOTE_WORKSPACE_REMOVED__",
+                "rm -rf -- " + shellQuote(remoteWorkspace) + " && echo __STACKPILOT_REMOTE_WORKSPACE_REMOVED__",
                 60
             );
             result.logs += cleanup.output;
@@ -600,4 +600,4 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

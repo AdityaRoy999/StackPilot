@@ -32,7 +32,7 @@
 #include <filesystem>
 #include <mutex>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -192,7 +192,7 @@ Json::Value maybeRegisterGitHubWebhook(const std::string& userId,
     }
 
     if (githubAppWebhookModeEnabled()) {
-        warnings.append("GitHub App webhook mode is enabled. DOKSCP will use the central GitHub App webhook instead of creating a repository webhook.");
+        warnings.append("GitHub App webhook mode is enabled. StackPilot will use the central GitHub App webhook instead of creating a repository webhook.");
         return warnings;
     }
 
@@ -205,7 +205,7 @@ Json::Value maybeRegisterGitHubWebhook(const std::string& userId,
     }
     const std::string webhookSecret = envOrEmpty("GITHUB_WEBHOOK_SECRET");
     if (webhookSecret.empty()) {
-        warnings.append("Auto deploy needs GITHUB_WEBHOOK_SECRET before DOKSCP can register a production GitHub webhook.");
+        warnings.append("Auto deploy needs GITHUB_WEBHOOK_SECRET before StackPilot can register a production GitHub webhook.");
         return warnings;
     }
     if (!looksPublicHttpsUrl(backendPublicUrl)) {
@@ -240,7 +240,7 @@ Json::Value maybeRegisterGitHubWebhook(const std::string& userId,
             hookReq->addHeader("Authorization", "Bearer " + token);
             hookReq->addHeader("Accept", "application/vnd.github+json");
             hookReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
-            hookReq->addHeader("User-Agent", "DOKSCP-Platform");
+            hookReq->addHeader("User-Agent", "stackpilot-Platform");
             client->sendRequest(
                 hookReq,
                 [fullName](drogon::ReqResult result, const drogon::HttpResponsePtr& response) {
@@ -932,7 +932,7 @@ void startBackgroundBuild(const std::string& deploymentId,
                         KubernetesDeployOptions options;
                         options.deploymentId = deploymentId;
                         options.projectName = projectName;
-                        options.nameSpace = "dokscp-apps";
+                        options.nameSpace = "stackpilot-apps";
                         options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
                         options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                         options.replicas = 1;
@@ -962,7 +962,7 @@ void startBackgroundBuild(const std::string& deploymentId,
                         options.deploymentId = deploymentId;
                         options.projectName = projectName;
                         options.imageName = buildResult.imageName;
-                        options.nameSpace = "dokscp-apps";
+                        options.nameSpace = "stackpilot-apps";
                         options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
                         options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                         options.replicas = 1;
@@ -1015,7 +1015,7 @@ void startBackgroundBuild(const std::string& deploymentId,
                 options.deploymentId = deploymentId;
                 options.projectName = projectName;
                 options.imageName = buildResult.imageName;
-                options.nameSpace = "dokscp-apps";
+                options.nameSpace = "stackpilot-apps";
                 options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
                 options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                 options.replicas = 1;
@@ -2483,7 +2483,7 @@ void ProjectController::listGitHubRepos(
         gitReq->setPath(requestPath);
         gitReq->setMethod(drogon::Get);
         gitReq->addHeader("Authorization", "Bearer " + pat);
-        gitReq->addHeader("User-Agent", "DOKSCP-Platform");
+        gitReq->addHeader("User-Agent", "stackpilot-Platform");
         gitReq->addHeader("Accept", "application/vnd.github+json");
         gitReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
         return gitReq;
@@ -2731,7 +2731,7 @@ void ProjectController::listGitHubBranches(
         if (!pat.empty()) {
             gitReq->addHeader("Authorization", "Bearer " + pat);
         }
-        gitReq->addHeader("User-Agent", "DOKSCP-Platform");
+        gitReq->addHeader("User-Agent", "stackpilot-Platform");
         gitReq->addHeader("Accept", "application/vnd.github+json");
         gitReq->addHeader("X-GitHub-Api-Version", "2022-11-28");
         return gitReq;
@@ -2826,4 +2826,4 @@ void ProjectController::listGitHubBranches(
     (*fetchPage)();
 }
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -13,18 +13,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
-const API_BASE = stripTrailingSlash(process.env.DOKSCP_API_URL || "http://localhost:8090/api/v1");
-const FRONTEND_BASE = stripTrailingSlash(process.env.DOKSCP_FRONTEND_URL || "http://localhost:3000");
-const TOKEN = process.env.DOKSCP_MCP_TOKEN || "";
-const HTTP_TIMEOUT_MS = numberEnv("DOKSCP_MCP_HTTP_TIMEOUT_MS", 30_000);
-const DEFAULT_WAIT_SECONDS = numberEnv("DOKSCP_MCP_DEPLOY_WAIT_SECONDS", 45);
+const API_BASE = stripTrailingSlash(process.env.STACKPILOT_API_URL || "http://localhost:8090/api/v1");
+const FRONTEND_BASE = stripTrailingSlash(process.env.STACKPILOT_FRONTEND_URL || "http://localhost:3000");
+const TOKEN = process.env.STACKPILOT_MCP_TOKEN || "";
+const HTTP_TIMEOUT_MS = numberEnv("STACKPILOT_MCP_HTTP_TIMEOUT_MS", 30_000);
+const DEFAULT_WAIT_SECONDS = numberEnv("STACKPILOT_MCP_DEPLOY_WAIT_SECONDS", 45);
 const HOST_LOCAL_ROOT = resolveMaybeRelative(
-  process.env.DOKSCP_LOCAL_PROJECTS_HOST_ROOT ||
-    process.env.DOKSCP_LOCAL_PROJECTS_DIR ||
+  process.env.STACKPILOT_LOCAL_PROJECTS_HOST_ROOT ||
+    process.env.STACKPILOT_LOCAL_PROJECTS_DIR ||
     path.join(REPO_ROOT, "local-projects"),
   REPO_ROOT
 );
-const CONTAINER_LOCAL_ROOT = toPosixPath(process.env.DOKSCP_LOCAL_PROJECTS_CONTAINER_ROOT || "/app/local-projects");
+const CONTAINER_LOCAL_ROOT = toPosixPath(process.env.STACKPILOT_LOCAL_PROJECTS_CONTAINER_ROOT || "/app/local-projects");
 
 const IGNORE_NAMES = new Set([
   ".cache",
@@ -61,12 +61,12 @@ const IGNORE_EXACT_FILES = new Set([
   "pnpm-debug.log",
 ]);
 
-const DEFAULT_MAX_FILE_BYTES = numberEnv("DOKSCP_MCP_MAX_FILE_BYTES", 25 * 1024 * 1024);
-const DEFAULT_MAX_TOTAL_BYTES = numberEnv("DOKSCP_MCP_MAX_TOTAL_BYTES", 300 * 1024 * 1024);
-const DEFAULT_MAX_FILES = numberEnv("DOKSCP_MCP_MAX_FILES", 20_000);
+const DEFAULT_MAX_FILE_BYTES = numberEnv("STACKPILOT_MCP_MAX_FILE_BYTES", 25 * 1024 * 1024);
+const DEFAULT_MAX_TOTAL_BYTES = numberEnv("STACKPILOT_MCP_MAX_TOTAL_BYTES", 300 * 1024 * 1024);
+const DEFAULT_MAX_FILES = numberEnv("STACKPILOT_MCP_MAX_FILES", 20_000);
 
 const server = new McpServer({
-  name: "dokscp-platform",
+  name: "stackpilot-platform",
   version: "1.1.0",
 });
 
@@ -102,8 +102,8 @@ function jsonResult(title, data) {
 function apiHeaders(auth = true) {
   const headers = {
     "Content-Type": "application/json",
-    "X-DOKSCP-CSRF": "1",
-    "X-DOKSCP-MCP": "1",
+    "X-stackpilot-CSRF": "1",
+    "X-stackpilot-MCP": "1",
   };
   if (auth && TOKEN) {
     headers.Authorization = `Bearer ${TOKEN}`;
@@ -115,7 +115,7 @@ async function api(method, apiPath, body, options = {}) {
   const auth = options.auth !== false;
   if (auth && !TOKEN) {
     throw new Error(
-      "DOKSCP_MCP_TOKEN is not set. Generate a token in Settings > MCP Integrations and add it to the IDE MCP environment."
+      "STACKPILOT_MCP_TOKEN is not set. Generate a token in Settings > MCP Integrations and add it to the IDE MCP environment."
     );
   }
 
@@ -193,8 +193,8 @@ async function resolveProjectPath(inputPath) {
   }
 
   const candidates = [
-    process.env.DOKSCP_PROJECT_PATH,
-    process.env.DOKSCP_DEFAULT_PROJECT_PATH,
+    process.env.STACKPILOT_PROJECT_PATH,
+    process.env.STACKPILOT_DEFAULT_PROJECT_PATH,
     process.env.WORKSPACE_FOLDER,
     process.env.INIT_CWD,
     process.cwd(),
@@ -208,7 +208,7 @@ async function resolveProjectPath(inputPath) {
   }
 
   throw new Error(
-    "No local project path was found. Pass project_path as an absolute path, or configure DOKSCP_PROJECT_PATH in the MCP server environment."
+    "No local project path was found. Pass project_path as an absolute path, or configure STACKPILOT_PROJECT_PATH in the MCP server environment."
   );
 }
 
@@ -288,7 +288,7 @@ async function inspectProject(projectRoot, singleFileName = "") {
   }
 
   if (!summary.has_dockerfile) {
-    summary.notes.push("No Dockerfile found. DOKSCP will use deterministic generators first, then AI Dockerfile fallback when enabled.");
+    summary.notes.push("No Dockerfile found. StackPilot will use deterministic generators first, then AI Dockerfile fallback when enabled.");
   }
   return summary;
 }
@@ -355,7 +355,7 @@ async function stageLocalProject(projectPath, options = {}) {
     const firstSegment = stageRelativeToSource.split(path.sep)[0];
     if (!shouldIgnore(firstSegment, firstSegment)) {
       throw new Error(
-        "Refusing to stage a project into a non-ignored child directory of itself. Set DOKSCP_LOCAL_PROJECTS_HOST_ROOT outside the project."
+        "Refusing to stage a project into a non-ignored child directory of itself. Set STACKPILOT_LOCAL_PROJECTS_HOST_ROOT outside the project."
       );
     }
   }
@@ -724,7 +724,7 @@ async function handleListDeployments() {
 
 async function handleHealth() {
   const data = await api("GET", "/health", undefined, { auth: false, timeoutMs: 10_000 });
-  return jsonResult("DOKSCP backend is reachable.", {
+  return jsonResult("StackPilot backend is reachable.", {
     api_base: API_BASE,
     frontend_base: FRONTEND_BASE,
     mcp_token_configured: Boolean(TOKEN),
@@ -736,7 +736,7 @@ async function handleHealth() {
 
 async function handleVerifyAuth() {
   const data = await api("GET", "/mcp/verify", undefined, { timeoutMs: 10_000 });
-  return jsonResult("DOKSCP MCP token is valid.", data);
+  return jsonResult("StackPilot MCP token is valid.", data);
 }
 
 async function handleInspectLocalProject(args) {
@@ -771,7 +771,7 @@ async function handleDeployLocalProject(args) {
       project_name: projectName,
       staged,
       next_step:
-        "Call dokscp_deploy_local_project again without dry_run to create the DOKSCP project, build it, deploy it, and return the preview URL.",
+        "Call STACKPILOT_deploy_local_project again without dry_run to create the StackPilot project, build it, deploy it, and return the preview URL.",
     });
   }
 
@@ -785,7 +785,7 @@ async function handleDeployLocalProject(args) {
     if (matched) {
       vpsConnectionId = matched.id;
     } else {
-      throw new Error(`VPS connection matching '${args.vps_connection_name}' not found. Please create it in the DOKSCP Dashboard.`);
+      throw new Error(`VPS connection matching '${args.vps_connection_name}' not found. Please create it in the StackPilot Dashboard.`);
     }
   }
 
@@ -793,7 +793,7 @@ async function handleDeployLocalProject(args) {
     name: args.project_name || projectName,
     description:
       args.description ||
-      `Created by DOKSCP MCP from local path ${staged.source_path} on ${os.hostname()}.`,
+      `Created by StackPilot MCP from local path ${staged.source_path} on ${os.hostname()}.`,
     sourcePath: vpsConnectionId ? (args.remote_workspace_path || "/tmp") : "",
     envVars: args.env_vars || [],
     runtimeType,
@@ -847,7 +847,7 @@ async function handleDeployLocalProject(args) {
 
   const headline = runtimeUrl
     ? `Deployment ready. Preview URL: ${runtimeUrl}`
-    : `Deployment ${status}. Use dokscp_get_deployment_status with deployment_id ${deployment.id} for updates.`;
+    : `Deployment ${status}. Use STACKPILOT_get_deployment_status with deployment_id ${deployment.id} for updates.`;
 
   return jsonResult(headline, response);
 }
@@ -864,7 +864,7 @@ async function handleDeployGithubRepo(args) {
     if (matched) {
       vpsConnectionId = matched.id;
     } else {
-      throw new Error(`VPS connection matching '${args.vps_connection_name}' not found. Please create it in the DOKSCP Dashboard.`);
+      throw new Error(`VPS connection matching '${args.vps_connection_name}' not found. Please create it in the StackPilot Dashboard.`);
     }
   }
 
@@ -947,11 +947,11 @@ const deployLocalSchema = {
   project_path: z
     .string()
     .optional()
-    .describe("Absolute path to the local project directory or single script file. If omitted, the MCP server tries DOKSCP_PROJECT_PATH, IDE workspace env vars, then process cwd."),
-  project_name: z.string().optional().describe("DOKSCP project name. Auto-derived from project_path when omitted."),
-  vps_connection_name: z.string().optional().describe("Optional saved VPS/SSH connection name to deploy to. Uses DOKSCP default if omitted."),
+    .describe("Absolute path to the local project directory or single script file. If omitted, the MCP server tries STACKPILOT_PROJECT_PATH, IDE workspace env vars, then process cwd."),
+  project_name: z.string().optional().describe("StackPilot project name. Auto-derived from project_path when omitted."),
+  vps_connection_name: z.string().optional().describe("Optional saved VPS/SSH connection name to deploy to. Uses StackPilot default if omitted."),
   remote_workspace_path: z.string().optional().describe("Remote base directory for uploaded source artifacts when deploying to a VPS. Default /tmp."),
-  description: z.string().optional().describe("Optional project description stored in DOKSCP."),
+  description: z.string().optional().describe("Optional project description stored in StackPilot."),
   version: z.string().optional().describe("Deployment version label. Auto-generated when omitted."),
   commit_hash: z.string().optional().describe("Optional local commit hash or label."),
   branch: z.string().optional().describe("Optional branch or environment label for this deployment."),
@@ -963,42 +963,42 @@ const deployLocalSchema = {
   wait_seconds: z.number().int().min(0).max(600).optional().describe("Maximum seconds to wait for a preview URL. Default 180."),
   build_only: z.boolean().optional().describe("Build an image without deploying to Kubernetes. Default false."),
   runtime_type: z.enum(["docker", "kubernetes"]).optional().describe("Runtime target. Defaults to docker for local preview links."),
-  dry_run: z.boolean().optional().describe("Inspect and stage-plan only. Does not copy files or call DOKSCP APIs."),
+  dry_run: z.boolean().optional().describe("Inspect and stage-plan only. Does not copy files or call StackPilot APIs."),
   max_file_bytes: z.number().int().min(1).optional().describe("Per-file copy limit in bytes."),
   max_total_bytes: z.number().int().min(1).optional().describe("Total copied source limit in bytes."),
   max_files: z.number().int().min(1).optional().describe("Maximum number of copied source files."),
 };
 
 registerTool(
-  "dokscp_health",
-  "Check whether the DOKSCP backend is reachable and show MCP local-source configuration. Use this first when an IDE reports MCP trouble.",
+  "STACKPILOT_health",
+  "Check whether the StackPilot backend is reachable and show MCP local-source configuration. Use this first when an IDE reports MCP trouble.",
   {},
   handleHealth
 );
 
 registerTool(
-  "dokscp_verify_auth",
-  "Verify the DOKSCP_MCP_TOKEN and confirm the MCP server can authenticate as the user.",
+  "STACKPILOT_verify_auth",
+  "Verify the STACKPILOT_MCP_TOKEN and confirm the MCP server can authenticate as the user.",
   {},
   handleVerifyAuth
 );
 
 registerTool(
-  "dokscp_list_projects",
-  "List DOKSCP projects for the authenticated user.",
+  "STACKPILOT_list_projects",
+  "List StackPilot projects for the authenticated user.",
   {},
   handleListProjects
 );
 
 registerTool(
-  "dokscp_list_deployments",
-  "List all DOKSCP deployments for the authenticated user, including runtime URLs when available.",
+  "STACKPILOT_list_deployments",
+  "List all StackPilot deployments for the authenticated user, including runtime URLs when available.",
   {},
   handleListDeployments
 );
 
 registerTool(
-  "dokscp_inspect_local_project",
+  "STACKPILOT_inspect_local_project",
   "Inspect a local IDE project path before deployment. Detects Dockerfile, common manifests, and likely stack.",
   {
     project_path: z.string().optional().describe("Absolute path to the local project directory or single script file."),
@@ -1007,22 +1007,22 @@ registerTool(
 );
 
 registerTool(
-  "dokscp_deploy_local_project",
+  "STACKPILOT_deploy_local_project",
   "Production deploy from the current IDE workspace or a local path. DO NOT manually create Dockerfiles, copy files to the VPS, or run bash commands. This tool handles EVERYTHING automatically: it stages local files, builds the Docker image, deploys to local Docker by default or Kubernetes/remote VPS when requested, then returns the live preview URL.",
   deployLocalSchema,
   handleDeployLocalProject
 );
 
 registerTool(
-  "dokscp_deploy_current_project",
-  "Alias for dokscp_deploy_local_project. DO NOT manually create Dockerfiles or copy files. This tool automatically stages, builds, and deploys your local workspace to local Docker by default or Kubernetes/remote VPS when requested, returning the live URL.",
+  "STACKPILOT_deploy_current_project",
+  "Alias for STACKPILOT_deploy_local_project. DO NOT manually create Dockerfiles or copy files. This tool automatically stages, builds, and deploys your local workspace to local Docker by default or Kubernetes/remote VPS when requested, returning the live URL.",
   deployLocalSchema,
   handleDeployLocalProject
 );
 
 registerTool(
-  "dokscp_deploy_github_repo",
-  "Create a DOKSCP project from a GitHub repository URL and trigger a deployment. DO NOT manually clone or build. This tool handles EVERYTHING automatically: it fetches the repo, builds the image, deploys to local Docker by default or Kubernetes/remote VPS when requested, and returns the preview URL when ready.",
+  "STACKPILOT_deploy_github_repo",
+  "Create a StackPilot project from a GitHub repository URL and trigger a deployment. DO NOT manually clone or build. This tool handles EVERYTHING automatically: it fetches the repo, builds the image, deploys to local Docker by default or Kubernetes/remote VPS when requested, and returns the preview URL when ready.",
   {
     repo_url: z.string().describe("GitHub repository URL, for example https://github.com/user/repo"),
     project_name: z.string().optional(),
@@ -1034,13 +1034,13 @@ registerTool(
     runtime_type: z.enum(["docker", "kubernetes"]).optional().describe("Runtime target. Defaults to docker without a VPS and kubernetes with a VPS."),
     wait_for_ready: z.boolean().optional(),
     wait_seconds: z.number().int().min(0).max(600).optional(),
-    vps_connection_name: z.string().optional().describe("Optional saved VPS/SSH connection name to deploy to. Uses DOKSCP default if omitted."),
+    vps_connection_name: z.string().optional().describe("Optional saved VPS/SSH connection name to deploy to. Uses StackPilot default if omitted."),
   },
   handleDeployGithubRepo
 );
 
 registerTool(
-  "dokscp_get_deployment_status",
+  "STACKPILOT_get_deployment_status",
   "Check deployment status and optionally include recent logs.",
   {
     deployment_id: z.string(),
@@ -1051,7 +1051,7 @@ registerTool(
 );
 
 registerTool(
-  "dokscp_get_deployment_logs",
+  "STACKPILOT_get_deployment_logs",
   "Get deployment build/runtime logs.",
   {
     deployment_id: z.string(),
@@ -1061,8 +1061,8 @@ registerTool(
 );
 
 registerTool(
-  "dokscp_trigger_redeploy",
-  "Re-trigger a build for an existing DOKSCP deployment.",
+  "STACKPILOT_trigger_redeploy",
+  "Re-trigger a build for an existing StackPilot deployment.",
   {
     deployment_id: z.string(),
   },
@@ -1073,7 +1073,7 @@ registerTool(
 );
 
 registerTool(
-  "dokscp_scale_deployment",
+  "STACKPILOT_scale_deployment",
   "Scale a running Kubernetes deployment.",
   {
     deployment_id: z.string(),
@@ -1086,8 +1086,8 @@ registerTool(
 );
 
 registerTool(
-  "dokscp_delete_deployment",
-  "Delete an DOKSCP deployment and its runtime resources.",
+  "STACKPILOT_delete_deployment",
+  "Delete an StackPilot deployment and its runtime resources.",
   {
     deployment_id: z.string(),
     delete_image: z.boolean().optional(),
@@ -1099,24 +1099,24 @@ registerTool(
 );
 
 // Backward-compatible aliases for older IDE configs and prompts.
-registerTool("get_platform_health", "Alias for dokscp_health.", {}, handleHealth);
-registerTool("list_projects", "Alias for dokscp_list_projects.", {}, handleListProjects);
-registerTool("list_deployments", "Alias for dokscp_list_deployments.", {}, handleListDeployments);
-registerTool("deploy_github_repo", "Alias for dokscp_deploy_github_repo.", {
+registerTool("get_platform_health", "Alias for STACKPILOT_health.", {}, handleHealth);
+registerTool("list_projects", "Alias for STACKPILOT_list_projects.", {}, handleListProjects);
+registerTool("list_deployments", "Alias for STACKPILOT_list_deployments.", {}, handleListDeployments);
+registerTool("deploy_github_repo", "Alias for STACKPILOT_deploy_github_repo.", {
   repo_url: z.string(),
   project_name: z.string().optional(),
   branch: z.string().optional(),
   github_pat: z.string().optional(),
   vps_connection_name: z.string().optional(),
 }, handleDeployGithubRepo);
-registerTool("get_deployment_status", "Alias for dokscp_get_deployment_status.", {
+registerTool("get_deployment_status", "Alias for STACKPILOT_get_deployment_status.", {
   deployment_id: z.string(),
   include_logs: z.boolean().optional(),
 }, handleGetDeploymentStatus);
-registerTool("get_deployment_logs", "Alias for dokscp_get_deployment_logs.", {
+registerTool("get_deployment_logs", "Alias for STACKPILOT_get_deployment_logs.", {
   deployment_id: z.string(),
 }, handleGetDeploymentLogs);
-registerTool("trigger_redeploy", "Alias for dokscp_trigger_redeploy.", {
+registerTool("trigger_redeploy", "Alias for STACKPILOT_trigger_redeploy.", {
   deployment_id: z.string(),
 }, async ({ deployment_id }) => {
   const data = await triggerDeployment(deployment_id);
@@ -1124,7 +1124,7 @@ registerTool("trigger_redeploy", "Alias for dokscp_trigger_redeploy.", {
 });
 
 if (!TOKEN) {
-  console.error("[dokscp-mcp] DOKSCP_MCP_TOKEN is not set. The server will start, but authenticated tools will return a setup error.");
+  console.error("[stackpilot-mcp] STACKPILOT_MCP_TOKEN is not set. The server will start, but authenticated tools will return a setup error.");
 }
 
 const transport = new StdioServerTransport();

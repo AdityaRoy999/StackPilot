@@ -1,13 +1,13 @@
 # AI Agent
 
-The DOKSCP AI Agent is meant to assist real deployment work, not decorate the dashboard.
+The StackPilot AI Agent is meant to assist real deployment work, not decorate the dashboard.
 
 ## Provider Modes
 
-DOKSCP supports:
+StackPilot supports:
 
-- NVIDIA NIM through `DOKSCP_AI_PROVIDER=nvidia_nim`.
-- OpenAI-compatible providers through `DOKSCP_AI_PROVIDER=openai_compatible`.
+- NVIDIA NIM through `STACKPILOT_AI_PROVIDER=nvidia_nim`.
+- OpenAI-compatible providers through `STACKPILOT_AI_PROVIDER=openai_compatible`.
 
 Fast mode should use the lowest-latency reliable model. Thinking mode should use a stronger model for diagnosis, Dockerfile planning, and multi-step reasoning.
 
@@ -16,7 +16,7 @@ Fast mode should use the lowest-latency reliable model. Thinking mode should use
 - Explain build failures from logs.
 - Diagnose runtime failures using logs and Kubernetes events.
 - Help plan Dockerfiles for unknown project shapes.
-- Answer project and deployment questions from DOKSCP context.
+- Answer project and deployment questions from StackPilot context.
 - Interpret slash commands such as diagnose, build, deploy, and Dockerfile planning.
 
 ## What AI Should Not Do Silently
@@ -35,7 +35,7 @@ The build system should use deterministic detection whenever possible. AI is the
 NVIDIA NIM:
 
 ```bash
-DOKSCP_AI_PROVIDER=nvidia_nim
+STACKPILOT_AI_PROVIDER=nvidia_nim
 NVIDIA_API_KEY=...
 NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_NIM_FAST_MODEL=meta/llama-3.1-8b-instruct
@@ -45,7 +45,7 @@ NVIDIA_NIM_THINKING_MODEL=meta/llama-3.1-70b-instruct
 OpenAI-compatible:
 
 ```bash
-DOKSCP_AI_PROVIDER=openai_compatible
+STACKPILOT_AI_PROVIDER=openai_compatible
 OPENAI_COMPATIBLE_BASE_URL=https://provider.example.com/v1
 OPENAI_COMPATIBLE_API_KEY=...
 OPENAI_COMPATIBLE_MODEL=...

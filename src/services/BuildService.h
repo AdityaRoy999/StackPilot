@@ -10,7 +10,7 @@
 #include <functional>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct SshConnectionConfig;
 struct BuildEnvVar {
@@ -148,4 +148,4 @@ private:
                                         LogCallback onLogLine) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -8,7 +8,7 @@
 #include <string>
 #include <json/json.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class JwtHelper {
 public:
@@ -29,4 +29,4 @@ private:
     static std::string hmacSha256(const std::string& key, const std::string& data);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

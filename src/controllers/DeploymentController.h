@@ -6,7 +6,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class DeploymentController : public drogon::HttpController<DeploymentController> {
 public:
@@ -90,4 +90,4 @@ private:
                                bool paused);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

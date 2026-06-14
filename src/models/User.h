@@ -10,7 +10,7 @@
 #include <string>
 #include <json/json.h>  // Drogon's built-in jsoncpp
 
-namespace dokscp {
+namespace stackpilot {
 
 struct User {
     std::string id;
@@ -32,4 +32,4 @@ struct User {
     }
 };
 
-} // namespace dokscp
+} // namespace stackpilot

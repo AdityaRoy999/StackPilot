@@ -8,7 +8,7 @@
 #include <fstream>
 #include <algorithm>
 
-namespace dokscp {
+namespace stackpilot {
 
 void Database::initialize(
     const std::string& host,
@@ -97,4 +97,4 @@ void Database::runMigrations(const std::string& migrationsPath) {
     spdlog::info("All migrations processed");
 }
 
-} // namespace dokscp
+} // namespace stackpilot

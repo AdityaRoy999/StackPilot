@@ -1,9 +1,9 @@
-# DOKSCP Observability
+# StackPilot Observability
 
 This folder adds a local production-style observability stack:
 
 - Prometheus scrapes backend platform metrics from `/metrics`.
-- Grafana provisions a DOKSCP dashboard automatically.
+- Grafana provisions a StackPilot dashboard automatically.
 - Loki stores logs.
 - Promtail streams Docker container logs into Loki.
 - cAdvisor exposes container CPU and memory metrics for Prometheus.
@@ -15,4 +15,4 @@ Default local URLs:
 - Loki: http://localhost:3100
 
 For production, set a strong `GRAFANA_ADMIN_PASSWORD` and optionally set
-`DOKSCP_METRICS_BEARER_TOKEN` so `/metrics` requires a bearer token.
+`STACKPILOT_METRICS_BEARER_TOKEN` so `/metrics` requires a bearer token.

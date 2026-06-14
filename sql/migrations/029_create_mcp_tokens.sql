@@ -1,6 +1,6 @@
 -- MCP (Model Context Protocol) API tokens
 -- These tokens allow external AI tools (VS Code, Cursor, Gemini CLI, etc.)
--- to interact with the DOKSCP platform on behalf of a user.
+-- to interact with the StackPilot platform on behalf of a user.
 CREATE TABLE IF NOT EXISTS mcp_tokens (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

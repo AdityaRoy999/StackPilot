@@ -1,8 +1,6 @@
-# DOKSCP
+# StackPilot
 
-**DOKSCP** stands for **Developer Operations Kubernetes Source Control Platform**.
-
-DOKSCP is a self-hosted deployment control plane for turning GitHub repositories, SSH/VPS folders, local folders, and application templates into running Docker or Kubernetes deployments. It includes a Next.js dashboard, a C++ Drogon backend, a Python AI service, PostgreSQL, Redis, Docker build orchestration, Kubernetes runtime management, MCP tools for IDE agents, and an observability stack.
+StackPilot is a self-hosted application delivery cockpit for turning GitHub repositories, SSH/VPS folders, local folders, and application templates into running Docker or Kubernetes deployments. It includes a Next.js dashboard, a C++ Drogon backend, a Python AI service, PostgreSQL, Redis, Docker build orchestration, Kubernetes runtime management, MCP tools for IDE agents, and an observability stack.
 
 Use it when you want one platform to create projects, build containers, deploy applications, inspect logs, manage runtimes, monitor services, and use an AI agent to help diagnose or operate deployments.
 
@@ -19,7 +17,7 @@ Use it when you want one platform to create projects, build containers, deploy a
 
 ## Required Tools
 
-Install these before running DOKSCP locally:
+Install these before running StackPilot locally:
 
 | Tool | Required | Notes |
 | --- | --- | --- |
@@ -42,7 +40,7 @@ Clone the repository:
 
 ```bash
 git clone <your-repo-url>
-cd DOKSCP
+cd StackPilot
 ```
 
 Create a local environment file:
@@ -60,12 +58,12 @@ Copy-Item production.env.template .env
 Edit `.env` and set at least these values:
 
 ```env
-DOKSCP_ENV=development
-DOKSCP_DOMAIN=localhost
+STACKPILOT_ENV=development
+STACKPILOT_DOMAIN=localhost
 
-DB_USER=dokscp_admin
+DB_USER=stackpilot_admin
 DB_PASSWORD=replace-with-a-local-password
-DB_NAME=dokscp_platform
+DB_NAME=stackpilot_platform
 
 JWT_SECRET=replace-with-at-least-48-random-characters
 TOKEN_ENCRYPTION_KEY=replace-with-at-least-48-random-characters
@@ -77,8 +75,8 @@ BACKEND_PUBLIC_URL=http://localhost:8090
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8090/api/v1
 NEXT_PUBLIC_WS_BASE_URL=ws://localhost:8090
 
-DOKSCP_REQUIRE_HTTPS=false
-DOKSCP_TRUST_PROXY_HEADERS=false
+STACKPILOT_REQUIRE_HTTPS=false
+STACKPILOT_TRUST_PROXY_HEADERS=false
 ```
 
 Start the app:
@@ -121,7 +119,7 @@ docker compose down -v
 
 ## First Account
 
-By default, DOKSCP is designed so the first user can register and become the initial platform user. After the first account exists, configure invite-based registration or your preferred authentication settings before exposing the platform publicly.
+By default, StackPilot is designed so the first user can register and become the initial platform user. After the first account exists, configure invite-based registration or your preferred authentication settings before exposing the platform publicly.
 
 Do not publish a deployment with placeholder secrets such as `change-before-deployment`, `replace-with`, or short test passwords.
 
@@ -189,7 +187,7 @@ On Windows:
 
 Before production, configure:
 
-- `DOKSCP_DOMAIN`
+- `STACKPILOT_DOMAIN`
 - `ACME_EMAIL`
 - `JWT_SECRET`
 - `TOKEN_ENCRYPTION_KEY`
@@ -209,7 +207,7 @@ Production should be served over HTTPS. Do not expose the backend, Docker socket
 
 ## AI Agent
 
-DOKSCP includes an AI workspace for deployment help and diagnostics. The agent can explain failed deployments, create application-source projects, and help with operational commands.
+StackPilot includes an AI workspace for deployment help and diagnostics. The agent can explain failed deployments, create application-source projects, and help with operational commands.
 
 Configure an AI provider in the dashboard settings or with environment variables. The exact provider depends on your deployment, but keep provider API keys out of Git.
 
@@ -224,7 +222,7 @@ Explain why this runtime is unhealthy
 
 ## Application Templates
 
-DOKSCP can create application-source projects without needing a Git repository. Examples include:
+StackPilot can create application-source projects without needing a Git repository. Examples include:
 
 - PostgreSQL
 - MySQL
@@ -239,7 +237,7 @@ Application templates store configuration in project environment variables and g
 
 ## MCP and IDE Agents
 
-The `mcp-server/` package lets IDE agents call DOKSCP tools directly. This is useful for workflows where an agent needs to create projects, upload source artifacts, start builds, inspect deployments, or diagnose failures.
+The `mcp-server/` package lets IDE agents call StackPilot tools directly. This is useful for workflows where an agent needs to create projects, upload source artifacts, start builds, inspect deployments, or diagnose failures.
 
 See [mcp-server/README.md](mcp-server/README.md) and [docs/mcp-ide-agents.md](docs/mcp-ide-agents.md).
 
@@ -358,7 +356,7 @@ If AI responses do not work, check:
 
 ## Security
 
-DOKSCP is an infrastructure platform. Treat it like production operations software.
+StackPilot is an infrastructure platform. Treat it like production operations software.
 
 - Never commit `.env`, kubeconfigs, private keys, GitHub PATs, AI provider keys, OAuth secrets, or MCP tokens.
 - Use long random values for `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, and `GITHUB_WEBHOOK_SECRET`.
@@ -366,5 +364,4 @@ DOKSCP is an infrastructure platform. Treat it like production operations softwa
 - Restrict Docker socket access.
 - Use least-privilege SSH users for remote hosts.
 - Rotate secrets if debug files, terminal logs, or screenshots exposed them.
-
 

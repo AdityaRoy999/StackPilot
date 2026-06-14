@@ -16,8 +16,8 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-MAX_TEXT = int(os.getenv("DOKSCP_AI_MAX_TEXT_BYTES", "24000"))
-DEFAULT_TIMEOUT = float(os.getenv("DOKSCP_AI_REQUEST_TIMEOUT_SECONDS", "30"))
+MAX_TEXT = int(os.getenv("STACKPILOT_AI_MAX_TEXT_BYTES", "24000"))
+DEFAULT_TIMEOUT = float(os.getenv("STACKPILOT_AI_REQUEST_TIMEOUT_SECONDS", "30"))
 MODEL_PROBE_TIMEOUT = float(os.getenv("NVIDIA_NIM_MODEL_PROBE_TIMEOUT_SECONDS", "8"))
 MODEL_PROBE_LIMIT = int(os.getenv("NVIDIA_NIM_MODEL_PROBE_LIMIT", "30"))
 MODEL_PROBE_CACHE_TTL = float(os.getenv("NVIDIA_NIM_MODEL_PROBE_CACHE_SECONDS", "3600"))
@@ -77,7 +77,7 @@ class EmbeddingRequest(BaseModel):
     model: Optional[str] = None
     provider_overrides: Dict[str, Any] = Field(default_factory=dict)
     texts: List[str] = Field(default_factory=list)
-    dimensions: int = Field(default_factory=lambda: int(os.getenv("DOKSCP_AI_EMBEDDING_DIMENSIONS", "384")))
+    dimensions: int = Field(default_factory=lambda: int(os.getenv("STACKPILOT_AI_EMBEDDING_DIMENSIONS", "384")))
 
 
 class AgentState(TypedDict, total=False):
@@ -88,7 +88,7 @@ class AgentState(TypedDict, total=False):
     warnings: List[str]
 
 
-app = FastAPI(title="DOKSCP AI Service", version="0.1.0")
+app = FastAPI(title="StackPilot AI Service", version="0.1.0")
 
 
 SECRET_PATTERNS = [
@@ -135,7 +135,7 @@ def provider_config(
     overrides: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, str, str, str]:
     overrides = overrides or {}
-    selected = (provider or os.getenv("DOKSCP_AI_PROVIDER") or "nvidia_nim").strip()
+    selected = (provider or os.getenv("STACKPILOT_AI_PROVIDER") or "nvidia_nim").strip()
     if selected == "openai_compatible":
         base_url = str(
             overrides.get("base_url")
@@ -152,7 +152,7 @@ def provider_config(
             or str(overrides.get("model") or "")
             or (os.getenv("OPENAI_COMPATIBLE_THINKING_MODEL") if model_mode == "thinking" else "")
             or os.getenv("OPENAI_COMPATIBLE_MODEL")
-            or os.getenv("DOKSCP_AI_MODEL")
+            or os.getenv("STACKPILOT_AI_MODEL")
             or "gpt-4o-mini"
         )
     else:
@@ -163,7 +163,7 @@ def provider_config(
             model
             or (os.getenv("NVIDIA_NIM_THINKING_MODEL") if model_mode == "thinking" else "")
             or (os.getenv("NVIDIA_NIM_FAST_MODEL") if model_mode == "fast" else "")
-            or os.getenv("DOKSCP_AI_MODEL")
+            or os.getenv("STACKPILOT_AI_MODEL")
             or os.getenv("NVIDIA_NIM_MODEL")
             or "meta/llama-3.1-70b-instruct"
         )
@@ -172,7 +172,7 @@ def provider_config(
 
 def embedding_provider_config(req: EmbeddingRequest) -> tuple[str, str, str, str]:
     overrides = req.provider_overrides or {}
-    selected = (req.provider or os.getenv("DOKSCP_AI_EMBEDDING_PROVIDER") or os.getenv("DOKSCP_AI_PROVIDER") or "nvidia_nim").strip()
+    selected = (req.provider or os.getenv("STACKPILOT_AI_EMBEDDING_PROVIDER") or os.getenv("STACKPILOT_AI_PROVIDER") or "nvidia_nim").strip()
     if selected == "openai_compatible":
         base_url = str(
             overrides.get("base_url")
@@ -220,7 +220,7 @@ async def provider_embeddings(req: EmbeddingRequest) -> Dict[str, Any]:
     dimensions = 384
     texts = [clip(redact_text(text), MAX_TEXT) for text in req.texts[:32]]
     provider, base_url, api_key, model = embedding_provider_config(req)
-    allow_fallback = env_flag("DOKSCP_AI_EMBEDDING_FALLBACK", True)
+    allow_fallback = env_flag("STACKPILOT_AI_EMBEDDING_FALLBACK", True)
 
     if base_url and api_key and texts:
         payload: Dict[str, Any] = {"model": model, "input": texts}
@@ -256,7 +256,7 @@ async def provider_embeddings(req: EmbeddingRequest) -> Dict[str, Any]:
     return {
         "status": "ok",
         "provider": "deterministic",
-        "model": "dokscp-hash-embedding-v1",
+        "model": "stackpilot-hash-embedding-v1",
         "dimensions": dimensions,
         "fallback": True,
         "embeddings": [deterministic_embedding(text, dimensions) for text in texts],
@@ -568,7 +568,7 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
     }
     base = {
         "analyze_project": (
-            "You are the DOKSCP build intelligence agent. Classify the project, infer runtime, "
+            "You are the StackPilot build intelligence agent. Classify the project, infer runtime, "
             "entrypoint, framework, exposed port, confidence, and whether deterministic support already applies."
         ),
         "generate_dockerfile": (
@@ -587,7 +587,7 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
             "Answer the user's project question using only the supplied context. Be concise, practical, and flag uncertainty."
         ),
         "agent_chat": (
-            "You are the DOKSCP platform agent, a production DevOps copilot. Interpret slash commands and natural language. "
+            "You are the StackPilot platform agent, a production DevOps copilot. Interpret slash commands and natural language. "
             "Use the supplied chat memory as durable context for this specific conversation, but prefer the user's latest instruction when it conflicts. "
             "Never repeat an old diagnosis, deployment failure, or log analysis unless the latest user message is asking about that failure, deployment, logs, or fix. "
             "If the latest user message is a general question, answer that question directly and treat deployment/log context only as optional background. "
@@ -599,7 +599,7 @@ def build_prompt(workflow: str, req: AgentRequest) -> str:
     }.get(workflow, "Analyze this deployment context safely.")
     if workflow == "agent_chat" and req.command in {"explain_failure", "explain_build_failure"}:
         return (
-            "You are a fast deployment failure explainer for the DOKSCP platform. "
+            "You are a fast deployment failure explainer for the StackPilot platform. "
             "Use the supplied log excerpt and deployment context to explain the issue clearly for a developer. "
             "Return markdown with these short sections: What happened, Why it happened, How to fix it, Next action. "
             "Use concrete evidence from the log. Avoid vague advice, avoid JSON, and keep it under 220 words."
@@ -841,7 +841,7 @@ async def health() -> Dict[str, Any]:
     provider, base_url, api_key, model = provider_config(None, None)
     return {
         "status": "ok",
-        "service": "dokscp-ai-service",
+        "service": "stackpilot-ai-service",
         "provider": provider,
         "model": model,
         "configured": bool(base_url and api_key),
@@ -856,7 +856,7 @@ def fallback_models(provider: str, selected_model: str = "") -> List[Dict[str, A
             {"id": fast, "label": fast, "mode": "fast"},
             {"id": thinking, "label": thinking, "mode": "thinking"},
         ]
-    fast_model = os.getenv("NVIDIA_NIM_FAST_MODEL") or os.getenv("DOKSCP_AI_MODEL") or os.getenv("NVIDIA_NIM_MODEL") or "meta/llama-3.1-70b-instruct"
+    fast_model = os.getenv("NVIDIA_NIM_FAST_MODEL") or os.getenv("STACKPILOT_AI_MODEL") or os.getenv("NVIDIA_NIM_MODEL") or "meta/llama-3.1-70b-instruct"
     thinking_model = os.getenv("NVIDIA_NIM_THINKING_MODEL") or os.getenv("NVIDIA_NIM_MODEL") or fast_model
     allowed_raw = os.getenv("NVIDIA_NIM_ALLOWED_MODELS", "")
     allowed = [item.strip() for item in allowed_raw.split(",") if item.strip()]
@@ -1032,7 +1032,7 @@ async def model_catalog(provider: str, base_url: str, api_key: str, selected_mod
                 preferred = {
                     os.getenv("NVIDIA_NIM_FAST_MODEL") or "meta/llama-3.1-8b-instruct": 0,
                     os.getenv("NVIDIA_NIM_MODEL") or "meta/llama-3.1-70b-instruct": 1,
-                    os.getenv("DOKSCP_AI_MODEL") or "": 2,
+                    os.getenv("STACKPILOT_AI_MODEL") or "": 2,
                 }
                 discovered.sort(key=lambda item: (preferred.get(item["id"], 50), item["mode"] != "fast", item["id"]))
                 working = await filter_working_models(base_url, api_key, discovered)

@@ -1,6 +1,6 @@
 # Security
 
-DOKSCP controls builds, deployments, containers, remote hosts, Kubernetes resources, and provider keys. Operate it as infrastructure.
+StackPilot controls builds, deployments, containers, remote hosts, Kubernetes resources, and provider keys. Operate it as infrastructure.
 
 ## Secrets
 
@@ -27,7 +27,7 @@ Dashboard users authenticate with JWTs. `JWT_SECRET` must be long and unique per
 
 ## CSRF and CORS
 
-Browser mutating requests require trusted origins and `X-DOKSCP-CSRF`. MCP requests can use `X-DOKSCP-MCP`. GitHub webhooks are accepted only on the webhook endpoint and should be signed with `GITHUB_WEBHOOK_SECRET`.
+Browser mutating requests require trusted origins and `X-stackpilot-CSRF`. MCP requests can use `X-stackpilot-MCP`. GitHub webhooks are accepted only on the webhook endpoint and should be signed with `GITHUB_WEBHOOK_SECRET`.
 
 ## MCP Tokens
 
@@ -39,7 +39,7 @@ MCP tokens let IDE agents deploy projects. Treat them like API keys.
 
 ## Docker Socket
 
-The backend can use `/var/run/docker.sock`. This is powerful. Anyone with write access to that socket can effectively control the host. Run DOKSCP only on trusted infrastructure and restrict dashboard access.
+The backend can use `/var/run/docker.sock`. This is powerful. Anyone with write access to that socket can effectively control the host. Run StackPilot only on trusted infrastructure and restrict dashboard access.
 
 ## Remote Hosts
 
@@ -51,7 +51,7 @@ Prefer GitHub App installation over personal access tokens for production. If yo
 
 ## AI Providers
 
-AI logs can contain source snippets, deployment logs, env key names, and operational context. Use providers you trust and keep `DOKSCP_AI_MAX_CONTEXT_BYTES` bounded.
+AI logs can contain source snippets, deployment logs, env key names, and operational context. Use providers you trust and keep `STACKPILOT_AI_MAX_CONTEXT_BYTES` bounded.
 
 ## Production Checklist
 

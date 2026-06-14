@@ -20,7 +20,7 @@
 #include <pqxx/pqxx>
 #include <mutex>
 
-namespace dokscp {
+namespace stackpilot {
 
 class Database {
 public:
@@ -64,4 +64,4 @@ private:
     std::mutex m_mutex;  // Thread safety for initialization
 };
 
-} // namespace dokscp
+} // namespace stackpilot

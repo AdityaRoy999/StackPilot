@@ -32,7 +32,7 @@
 #include <sys/wait.h>
 #endif
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -340,7 +340,7 @@ std::string valueFromKeyValueOutput(const std::string& output, const std::string
 }
 
 std::string remoteLogTailFromInspectOutput(const std::string& output) {
-    const std::string marker = "__DOKSCP_REMOTE_LOG_TAIL__";
+    const std::string marker = "__STACKPILOT_REMOTE_LOG_TAIL__";
     const auto pos = output.find(marker);
     if (pos == std::string::npos) {
         return "";
@@ -545,9 +545,9 @@ std::string shellQuote(const std::string& value) {
 std::string makeDockerPauseCommand(const std::string& containerName, bool paused) {
     const std::string container = shellQuote(containerName);
     return "set -e; "
-           "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-           "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
-           "docker inspect " + container + " >/dev/null 2>&1 || { echo __DOKSCP_CONTAINER_MISSING__; exit 12; }; "
+           "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+           "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
+           "docker inspect " + container + " >/dev/null 2>&1 || { echo __STACKPILOT_CONTAINER_MISSING__; exit 12; }; "
            "docker " + std::string(paused ? "pause " : "unpause ") + container + " >/dev/null; "
            "docker inspect --format 'status={{.State.Status}}\nrunning={{.State.Running}}\npaused={{.State.Paused}}\nimage={{.Config.Image}}\nstarted_at={{.State.StartedAt}}\nfinished_at={{.State.FinishedAt}}\nrestart_count={{.RestartCount}}' " + container;
 }
@@ -607,9 +607,9 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
     const std::string requestedPort = std::to_string(std::clamp(containerPort, 0, 65535));
     return
         "set -e; "
-        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
-        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __DOKSCP_IMAGE_MISSING__; exit 12; }; "
+        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __STACKPILOT_IMAGE_MISSING__; exit 12; }; "
         "requested_port=" + requestedPort + "; "
         "if [ \"$requested_port\" -gt 0 ]; then "
         "container_port=\"$requested_port\"; "
@@ -619,12 +619,12 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
         "fi; "
         "docker rm -f " + container + " >/dev/null 2>&1 || true; "
         "docker run -d --restart unless-stopped --name " + container + envArgs +
-        " -p 127.0.0.1::$container_port " + image + " >/tmp/dokscp-local-container-id; "
+        " -p 127.0.0.1::$container_port " + image + " >/tmp/stackpilot-local-container-id; "
         "host_port=$(docker port " + container + " $container_port/tcp 2>/dev/null | awk -F: 'NF {print $NF; exit}'); "
-        "[ -n \"$host_port\" ] || { echo __DOKSCP_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
+        "[ -n \"$host_port\" ] || { echo __STACKPILOT_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
         "status=$(docker inspect --format '{{.State.Status}}' " + container + "); "
         "running=$(docker inspect --format '{{.State.Running}}' " + container + "); "
-        "echo __DOKSCP_LOCAL_DOCKER_RUNNING__; "
+        "echo __STACKPILOT_LOCAL_DOCKER_RUNNING__; "
         "echo container_name=" + containerName + "; "
         "echo container_port=$container_port; "
         "echo host_port=$host_port; "
@@ -632,7 +632,7 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
         "echo status=$status; "
         "echo running=$running; "
         "echo image=" + imageName + "; "
-        "echo __DOKSCP_LOCAL_LOG_TAIL__; "
+        "echo __STACKPILOT_LOCAL_LOG_TAIL__; "
         "docker logs --tail 80 " + container + " 2>&1 || true";
 }
 
@@ -647,19 +647,19 @@ SshOperationResult removeLocalDockerContainer(const std::string& containerName,
     const std::string command =
         "timeout 60s sh -lc " + shellQuote(
             std::string("set -e; ")
-            + "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-            + "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+            + "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+            + "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
             + "docker rm -f " + shellQuote(containerName) + " >/dev/null 2>&1 || true; "
-            + "echo __DOKSCP_LOCAL_CONTAINER_REMOVED__; "
+            + "echo __STACKPILOT_LOCAL_CONTAINER_REMOVED__; "
             + (removeImage && !imageName.empty()
-                ? "docker image rm -f " + shellQuote(imageName) + " >/dev/null 2>&1 || true; echo __DOKSCP_LOCAL_IMAGE_REMOVE_ATTEMPTED__;"
+                ? "docker image rm -f " + shellQuote(imageName) + " >/dev/null 2>&1 || true; echo __STACKPILOT_LOCAL_IMAGE_REMOVE_ATTEMPTED__;"
                 : "")
         );
     std::string output;
     const int exitCode = runLocalCommand(command, output);
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_LOCAL_CONTAINER_REMOVED__") == std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_LOCAL_CONTAINER_REMOVED__") == std::string::npos) {
         result.error = exitCode == 124 ? "Local Docker runtime removal timed out" : "Failed to remove local Docker runtime";
         return result;
     }
@@ -809,35 +809,35 @@ SshOperationResult removeLocalDockerImage(const std::string& imageName) {
     const std::string command =
         "timeout 45s sh -lc " + shellQuote(
             "set -e; "
-            "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-            "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+            "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+            "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
             "failed=0; "
             "for img in " + shellQuote(imageName) + " " + shellQuote(registryImage) + "; do "
             "  [ -n \"$img\" ] || continue; "
             "  if docker image inspect \"$img\" >/dev/null 2>&1; then "
             "    if docker image rm \"$img\" >/dev/null 2>&1; then "
-            "      echo __DOKSCP_LOCAL_IMAGE_REMOVED__=$img; "
+            "      echo __STACKPILOT_LOCAL_IMAGE_REMOVED__=$img; "
             "    else "
-            "      echo __DOKSCP_LOCAL_IMAGE_REMOVE_FAILED__=$img; failed=1; "
+            "      echo __STACKPILOT_LOCAL_IMAGE_REMOVE_FAILED__=$img; failed=1; "
             "    fi; "
             "  else "
-            "    echo __DOKSCP_LOCAL_IMAGE_ALREADY_ABSENT__=$img; "
+            "    echo __STACKPILOT_LOCAL_IMAGE_ALREADY_ABSENT__=$img; "
             "  fi; "
             "done; "
             "[ \"$failed\" -eq 0 ] || exit 12; "
-            "echo __DOKSCP_LOCAL_IMAGE_CLEANUP_DONE__"
+            "echo __STACKPILOT_LOCAL_IMAGE_CLEANUP_DONE__"
         );
 
     std::string output;
     const int exitCode = runLocalCommand(command, output);
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_LOCAL_IMAGE_CLEANUP_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_LOCAL_IMAGE_CLEANUP_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
             result.error = "Docker is not installed on this host";
-        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker daemon is not reachable on this host";
-        } else if (output.find("__DOKSCP_LOCAL_IMAGE_REMOVE_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_LOCAL_IMAGE_REMOVE_FAILED__") != std::string::npos) {
             result.error = "Docker image could not be deleted because it may still be in use";
         } else if (exitCode == 124) {
             result.error = "Docker image cleanup timed out";
@@ -2056,7 +2056,7 @@ void DeploymentController::triggerBuild(
                             KubernetesDeployOptions options;
                             options.deploymentId = deploymentId;
                             options.projectName = projectName;
-                            options.nameSpace = "dokscp-apps";
+                            options.nameSpace = "stackpilot-apps";
                             options.runtimeScheme = runtimeScheme;
                             options.exposureMode = options.runtimeScheme == "https" ? "ingress" : remoteK8sExposure;
                             options.replicas = 1;
@@ -2094,7 +2094,7 @@ void DeploymentController::triggerBuild(
                             options.deploymentId = deploymentId;
                             options.projectName = projectName;
                             options.imageName = buildResult.imageName;
-                            options.nameSpace = "dokscp-apps";
+                            options.nameSpace = "stackpilot-apps";
                             options.runtimeScheme = runtimeScheme;
                             options.exposureMode = options.runtimeScheme == "https" ? "ingress" : remoteK8sExposure;
                             options.replicas = 1;
@@ -2572,7 +2572,7 @@ void DeploymentController::deployToLocalDocker(
 
         const auto deploymentEnvVars = loadDeploymentEnvVarPairs(txn, deploymentId);
         const std::string projectName = row["project_name"].is_null() ? "deployment" : row["project_name"].as<std::string>();
-        const std::string containerName = "dokscp-local-" + sanitizeDockerContainerName(projectName) + "-" + sanitizeDockerContainerName(deploymentId).substr(0, 12);
+        const std::string containerName = "stackpilot-local-" + sanitizeDockerContainerName(projectName) + "-" + sanitizeDockerContainerName(deploymentId).substr(0, 12);
         txn.exec_params(
             "UPDATE deployments SET status = 'deploying', updated_at = NOW() WHERE id = $1",
             deploymentId
@@ -2601,7 +2601,7 @@ void DeploymentController::deployToLocalDocker(
         }
         const std::string status = valueFromKeyValueOutput(output, "status");
         const bool running = valueFromKeyValueOutput(output, "running") == "true";
-        if (exitCode != 0 || output.find("__DOKSCP_LOCAL_DOCKER_RUNNING__") == std::string::npos || runtimeUrl.empty()) {
+        if (exitCode != 0 || output.find("__STACKPILOT_LOCAL_DOCKER_RUNNING__") == std::string::npos || runtimeUrl.empty()) {
             recordRuntimeRateLimitFailure(rateLimitKey, kRuntimeMutationRateLimit);
             auto connUpdate = db.getConnection();
             pqxx::work updateTxn(*connUpdate);
@@ -2614,11 +2614,11 @@ void DeploymentController::deployToLocalDocker(
             broadcastDeploymentSummary(deploymentId);
 
             Json::Value err;
-            if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
-                err["error"] = "Docker CLI is not available to the DOKSCP backend";
-            } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
-                err["error"] = "Docker daemon is not reachable from the DOKSCP backend";
-            } else if (output.find("__DOKSCP_IMAGE_MISSING__") != std::string::npos) {
+            if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
+                err["error"] = "Docker CLI is not available to the StackPilot backend";
+            } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+                err["error"] = "Docker daemon is not reachable from the StackPilot backend";
+            } else if (output.find("__STACKPILOT_IMAGE_MISSING__") != std::string::npos) {
                 err["error"] = "Built image is missing from local Docker";
             } else {
                 err["error"] = exitCode == 124 ? "Local Docker deploy timed out" : "Failed to start local Docker runtime";
@@ -3872,11 +3872,11 @@ void DeploymentController::getKubernetesStatus(
             std::string output;
             const std::string inspectCommand =
                 "set -e; "
-                "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
+                "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
                 "docker inspect --format 'status={{.State.Status}}\nrunning={{.State.Running}}\npaused={{.State.Paused}}\nimage={{.Config.Image}}\nstarted_at={{.State.StartedAt}}\nfinished_at={{.State.FinishedAt}}\nrestart_count={{.RestartCount}}' " +
                 shellQuote(remoteContainerName) + "; "
                 "echo published_ports=$(docker port " + shellQuote(remoteContainerName) + " 2>/dev/null | tr '\\n' ',' | sed 's/,$//'); "
-                "echo __DOKSCP_REMOTE_LOG_TAIL__; "
+                "echo __STACKPILOT_REMOTE_LOG_TAIL__; "
                 "docker logs --tail 80 " + shellQuote(remoteContainerName) + " 2>&1 || true";
             const int exitCode = runLocalCommand("timeout 12s sh -lc " + shellQuote(inspectCommand), output);
             if (exitCode != 0) {
@@ -4479,7 +4479,7 @@ void DeploymentController::removeKubernetesDeployment(
                 broadcastDeploymentSummary(deploymentId);
 
                 Json::Value payload;
-                const bool imageDeleted = deleteRemoteImage && removal.output.find("__DOKSCP_REMOTE_IMAGE_REMOVED__") != std::string::npos;
+                const bool imageDeleted = deleteRemoteImage && removal.output.find("__STACKPILOT_REMOTE_IMAGE_REMOVED__") != std::string::npos;
                 payload["message"] = imageDeleted
                     ? "Remote Docker runtime and image removed"
                     : (deleteRemoteImage ? "Remote Docker runtime removed; image was kept" : "Remote Docker runtime removed");
@@ -4541,7 +4541,7 @@ void DeploymentController::removeKubernetesDeployment(
 
                 Json::Value payload;
                 payload["message"] = deleteRemoteImage ? "Local Docker runtime removed; image cleanup attempted" : "Local Docker runtime removed";
-                payload["image_deleted"] = deleteRemoteImage && removal.output.find("__DOKSCP_LOCAL_IMAGE_REMOVE_ATTEMPTED__") != std::string::npos;
+                payload["image_deleted"] = deleteRemoteImage && removal.output.find("__STACKPILOT_LOCAL_IMAGE_REMOVE_ATTEMPTED__") != std::string::npos;
                 payload["runtime"]["status"] = "built";
                 Json::Value auditMeta;
                 auditMeta["runtime_provider"] = "local_docker";
@@ -4683,4 +4683,4 @@ void DeploymentController::removeKubernetesDeployment(
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

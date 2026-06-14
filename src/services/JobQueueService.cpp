@@ -33,7 +33,7 @@
 #include <process.h>
 #endif
 
-namespace dokscp {
+namespace stackpilot {
 namespace {
 
 std::mutex deploymentLogMutex;
@@ -327,7 +327,7 @@ std::string valueFromKeyValueOutput(const std::string& output, const std::string
 }
 
 std::string logTailFromLocalDockerOutput(const std::string& output) {
-    const std::string marker = "__DOKSCP_LOCAL_LOG_TAIL__";
+    const std::string marker = "__STACKPILOT_LOCAL_LOG_TAIL__";
     const auto pos = output.find(marker);
     if (pos == std::string::npos) {
         return "";
@@ -388,9 +388,9 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
     const std::string requestedPort = std::to_string(std::clamp(containerPort, 0, 65535));
     return
         "set -e; "
-        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
-        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __DOKSCP_IMAGE_MISSING__; exit 12; }; "
+        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __STACKPILOT_IMAGE_MISSING__; exit 12; }; "
         "requested_port=" + requestedPort + "; "
         "if [ \"$requested_port\" -gt 0 ]; then "
         "container_port=\"$requested_port\"; "
@@ -400,12 +400,12 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
         "fi; "
         "docker rm -f " + container + " >/dev/null 2>&1 || true; "
         "docker run -d --restart unless-stopped --name " + container + envArgs +
-        " -p 127.0.0.1::$container_port " + image + " >/tmp/dokscp-local-container-id; "
+        " -p 127.0.0.1::$container_port " + image + " >/tmp/stackpilot-local-container-id; "
         "host_port=$(docker port " + container + " $container_port/tcp 2>/dev/null | awk -F: 'NF {print $NF; exit}'); "
-        "[ -n \"$host_port\" ] || { echo __DOKSCP_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
+        "[ -n \"$host_port\" ] || { echo __STACKPILOT_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
         "status=$(docker inspect --format '{{.State.Status}}' " + container + "); "
         "running=$(docker inspect --format '{{.State.Running}}' " + container + "); "
-        "echo __DOKSCP_LOCAL_DOCKER_RUNNING__; "
+        "echo __STACKPILOT_LOCAL_DOCKER_RUNNING__; "
         "echo container_name=" + containerName + "; "
         "echo container_port=$container_port; "
         "echo host_port=$host_port; "
@@ -413,7 +413,7 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
         "echo status=$status; "
         "echo running=$running; "
         "echo image=" + imageName + "; "
-        "echo __DOKSCP_LOCAL_LOG_TAIL__; "
+        "echo __STACKPILOT_LOCAL_LOG_TAIL__; "
         "docker logs --tail 80 " + container + " 2>&1 || true";
 }
 
@@ -448,7 +448,7 @@ GitHubCheckProbe queryGitHubCheckRuns(const std::string& repoUrl,
     }
 
     const auto configPath = std::filesystem::temp_directory_path() /
-        ("dokscp-github-checks-" + std::to_string(std::rand()) + ".curl");
+        ("stackpilot-github-checks-" + std::to_string(std::rand()) + ".curl");
     {
         std::ofstream cfg(configPath, std::ios::trunc);
         if (!cfg.is_open()) {
@@ -463,7 +463,7 @@ GitHubCheckProbe queryGitHubCheckRuns(const std::string& repoUrl,
             << "/commits/" << jsonEscapeForCurlConfig(commitSha) << "/check-runs?per_page=100\"\n";
         cfg << "header = \"Accept: application/vnd.github+json\"\n";
         cfg << "header = \"X-GitHub-Api-Version: 2022-11-28\"\n";
-        cfg << "header = \"User-Agent: DOKSCP-Platform\"\n";
+        cfg << "header = \"User-Agent: stackpilot-Platform\"\n";
         if (!token.empty()) {
             cfg << "header = \"Authorization: Bearer " << jsonEscapeForCurlConfig(token) << "\"\n";
         }
@@ -633,13 +633,13 @@ JobQueueService& JobQueueService::getInstance() {
 }
 
 JobQueueService::JobQueueService()
-    : workerId_(getEnvOrDefault("HOSTNAME", "dokscp-backend") + "-" + std::to_string(::getpid())),
+    : workerId_(getEnvOrDefault("HOSTNAME", "stackpilot-backend") + "-" + std::to_string(::getpid())),
       redisHost_(getEnvOrDefault("REDIS_HOST", "redis")),
       redisPort_(getEnvIntOrDefault("REDIS_PORT", 6379)),
       redisPassword_(getEnvOrDefault("REDIS_PASSWORD", "")),
-      queueName_(getEnvOrDefault("DOKSCP_REDIS_QUEUE", "dokscp:jobs:deployment")),
-      workerCount_(std::max(1, getEnvIntOrDefault("DOKSCP_JOB_WORKERS", 2))),
-      maxAttempts_(std::clamp(getEnvIntOrDefault("DOKSCP_JOB_MAX_ATTEMPTS", 3), 1, 10)) {}
+      queueName_(getEnvOrDefault("STACKPILOT_REDIS_QUEUE", "stackpilot:jobs:deployment")),
+      workerCount_(std::max(1, getEnvIntOrDefault("STACKPILOT_JOB_WORKERS", 2))),
+      maxAttempts_(std::clamp(getEnvIntOrDefault("STACKPILOT_JOB_MAX_ATTEMPTS", 3), 1, 10)) {}
 
 JobQueueService::~JobQueueService() {
     stop();
@@ -989,7 +989,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         }
         if (ciRequired && ciStatus == "pending" &&
             triggerSource == "github_push" && sourceTypeForCi == "github" && !repoUrlForCi.empty() && !commitShaForCi.empty()) {
-            const int graceSeconds = std::max(15, getEnvIntOrDefault("DOKSCP_CI_NO_CHECKS_GRACE_SECONDS", 90));
+            const int graceSeconds = std::max(15, getEnvIntOrDefault("STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS", 90));
             if (triggerSource == "github_push" && deploymentAgeSeconds >= graceSeconds) {
                 const auto probe = queryGitHubCheckRuns(repoUrlForCi, commitShaForCi, githubTokenForCi);
                 if (!probe.queried) {
@@ -1326,7 +1326,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     KubernetesDeployOptions options;
                     options.deploymentId = job.deploymentId;
                     options.projectName = projectName;
-                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
+                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
                     options.runtimeScheme = runtimeScheme;
                     options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                     options.replicas = 1;
@@ -1364,7 +1364,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     options.deploymentId = job.deploymentId;
                     options.projectName = projectName;
                     options.imageName = buildResult.imageName;
-                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
+                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
                     options.runtimeScheme = runtimeScheme;
                     options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
                     options.replicas = 1;
@@ -1446,7 +1446,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
 
         if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "docker" && !buildResult.composeProject) {
             const std::string containerName =
-                "dokscp-local-" + sanitizeDockerContainerName(projectName) + "-" +
+                "stackpilot-local-" + sanitizeDockerContainerName(projectName) + "-" +
                 sanitizeDockerContainerName(job.deploymentId).substr(0, 12);
             logSink("Deploying image to local Docker...");
             std::string dockerOutput;
@@ -1455,13 +1455,13 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 dockerOutput
             );
             buildResult.logs += "\n" + dockerOutput;
-            if (dockerExit != 0 || dockerOutput.find("__DOKSCP_LOCAL_DOCKER_RUNNING__") == std::string::npos) {
+            if (dockerExit != 0 || dockerOutput.find("__STACKPILOT_LOCAL_DOCKER_RUNNING__") == std::string::npos) {
                 buildResult.success = false;
-                if (dockerOutput.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
-                    buildResult.error = "Docker is not installed in the DOKSCP backend environment";
-                } else if (dockerOutput.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
-                    buildResult.error = "Docker daemon is not reachable from the DOKSCP backend";
-                } else if (dockerOutput.find("__DOKSCP_IMAGE_MISSING__") != std::string::npos) {
+                if (dockerOutput.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
+                    buildResult.error = "Docker is not installed in the StackPilot backend environment";
+                } else if (dockerOutput.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+                    buildResult.error = "Docker daemon is not reachable from the StackPilot backend";
+                } else if (dockerOutput.find("__STACKPILOT_IMAGE_MISSING__") != std::string::npos) {
                     buildResult.error = "Built image is missing from local Docker";
                 } else if (dockerExit == 124) {
                     buildResult.error = "Local Docker deploy timed out";
@@ -1482,7 +1482,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             options.deploymentId = job.deploymentId;
             options.projectName = projectName;
             options.imageName = buildResult.imageName;
-            options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "dokscp-apps");
+            options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
             options.runtimeScheme = runtimeScheme;
             options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
             options.replicas = 1;
@@ -1803,4 +1803,4 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

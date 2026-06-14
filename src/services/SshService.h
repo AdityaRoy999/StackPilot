@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct SshConnectionConfig {
     std::string connectionType = "ssh";
@@ -150,4 +150,4 @@ private:
     void cleanupSessionFiles(const SessionFiles& files) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct ComposeKubernetesPlanService {
     std::string serviceName;
@@ -85,4 +85,4 @@ public:
     static std::string joinWarnings(const std::vector<std::string>& warnings);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

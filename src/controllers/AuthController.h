@@ -19,7 +19,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class AuthController : public drogon::HttpController<AuthController> {
 public:
@@ -109,4 +109,4 @@ public:
                        std::function<void(const drogon::HttpResponsePtr&)>&& callback);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -279,7 +279,7 @@ export function ClusterBuilder() {
           </div>
           <h1 className="text-4xl font-extrabold tracking-tight">Cluster Builder</h1>
           <p className="max-w-3xl text-muted-foreground">
-            Bootstrap a control plane from a saved server, join worker servers, and verify the cluster without leaving DOKSCP.
+            Bootstrap a control plane from a saved server, join worker servers, and verify the cluster without leaving StackPilot.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -313,7 +313,7 @@ export function ClusterBuilder() {
               Create or Expand Cluster
             </CardTitle>
             <CardDescription>
-              Run these operations on trusted servers only. DOKSCP installs k3s and stores the join token encrypted for future worker joins.
+              Run these operations on trusted servers only. StackPilot installs k3s and stores the join token encrypted for future worker joins.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -543,7 +543,7 @@ export function ClusterBuilder() {
             Registered Clusters
           </CardTitle>
           <CardDescription>
-            Existing control planes and joined nodes known to DOKSCP. Runtime workloads still appear in Infrastructure Monitor.
+            Existing control planes and joined nodes known to StackPilot. Runtime workloads still appear in Infrastructure Monitor.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -554,7 +554,7 @@ export function ClusterBuilder() {
             </div>
           ) : clusters.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
-              No Kubernetes clusters have been initialized from DOKSCP yet.
+              No Kubernetes clusters have been initialized from StackPilot yet.
             </div>
           ) : (
             <Table>

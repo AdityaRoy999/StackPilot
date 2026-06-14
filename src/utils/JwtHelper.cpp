@@ -18,7 +18,7 @@
 #include <cctype>
 #include <sstream>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -232,7 +232,7 @@ Json::Value JwtHelper::verifyRequestToken(const drogon::HttpRequestPtr& req) {
     }
 
     // MCP tokens are scoped to MCP endpoints. Normal API auth must reject them.
-    if (token.rfind("dokscp_mcp_", 0) == 0) {
+    if (token.rfind("STACKPILOT_mcp_", 0) == 0) {
         return Json::Value(Json::nullValue);
     }
 
@@ -329,4 +329,4 @@ bool JwtHelper::isExpired(const Json::Value& payload) {
     return now > payload["exp"].asInt64();
 }
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -91,21 +91,21 @@ export function McpIntegrations() {
   const tokens = query.data?.tokens || [];
 
   const getIdeConfig = (token: string) => {
-    const serverPath = process.env.NEXT_PUBLIC_DOKSCP_MCP_SERVER_PATH || "/absolute/path/to/DOKSCP/mcp-server/src/index.js";
+    const serverPath = process.env.NEXT_PUBLIC_STACKPILOT_MCP_SERVER_PATH || "/absolute/path/to/StackPilot/mcp-server/src/index.js";
     const localProjectsRoot =
-      process.env.NEXT_PUBLIC_DOKSCP_LOCAL_PROJECTS_HOST_ROOT || "/absolute/path/to/DOKSCP/local-projects";
+      process.env.NEXT_PUBLIC_STACKPILOT_LOCAL_PROJECTS_HOST_ROOT || "/absolute/path/to/StackPilot/local-projects";
     
     const config = {
       mcpServers: {
-        "dokscp-platform": {
+        "stackpilot-platform": {
           command: "node",
           args: [serverPath],
           env: {
-            DOKSCP_MCP_TOKEN: token,
-            DOKSCP_API_URL: "http://localhost:8090/api/v1",
-            DOKSCP_FRONTEND_URL: "http://localhost:3000",
-            DOKSCP_LOCAL_PROJECTS_HOST_ROOT: localProjectsRoot,
-            DOKSCP_LOCAL_PROJECTS_CONTAINER_ROOT: "/app/local-projects",
+            STACKPILOT_MCP_TOKEN: token,
+            STACKPILOT_API_URL: "http://localhost:8090/api/v1",
+            STACKPILOT_FRONTEND_URL: "http://localhost:3000",
+            STACKPILOT_LOCAL_PROJECTS_HOST_ROOT: localProjectsRoot,
+            STACKPILOT_LOCAL_PROJECTS_CONTAINER_ROOT: "/app/local-projects",
           },
         },
       },
@@ -121,7 +121,7 @@ export function McpIntegrations() {
           <CardTitle>MCP Integrations</CardTitle>
         </div>
         <CardDescription>
-          Generate tokens for the Model Context Protocol so IDE agents like VS Code, Antigravity, Claude Code, Cursor, Codex, and Gemini CLI can deploy local projects through DOKSCP.
+          Generate tokens for the Model Context Protocol so IDE agents like VS Code, Antigravity, Claude Code, Cursor, Codex, and Gemini CLI can deploy local projects through StackPilot.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -291,7 +291,7 @@ export function McpIntegrations() {
                     <div className="space-y-3 text-sm text-muted-foreground">
                       <p>1. Open Cursor Settings <code className="text-xs">Ctrl/Cmd + Shift + J</code></p>
                       <p>2. Go to <strong>Features &gt; MCP</strong></p>
-                      <p>3. Add this server config. The local deploy tool stages any IDE workspace into DOKSCP local mode automatically:</p>
+                      <p>3. Add this server config. The local deploy tool stages any IDE workspace into StackPilot local mode automatically:</p>
                       <div className="relative mt-2">
                         <pre className="p-3 bg-background rounded-lg border overflow-x-auto text-xs font-mono">
                           {newToken ? getIdeConfig(newToken.raw) : ""}
@@ -331,8 +331,8 @@ export function McpIntegrations() {
                     </div>
                   ) : ideSelect === "claude-code" || ideSelect === "codex" ? (
                     <div className="space-y-3 text-sm text-muted-foreground">
-                      <p>1. Add the DOKSCP MCP server to your agent MCP configuration.</p>
-                      <p>2. Use the tool <strong>dokscp_deploy_local_project</strong> when the prompt says deploy the current local project.</p>
+                      <p>1. Add the StackPilot MCP server to your agent MCP configuration.</p>
+                      <p>2. Use the tool <strong>STACKPILOT_deploy_local_project</strong> when the prompt says deploy the current local project.</p>
                       <div className="relative mt-2">
                         <pre className="p-3 bg-background rounded-lg border overflow-x-auto text-xs font-mono">
                           {newToken ? getIdeConfig(newToken.raw) : ""}

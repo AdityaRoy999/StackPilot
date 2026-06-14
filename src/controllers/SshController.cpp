@@ -12,7 +12,7 @@
 #include <spdlog/spdlog.h>
 #include <sstream>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -65,7 +65,7 @@ std::string outputValue(const std::string& output, const std::string& key) {
 }
 
 std::string redactClusterToken(std::string output) {
-    const std::string key = "dokscp_cluster_token=";
+    const std::string key = "STACKPILOT_cluster_token=";
     size_t pos = 0;
     while ((pos = output.find(key, pos)) != std::string::npos) {
         const size_t valueStart = pos + key.size();
@@ -567,7 +567,7 @@ void SshController::probeConnection(
         std::string line;
         while (std::getline(stream, line)) {
             const auto equals = line.find('=');
-            if (equals == std::string::npos || line.rfind("__DOKSCP_", 0) == 0) {
+            if (equals == std::string::npos || line.rfind("__STACKPILOT_", 0) == 0) {
                 continue;
             }
             capabilities[line.substr(0, equals)] = line.substr(equals + 1);
@@ -791,11 +791,11 @@ void SshController::initializeKubernetesCluster(
             return;
         }
 
-        const std::string serverUrl = outputValue(initResult.output, "dokscp_cluster_server_url");
-        const std::string nodeToken = outputValue(initResult.output, "dokscp_cluster_token");
+        const std::string serverUrl = outputValue(initResult.output, "STACKPILOT_cluster_server_url");
+        const std::string nodeToken = outputValue(initResult.output, "STACKPILOT_cluster_token");
         if (serverUrl.empty() || nodeToken.empty()) {
             payload["success"] = false;
-            payload["error"] = "Control plane initialized, but DOKSCP could not read the server URL or join token";
+            payload["error"] = "Control plane initialized, but StackPilot could not read the server URL or join token";
             auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
             resp->setStatusCode(drogon::k500InternalServerError);
             callback(resp);
@@ -1257,4 +1257,4 @@ void SshController::deleteConnection(
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

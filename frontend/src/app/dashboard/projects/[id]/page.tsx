@@ -87,7 +87,7 @@ export default function ProjectDeploymentsPage() {
   const projectId = useMemo(() => (Array.isArray(rawId) ? rawId[0] : rawId), [rawId]);
 
   const queryClient = useQueryClient();
-  const selectedEnvironmentStorageKey = projectId ? `dokscp:selected-environment:${projectId}` : "";
+  const selectedEnvironmentStorageKey = projectId ? `StackPilot:selected-environment:${projectId}` : "";
   const [version, setVersion] = useState("v1.0.0");
   const [commitHash, setCommitHash] = useState("");
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string>("");
@@ -151,7 +151,7 @@ export default function ProjectDeploymentsPage() {
       return { ...res.data, deploymentId };
     },
     onSuccess: (data) => {
-      toast.success("Deployment started. DOKSCP will build and start the runtime automatically.");
+      toast.success("Deployment started. StackPilot will build and start the runtime automatically.");
       queryClient.invalidateQueries({ queryKey: ["project-deployments", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-environments", projectId] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
@@ -287,7 +287,7 @@ export default function ProjectDeploymentsPage() {
         <CardHeader>
           <CardTitle>Deploy one environment</CardTitle>
           <CardDescription>
-            Pick the environment you want to release. DOKSCP builds that mapped branch and starts its runtime URL automatically.
+            Pick the environment you want to release. StackPilot builds that mapped branch and starts its runtime URL automatically.
           </CardDescription>
         </CardHeader>
         <CardContent>

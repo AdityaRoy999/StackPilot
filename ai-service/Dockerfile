@@ -9,14 +9,14 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && adduser --disabled-password --gecos "" dokscp
+    && adduser --disabled-password --gecos "" stackpilot
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-COPY --chown=dokscp:dokscp app ./app
+COPY --chown=stackpilot:stackpilot app ./app
 
-USER dokscp
+USER stackpilot
 
 EXPOSE 8010
 

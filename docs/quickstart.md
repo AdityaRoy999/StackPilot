@@ -1,6 +1,6 @@
 # Quick Start
 
-This page gets DOKSCP running locally with Docker Compose.
+This page gets StackPilot running locally with Docker Compose.
 
 ## Requirements
 
@@ -20,22 +20,22 @@ cp production.env.template .env
 For local development, these are the important values:
 
 ```bash
-DB_USER=dokscp_admin
+DB_USER=stackpilot_admin
 DB_PASSWORD=replace-with-a-local-password
-DB_NAME=dokscp_platform
+DB_NAME=stackpilot_platform
 JWT_SECRET=replace-with-at-least-48-random-characters
 TOKEN_ENCRYPTION_KEY=replace-with-at-least-48-random-characters
 GRAFANA_ADMIN_PASSWORD=replace-with-a-local-grafana-password
 CORS_ALLOWED_ORIGIN=http://localhost:3000
 FRONTEND_PUBLIC_URL=http://localhost:3000
 BACKEND_PUBLIC_URL=http://localhost:8090
-DOKSCP_AI_ENABLED=true
+STACKPILOT_AI_ENABLED=true
 ```
 
 To enable NVIDIA NIM:
 
 ```bash
-DOKSCP_AI_PROVIDER=nvidia_nim
+STACKPILOT_AI_PROVIDER=nvidia_nim
 NVIDIA_API_KEY=your-key
 NVIDIA_NIM_FAST_MODEL=meta/llama-3.1-8b-instruct
 NVIDIA_NIM_THINKING_MODEL=meta/llama-3.1-70b-instruct
@@ -44,7 +44,7 @@ NVIDIA_NIM_THINKING_MODEL=meta/llama-3.1-70b-instruct
 To use an OpenAI-compatible provider:
 
 ```bash
-DOKSCP_AI_PROVIDER=openai_compatible
+STACKPILOT_AI_PROVIDER=openai_compatible
 OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example.com/v1
 OPENAI_COMPATIBLE_API_KEY=your-key
 OPENAI_COMPATIBLE_MODEL=your-model

@@ -26,7 +26,7 @@
 #include <string>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -167,8 +167,8 @@ std::string stripRemoteCommandMarkers(const std::string& output) {
     std::istringstream stream(output);
     std::string line;
     while (std::getline(stream, line)) {
-        if (line.rfind("__DOKSCP_CWD__=", 0) == 0 ||
-            line.rfind("__DOKSCP_EXIT_CODE__=", 0) == 0) {
+        if (line.rfind("__STACKPILOT_CWD__=", 0) == 0 ||
+            line.rfind("__STACKPILOT_EXIT_CODE__=", 0) == 0) {
             continue;
         }
         cleaned << line << "\n";
@@ -288,11 +288,11 @@ Json::Value numericMetricValue(const std::string& raw) {
     return value;
 }
 
-bool nameLooksManagedByDokscp(const std::string& name, const std::string& image = "") {
-    return name.rfind("dokscp-", 0) == 0 ||
-           name.find("dokscp-local-") != std::string::npos ||
-           image.rfind("dokscp/", 0) == 0 ||
-           image.rfind("dokscp-", 0) == 0;
+bool nameLooksManagedByStackPilot(const std::string& name, const std::string& image = "") {
+    return name.rfind("stackpilot-", 0) == 0 ||
+           name.find("stackpilot-local-") != std::string::npos ||
+           image.rfind("StackPilot/", 0) == 0 ||
+           image.rfind("stackpilot-", 0) == 0;
 }
 
 std::string claimLookupKey(const std::string& providerType,
@@ -379,12 +379,12 @@ void applyClaimState(Json::Value& item,
     item["resource_key"] = resourceKey;
     const auto it = claims.find(claimLookupKey(providerType, resourceType, resourceKey));
     if (it == claims.end()) {
-        item["claimed_by_dokscp"] = false;
+        item["claimed_by_StackPilot"] = false;
         item["claim_id"] = "";
-        item["ownership_state"] = item.get("managed_by_dokscp", false).asBool() ? "managed" : "observed";
+        item["ownership_state"] = item.get("managed_by_stackpilot", false).asBool() ? "managed" : "observed";
         return;
     }
-    item["claimed_by_dokscp"] = true;
+    item["claimed_by_StackPilot"] = true;
     item["claim_id"] = it->second["id"].asString();
     item["ownership_state"] = it->second["ownership_state"].asString();
 }
@@ -460,8 +460,8 @@ Json::Value observedResourceFromActionBody(const Json::Value& body, const Infras
     resource["ownership_state"] = "observed";
     resource["target_type"] = target.targetType;
     resource["target_connection_id"] = target.connectionId;
-    resource["claimed_by_dokscp"] = false;
-    resource["managed_by_dokscp"] = false;
+    resource["claimed_by_StackPilot"] = false;
+    resource["managed_by_stackpilot"] = false;
     resource["metadata"] = body.isMember("metadata") && body["metadata"].isObject()
         ? body["metadata"]
         : Json::Value(Json::objectValue);
@@ -532,7 +532,7 @@ Json::Value claimedResourceForAction(const std::string& userId,
         }
 
         statusCode = drogon::k403Forbidden;
-        errorMessage = "Resource must be claimed before DOKSCP can " + actionName + " it";
+        errorMessage = "Resource must be claimed before StackPilot can " + actionName + " it";
         return Json::Value();
     }
 
@@ -554,7 +554,7 @@ InfrastructureTarget targetForClaimedResource(const std::string& userId,
 }
 
 bool metricsRequestAuthorized(const drogon::HttpRequestPtr& req) {
-    const char* expected = std::getenv("DOKSCP_METRICS_BEARER_TOKEN");
+    const char* expected = std::getenv("STACKPILOT_METRICS_BEARER_TOKEN");
     if (!expected || !*expected) {
         return true;
     }
@@ -571,7 +571,7 @@ void HealthController::health(
 ) {
     Json::Value payload;
     payload["status"] = Database::getInstance().isConnected() ? "ok" : "degraded";
-    payload["service"] = "dokscp-backend";
+    payload["service"] = "stackpilot-backend";
     payload["timestamp"] = trantor::Date::now().toFormattedString(false);
 
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
@@ -595,59 +595,59 @@ void HealthController::metrics(
     }
 
     std::ostringstream body;
-    body << "# HELP dokscp_database_connected Database connection health, 1 means connected.\n";
-    body << "# TYPE dokscp_database_connected gauge\n";
-    addMetricLine(body, "dokscp_database_connected", {}, Database::getInstance().isConnected() ? 1 : 0);
+    body << "# HELP STACKPILOT_database_connected Database connection health, 1 means connected.\n";
+    body << "# TYPE STACKPILOT_database_connected gauge\n";
+    addMetricLine(body, "STACKPILOT_database_connected", {}, Database::getInstance().isConnected() ? 1 : 0);
 
     try {
         auto conn = Database::getInstance().getConnection();
         pqxx::work txn(*conn);
 
-        body << "# HELP dokscp_projects_total Projects grouped by status.\n";
-        body << "# TYPE dokscp_projects_total gauge\n";
+        body << "# HELP STACKPILOT_projects_total Projects grouped by status.\n";
+        body << "# TYPE STACKPILOT_projects_total gauge\n";
         for (const auto& row : txn.exec("SELECT COALESCE(status, 'unknown'), COUNT(*) FROM projects GROUP BY 1")) {
-            addMetricLine(body, "dokscp_projects_total", {{"status", row[0].as<std::string>()}}, row[1].as<long long>());
+            addMetricLine(body, "STACKPILOT_projects_total", {{"status", row[0].as<std::string>()}}, row[1].as<long long>());
         }
 
-        body << "# HELP dokscp_deployments_total Deployments grouped by status.\n";
-        body << "# TYPE dokscp_deployments_total gauge\n";
+        body << "# HELP STACKPILOT_deployments_total Deployments grouped by status.\n";
+        body << "# TYPE STACKPILOT_deployments_total gauge\n";
         for (const auto& row : txn.exec("SELECT COALESCE(status, 'unknown'), COUNT(*) FROM deployments GROUP BY 1")) {
-            addMetricLine(body, "dokscp_deployments_total", {{"status", row[0].as<std::string>()}}, row[1].as<long long>());
+            addMetricLine(body, "STACKPILOT_deployments_total", {{"status", row[0].as<std::string>()}}, row[1].as<long long>());
         }
 
-        body << "# HELP dokscp_deployments_by_runtime_total Deployments grouped by runtime provider.\n";
-        body << "# TYPE dokscp_deployments_by_runtime_total gauge\n";
+        body << "# HELP STACKPILOT_deployments_by_runtime_total Deployments grouped by runtime provider.\n";
+        body << "# TYPE STACKPILOT_deployments_by_runtime_total gauge\n";
         for (const auto& row : txn.exec(
                  "SELECT COALESCE(NULLIF(runtime_provider, ''), 'docker'), COUNT(*) "
                  "FROM deployments GROUP BY 1")) {
-            addMetricLine(body, "dokscp_deployments_by_runtime_total",
+            addMetricLine(body, "STACKPILOT_deployments_by_runtime_total",
                           {{"runtime_provider", row[0].as<std::string>()}},
                           row[1].as<long long>());
         }
 
-        body << "# HELP dokscp_running_runtimes_total Deployments currently running.\n";
-        body << "# TYPE dokscp_running_runtimes_total gauge\n";
-        addMetricLine(body, "dokscp_running_runtimes_total", {},
+        body << "# HELP STACKPILOT_running_runtimes_total Deployments currently running.\n";
+        body << "# TYPE STACKPILOT_running_runtimes_total gauge\n";
+        addMetricLine(body, "STACKPILOT_running_runtimes_total", {},
                       firstCount(txn, "SELECT COUNT(*) FROM deployments WHERE status = 'running'"));
 
-        body << "# HELP dokscp_deployment_jobs_total Deployment jobs grouped by status.\n";
-        body << "# TYPE dokscp_deployment_jobs_total gauge\n";
+        body << "# HELP STACKPILOT_deployment_jobs_total Deployment jobs grouped by status.\n";
+        body << "# TYPE STACKPILOT_deployment_jobs_total gauge\n";
         for (const auto& row : txn.exec("SELECT COALESCE(status, 'unknown'), COUNT(*) FROM deployment_jobs GROUP BY 1")) {
-            addMetricLine(body, "dokscp_deployment_jobs_total", {{"status", row[0].as<std::string>()}}, row[1].as<long long>());
+            addMetricLine(body, "STACKPILOT_deployment_jobs_total", {{"status", row[0].as<std::string>()}}, row[1].as<long long>());
         }
 
-        body << "# HELP dokscp_deployment_failures_last_24h Failed deployments created in the last 24 hours.\n";
-        body << "# TYPE dokscp_deployment_failures_last_24h gauge\n";
-        addMetricLine(body, "dokscp_deployment_failures_last_24h", {},
+        body << "# HELP STACKPILOT_deployment_failures_last_24h Failed deployments created in the last 24 hours.\n";
+        body << "# TYPE STACKPILOT_deployment_failures_last_24h gauge\n";
+        addMetricLine(body, "STACKPILOT_deployment_failures_last_24h", {},
                       firstCount(txn,
                                  "SELECT COUNT(*) FROM deployments "
                                  "WHERE status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'"));
 
         txn.commit();
     } catch (const std::exception& e) {
-        body << "# HELP dokscp_metrics_collection_error Metrics collection error, 1 means failed.\n";
-        body << "# TYPE dokscp_metrics_collection_error gauge\n";
-        addMetricLine(body, "dokscp_metrics_collection_error", {{"message", e.what()}}, 1);
+        body << "# HELP STACKPILOT_metrics_collection_error Metrics collection error, 1 means failed.\n";
+        body << "# TYPE STACKPILOT_metrics_collection_error gauge\n";
+        addMetricLine(body, "STACKPILOT_metrics_collection_error", {{"message", e.what()}}, 1);
     }
 
     auto resp = drogon::HttpResponse::newHttpResponse();
@@ -672,7 +672,7 @@ void HealthController::loggingMonitoringSummary(
     }
 
     Json::Value payload;
-    payload["service"] = "dokscp-backend";
+    payload["service"] = "stackpilot-backend";
     payload["timestamp"] = trantor::Date::now().toFormattedString(false);
     payload["database_connected"] = Database::getInstance().isConnected();
     payload["stack"]["prometheus_url"] = envOrDefault("PROMETHEUS_PUBLIC_URL", "http://localhost:9090");
@@ -848,7 +848,7 @@ void HealthController::infrastructureInventory(
             item["image"] = parts.size() > 2 ? parts[2] : "";
             item["status"] = parts.size() > 3 ? parts[3] : "";
             item["ports"] = parts.size() > 4 ? parts[4] : "";
-            item["managed_by_dokscp"] = nameLooksManagedByDokscp(item["name"].asString(), item["image"].asString());
+            item["managed_by_stackpilot"] = nameLooksManagedByStackPilot(item["name"].asString(), item["image"].asString());
             applyClaimState(item,
                             claimedResources,
                             "docker",
@@ -871,7 +871,7 @@ void HealthController::infrastructureInventory(
             item["tag"] = parts[1];
             item["id"] = parts[2];
             item["size"] = parts[3];
-            item["managed_by_dokscp"] = nameLooksManagedByDokscp(parts[0], parts[0]);
+            item["managed_by_stackpilot"] = nameLooksManagedByStackPilot(parts[0], parts[0]);
             applyClaimState(item,
                             claimedResources,
                             "docker",
@@ -920,7 +920,7 @@ void HealthController::infrastructureInventory(
                 item["name"] = jsonStringValue(ns["metadata"]["name"]);
                 item["status"] = jsonStringValue(ns["status"]["phase"], "Unknown");
                 item["created_at"] = jsonStringValue(ns["metadata"]["creationTimestamp"]);
-                item["managed_by_dokscp"] = item["name"].asString().rfind("dokscp-", 0) == 0;
+                item["managed_by_stackpilot"] = item["name"].asString().rfind("stackpilot-", 0) == 0;
                 applyClaimState(item,
                                 claimedResources,
                                 "kubernetes",
@@ -960,7 +960,7 @@ void HealthController::infrastructureInventory(
                         item["ready"] = jsonStringValue(condition["status"]) == "True";
                     }
                 }
-                item["managed_by_dokscp"] = false;
+                item["managed_by_stackpilot"] = false;
                 applyClaimState(item,
                                 claimedResources,
                                 "kubernetes",
@@ -994,8 +994,8 @@ void HealthController::infrastructureInventory(
                         item["containers_ready"] = item["containers_ready"].asInt() + 1;
                     }
                 }
-                item["managed_by_dokscp"] = item["namespace"].asString().rfind("dokscp-", 0) == 0 ||
-                                            item["name"].asString().find("dokscp") != std::string::npos;
+                item["managed_by_stackpilot"] = item["namespace"].asString().rfind("stackpilot-", 0) == 0 ||
+                                            item["name"].asString().find("StackPilot") != std::string::npos;
                 applyClaimState(item,
                                 claimedResources,
                                 "kubernetes",
@@ -1035,8 +1035,8 @@ void HealthController::infrastructureInventory(
                     conditionItem["message"] = jsonStringValue(condition["message"]);
                     item["conditions"].append(conditionItem);
                 }
-                item["managed_by_dokscp"] = item["namespace"].asString().rfind("dokscp-", 0) == 0 ||
-                                            item["name"].asString().find("dokscp") != std::string::npos;
+                item["managed_by_stackpilot"] = item["namespace"].asString().rfind("stackpilot-", 0) == 0 ||
+                                            item["name"].asString().find("StackPilot") != std::string::npos;
                 applyClaimState(item,
                                 claimedResources,
                                 "kubernetes",
@@ -1074,8 +1074,8 @@ void HealthController::infrastructureInventory(
                     portItem["node_port"] = port.get("nodePort", 0);
                     item["ports"].append(portItem);
                 }
-                item["managed_by_dokscp"] = item["namespace"].asString().rfind("dokscp-", 0) == 0 ||
-                                            item["name"].asString().find("dokscp") != std::string::npos;
+                item["managed_by_stackpilot"] = item["namespace"].asString().rfind("stackpilot-", 0) == 0 ||
+                                            item["name"].asString().find("StackPilot") != std::string::npos;
                 applyClaimState(item,
                                 claimedResources,
                                 "kubernetes",
@@ -2034,7 +2034,7 @@ void HealthController::kubernetesControlInfrastructureResource(
                       " -n " + shellQuote(namespaceName) + " 2>&1\"";
         } else if (resourceType == "deployment" && requestedAction == "undo_rollout") {
             if (dryRun) {
-                previewOutput = "Dry run only. DOKSCP would run: kubectl rollout undo deployment/" + name +
+                previewOutput = "Dry run only. StackPilot would run: kubectl rollout undo deployment/" + name +
                                 " -n " + namespaceName;
                 responseStatus = "dry_run";
             } else {
@@ -2044,7 +2044,7 @@ void HealthController::kubernetesControlInfrastructureResource(
             }
         } else if (resourceType == "deployment" && requestedAction == "pause_rollout") {
             if (dryRun) {
-                previewOutput = "Dry run only. DOKSCP would run: kubectl rollout pause deployment/" + name +
+                previewOutput = "Dry run only. StackPilot would run: kubectl rollout pause deployment/" + name +
                                 " -n " + namespaceName;
                 responseStatus = "dry_run";
             } else {
@@ -2054,7 +2054,7 @@ void HealthController::kubernetesControlInfrastructureResource(
             }
         } else if (resourceType == "deployment" && requestedAction == "resume_rollout") {
             if (dryRun) {
-                previewOutput = "Dry run only. DOKSCP would run: kubectl rollout resume deployment/" + name +
+                previewOutput = "Dry run only. StackPilot would run: kubectl rollout resume deployment/" + name +
                                 " -n " + namespaceName;
                 responseStatus = "dry_run";
             } else {
@@ -2086,7 +2086,7 @@ void HealthController::kubernetesControlInfrastructureResource(
                     " -n " + shellQuote(namespaceName) + " -o yaml 2>&1\"",
                     25
                 );
-                previewOutput = "Dry run only. DOKSCP would run: kubectl delete pod " + name +
+                previewOutput = "Dry run only. StackPilot would run: kubectl delete pod " + name +
                                 " -n " + namespaceName + " --wait=false\n\nCurrent object:\n" + currentYaml;
                 responseStatus = "dry_run";
             } else {
@@ -2098,7 +2098,7 @@ void HealthController::kubernetesControlInfrastructureResource(
             command = "timeout 25s sh -lc \"kubectl describe node " + shellQuote(name) + " 2>&1\"";
         } else if (resourceType == "node" && requestedAction == "cordon_node") {
             if (dryRun) {
-                previewOutput = "Dry run only. DOKSCP would run: kubectl cordon " + name;
+                previewOutput = "Dry run only. StackPilot would run: kubectl cordon " + name;
                 responseStatus = "dry_run";
             } else {
                 command = "timeout 20s sh -lc \"kubectl cordon " + shellQuote(name) + " 2>&1\"";
@@ -2106,7 +2106,7 @@ void HealthController::kubernetesControlInfrastructureResource(
             }
         } else if (resourceType == "node" && requestedAction == "uncordon_node") {
             if (dryRun) {
-                previewOutput = "Dry run only. DOKSCP would run: kubectl uncordon " + name;
+                previewOutput = "Dry run only. StackPilot would run: kubectl uncordon " + name;
                 responseStatus = "dry_run";
             } else {
                 command = "timeout 20s sh -lc \"kubectl uncordon " + shellQuote(name) + " 2>&1\"";
@@ -2114,7 +2114,7 @@ void HealthController::kubernetesControlInfrastructureResource(
             }
         } else if (resourceType == "node" && requestedAction == "drain_node") {
             if (dryRun) {
-                previewOutput = "Dry run only. DOKSCP would run: kubectl drain " + name +
+                previewOutput = "Dry run only. StackPilot would run: kubectl drain " + name +
                                 " --ignore-daemonsets --delete-emptydir-data --force --timeout=60s";
                 responseStatus = "dry_run";
             } else {
@@ -2375,7 +2375,7 @@ void HealthController::applyKubernetesResourceYaml(
         const auto now = std::chrono::system_clock::now().time_since_epoch().count();
         const std::filesystem::path yamlPath =
             std::filesystem::temp_directory_path() /
-            ("dokscp-apply-" + std::to_string(now) + "-" + std::to_string(std::hash<std::string>{}(userId + yaml)) + ".yaml");
+            ("stackpilot-apply-" + std::to_string(now) + "-" + std::to_string(std::hash<std::string>{}(userId + yaml)) + ".yaml");
         {
             std::ofstream out(yamlPath, std::ios::binary);
             if (!out) {
@@ -2449,4 +2449,4 @@ std::string HealthController::extractUserId(const drogon::HttpRequestPtr& req) {
     return payload["user_id"].asString();
 }
 
-} // namespace dokscp
+} // namespace stackpilot

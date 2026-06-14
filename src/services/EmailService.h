@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 class EmailService {
 public:
@@ -21,4 +21,4 @@ private:
     static std::string getFromName();
 };
 
-} // namespace dokscp
+} // namespace stackpilot

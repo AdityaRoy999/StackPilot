@@ -1,6 +1,6 @@
 # Extreme Test Cases
 
-This checklist is meant for smoke testing and manual hardening before calling a DOKSCP install production-ready.
+This checklist is meant for smoke testing and manual hardening before calling a StackPilot install production-ready.
 
 ## Project Creation
 
@@ -25,7 +25,7 @@ This checklist is meant for smoke testing and manual hardening before calling a 
 - Push to a CI-required branch. Expect deployment status `blocked` and CI status `pending`.
 - Send a successful `check_suite` for that commit. Expect status `pending` and a queued build.
 - Send a failed `check_suite` or failed `check_run`. Expect status `failed_ci`, no build, and no live replacement.
-- Send a successful `check_run` before the aggregate `check_suite`. Expect DOKSCP to keep waiting for `check_suite`.
+- Send a successful `check_run` before the aggregate `check_suite`. Expect StackPilot to keep waiting for `check_suite`.
 - Send CI events for a commit from another repository. Expect no deployment update.
 
 ## Build Promotion and Cleanup

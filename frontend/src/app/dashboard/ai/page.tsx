@@ -329,7 +329,7 @@ const starterMessages: ChatMessage[] = [
     role: "assistant",
     content:
       "I can reason about deployments and run real platform actions. Try “deploy a MySQL database”, /app redis, /diagnose with a failed deployment, /build to queue a build, or ask a normal question.",
-    meta: "DOKSCP Agent",
+    meta: "StackPilot Agent",
   },
 ];
 
@@ -514,7 +514,7 @@ function arrayFromResponse<T>(value: unknown, keys: string[] = []): T[] {
   return [];
 }
 
-function randomSecret(prefix = "dokscp") {
+function randomSecret(prefix = "StackPilot") {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -893,7 +893,7 @@ export default function AiAgentPage() {
         if (!targetDeploymentId) throw new Error("Usage: /deploy <deployment-id> [port]");
         const port = Number.parseInt(secondArg || "3000", 10) || 3000;
         const res = await api.post(`/deployments/${targetDeploymentId}/kubernetes/deploy`, {
-          namespace: "dokscp-apps",
+          namespace: "stackpilot-apps",
           exposure_mode: "ingress",
           replicas: 1,
           container_port: port,
@@ -1218,7 +1218,7 @@ export default function AiAgentPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <FilledStarIcon className="h-5 w-5 text-primary" />
-              <h1 className="font-semibold">{activeSession?.title || "DOKSCP Agent"}</h1>
+              <h1 className="font-semibold">{activeSession?.title || "StackPilot Agent"}</h1>
               <Badge variant="outline">{mode === "thinking" ? "thinking" : "fast"}</Badge>
             </div>
             <p className="mt-1 truncate text-xs text-muted-foreground">

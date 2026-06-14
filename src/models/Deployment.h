@@ -7,7 +7,7 @@
 #include <string>
 #include <json/json.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct Deployment {
     std::string id;
@@ -35,4 +35,4 @@ struct Deployment {
     }
 };
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -34,13 +34,13 @@ const transport = new StdioClientTransport({
   args: [serverPath],
   env: {
     ...process.env,
-    DOKSCP_API_URL: process.env.DOKSCP_API_URL || "http://localhost:8090/api/v1",
-    DOKSCP_FRONTEND_URL: process.env.DOKSCP_FRONTEND_URL || "http://localhost:3000",
+    STACKPILOT_API_URL: process.env.STACKPILOT_API_URL || "http://localhost:8090/api/v1",
+    STACKPILOT_FRONTEND_URL: process.env.STACKPILOT_FRONTEND_URL || "http://localhost:3000",
   },
 });
 
 const client = new Client({
-  name: "dokscp-mcp-smoke",
+  name: "stackpilot-mcp-smoke",
   version: "1.0.0",
 });
 
@@ -52,31 +52,31 @@ try {
   console.log(`MCP initialized. ${names.length} tool(s) available.`);
   console.log(names.join(", "));
 
-  const health = await callTool(client, "dokscp_health");
-  console.log("\n[dokscp_health]");
+  const health = await callTool(client, "STACKPILOT_health");
+  console.log("\n[STACKPILOT_health]");
   console.log(health);
 
-  if (process.env.DOKSCP_MCP_TOKEN) {
-    const auth = await callTool(client, "dokscp_verify_auth");
-    console.log("\n[dokscp_verify_auth]");
+  if (process.env.STACKPILOT_MCP_TOKEN) {
+    const auth = await callTool(client, "STACKPILOT_verify_auth");
+    console.log("\n[STACKPILOT_verify_auth]");
     console.log(auth);
   } else {
-    console.log("\n[dokscp_verify_auth] skipped because DOKSCP_MCP_TOKEN is not set.");
+    console.log("\n[STACKPILOT_verify_auth] skipped because STACKPILOT_MCP_TOKEN is not set.");
   }
 
-  if (process.env.DOKSCP_MCP_SMOKE_PROJECT) {
+  if (process.env.STACKPILOT_MCP_SMOKE_PROJECT) {
     const deployArgs = {
-      project_path: process.env.DOKSCP_MCP_SMOKE_PROJECT,
-      project_name: process.env.DOKSCP_MCP_SMOKE_PROJECT_NAME || "mcp-smoke-project",
-      dry_run: process.env.DOKSCP_MCP_SMOKE_DEPLOY !== "1",
-      wait_for_ready: process.env.DOKSCP_MCP_SMOKE_DEPLOY === "1",
-      wait_seconds: Number(process.env.DOKSCP_MCP_SMOKE_WAIT_SECONDS || 180),
+      project_path: process.env.STACKPILOT_MCP_SMOKE_PROJECT,
+      project_name: process.env.STACKPILOT_MCP_SMOKE_PROJECT_NAME || "mcp-smoke-project",
+      dry_run: process.env.STACKPILOT_MCP_SMOKE_DEPLOY !== "1",
+      wait_for_ready: process.env.STACKPILOT_MCP_SMOKE_DEPLOY === "1",
+      wait_seconds: Number(process.env.STACKPILOT_MCP_SMOKE_WAIT_SECONDS || 180),
     };
     const deployTimeout = deployArgs.wait_for_ready
       ? (deployArgs.wait_seconds + 90) * 1000
       : 60_000;
-    const deploy = await callTool(client, "dokscp_deploy_local_project", deployArgs, deployTimeout);
-    console.log("\n[dokscp_deploy_local_project]");
+    const deploy = await callTool(client, "STACKPILOT_deploy_local_project", deployArgs, deployTimeout);
+    console.log("\n[STACKPILOT_deploy_local_project]");
     console.log(deploy);
   }
 } finally {

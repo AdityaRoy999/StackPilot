@@ -6,7 +6,7 @@
 
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 class PasswordHelper {
 public:
@@ -16,4 +16,4 @@ public:
                                const std::string& hash);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -1,10 +1,10 @@
 {
-  "name": "@dokscp/mcp-server",
+  "name": "@stackpilot/mcp-server",
   "version": "1.0.0",
-  "description": "MCP (Model Context Protocol) server for the DOKSCP deployment platform",
+  "description": "MCP (Model Context Protocol) server for the StackPilot deployment platform",
   "type": "module",
   "bin": {
-    "dokscp-mcp": "./src/index.js"
+    "stackpilot-mcp": "./src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",

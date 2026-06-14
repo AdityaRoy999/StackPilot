@@ -6,7 +6,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class SshController : public drogon::HttpController<SshController> {
 public:
@@ -71,4 +71,4 @@ private:
     std::string extractUserId(const drogon::HttpRequestPtr& req) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

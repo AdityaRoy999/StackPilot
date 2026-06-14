@@ -17,7 +17,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -107,7 +107,7 @@ std::string extractJsonObjectFromCommandOutput(const std::string& output) {
         return "";
     }
 
-    const size_t exitMarker = output.find("__DOKSCP_EXIT_CODE__", start);
+    const size_t exitMarker = output.find("__STACKPILOT_EXIT_CODE__", start);
     const size_t searchEnd = exitMarker == std::string::npos ? output.size() : exitMarker;
     const size_t end = output.rfind('}', searchEnd);
     if (end == std::string::npos || end < start) {
@@ -250,9 +250,9 @@ if [ "$compose_up_exit" -ne 0 ]; then
     rewrite_conflicting_application_ports || true
     http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
     https_port=$(choose_port 8443 9443 10443 4443)
-    write_env_value DOKSCP_HTTP_PORT "$http_port"
-    write_env_value DOKSCP_HTTPS_PORT "$https_port"
-    echo "Host port conflict detected; retrying Compose with DOKSCP_HTTP_PORT=$http_port and DOKSCP_HTTPS_PORT=$https_port"
+    write_env_value STACKPILOT_HTTP_PORT "$http_port"
+    write_env_value STACKPILOT_HTTPS_PORT "$https_port"
+    echo "Host port conflict detected; retrying Compose with STACKPILOT_HTTP_PORT=$http_port and STACKPILOT_HTTPS_PORT=$https_port"
     $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
   else
     exit "$compose_up_exit"
@@ -424,7 +424,7 @@ std::string sanitizeDnsLabelValue(const std::string& value) {
         out.pop_back();
     }
     if (out.empty()) {
-        out = "dokscp-runtime";
+        out = "stackpilot-runtime";
     }
     if (out.size() > 50) {
         out.resize(50);
@@ -648,13 +648,13 @@ SshOperationResult SshService::testConnection(const SshConnectionConfig& config)
     const SessionFiles files = prepareSessionFiles(config);
     const std::string command =
         "timeout 35s sh -lc " +
-        shellQuote(files.sshpassPrefix + files.sshPrefix + " " + shellQuote("printf __DOKSCP_SSH_OK__"));
+        shellQuote(files.sshpassPrefix + files.sshPrefix + " " + shellQuote("printf __STACKPILOT_SSH_OK__"));
 
     std::string output;
     const int exitCode = runCommand(command, output);
     cleanupSessionFiles(files);
 
-    if (exitCode != 0 || output.find("__DOKSCP_SSH_OK__") == std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_SSH_OK__") == std::string::npos) {
         if (isTailscaleConnection(config) && output.find("login.tailscale.com") != std::string::npos) {
             result.error = "Tailscale SSH requires browser approval. Visit the Tailscale URL shown in details, then retry.";
         } else if (output.find("Permission denied") != std::string::npos) {
@@ -665,7 +665,7 @@ SshOperationResult SshService::testConnection(const SshConnectionConfig& config)
         } else if (output.find("Connection timed out") != std::string::npos ||
                    output.find("No route to host") != std::string::npos ||
                    output.find("Connection refused") != std::string::npos) {
-            result.error = "SSH server is not reachable from the DOKSCP backend container";
+            result.error = "SSH server is not reachable from the StackPilot backend container";
         } else if (output.find("Too many authentication failures") != std::string::npos) {
             result.error = "SSH authentication failed before password login was accepted";
         } else {
@@ -697,7 +697,7 @@ SshOperationResult SshService::listDirectory(const SshConnectionConfig& config,
     const SessionFiles files = prepareSessionFiles(config);
     const std::string remoteCommand =
         "set -e; target=" + shellQuote(remotePath) +
-        "; [ -d \"$target\" ] || { echo __DOKSCP_INVALID_PATH__; exit 9; }; " \
+        "; [ -d \"$target\" ] || { echo __STACKPILOT_INVALID_PATH__; exit 9; }; " \
         "for path in \"$target\"/* \"$target\"/.[!.]* \"$target\"/..?*; do "
         "[ -e \"$path\" ] || continue; "
         "name=${path##*/}; "
@@ -713,7 +713,7 @@ SshOperationResult SshService::listDirectory(const SshConnectionConfig& config,
     cleanupSessionFiles(files);
 
     if (exitCode != 0) {
-        result.error = output.find("__DOKSCP_INVALID_PATH__") != std::string::npos
+        result.error = output.find("__STACKPILOT_INVALID_PATH__") != std::string::npos
             ? "Remote path does not exist or is not a directory"
             : "Failed to list remote directory";
         result.output = output;
@@ -762,7 +762,7 @@ SshOperationResult SshService::syncDirectory(const SshConnectionConfig& config,
     const SessionFiles files = prepareSessionFiles(config);
     const std::string remoteCommand =
         "set -e; target=" + shellQuote(remotePath) +
-        "; [ -d \"$target\" ] || { echo __DOKSCP_INVALID_PATH__; exit 9; }; " \
+        "; [ -d \"$target\" ] || { echo __STACKPILOT_INVALID_PATH__; exit 9; }; " \
         "cd \"$target\" && tar --exclude=.git --exclude=node_modules --exclude=.next --exclude=dist --exclude=build -cf - .";
 
     const std::string command =
@@ -785,7 +785,7 @@ SshOperationResult SshService::syncDirectory(const SshConnectionConfig& config,
     }
 
     if (exitCode != 0) {
-        result.error = output.find("__DOKSCP_INVALID_PATH__") != std::string::npos
+        result.error = output.find("__STACKPILOT_INVALID_PATH__") != std::string::npos
             ? "Remote path does not exist or is not a directory"
             : (exitCode == 124 ? "SSH sync timed out" : "Failed to sync source from SSH");
         result.output = output;
@@ -808,7 +808,7 @@ SshOperationResult SshService::probeHost(const SshConnectionConfig& config) cons
     const SessionFiles files = prepareSessionFiles(config);
     const std::string remoteCommand =
         "set +e; "
-        "echo __DOKSCP_PROBE_START__; "
+        "echo __STACKPILOT_PROBE_START__; "
         "printf 'os='; uname -srm 2>/dev/null || true; "
         "printf 'user='; id -un 2>/dev/null || true; "
         "printf 'uid='; id -u 2>/dev/null || true; "
@@ -820,7 +820,7 @@ SshOperationResult SshService::probeHost(const SshConnectionConfig& config) cons
         "printf 'sudo_passwordless='; sudo -n true >/dev/null 2>&1 && echo yes || echo no; "
         "printf 'disk='; df -Pk / 2>/dev/null | awk 'NR==2 {print $4 \"KB_free\"}' || true; "
         "printf 'memory='; awk '/MemAvailable/ {print $2 \"KB_available\"}' /proc/meminfo 2>/dev/null || true; "
-        "echo __DOKSCP_PROBE_END__";
+        "echo __STACKPILOT_PROBE_END__";
     const std::string command =
         "timeout 35s sh -lc " +
         shellQuote(files.sshpassPrefix + files.sshPrefix + " " + shellQuote(remoteCommand));
@@ -829,7 +829,7 @@ SshOperationResult SshService::probeHost(const SshConnectionConfig& config) cons
     const int exitCode = runCommand(command, output);
     cleanupSessionFiles(files);
 
-    if (exitCode != 0 || output.find("__DOKSCP_PROBE_START__") == std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_PROBE_START__") == std::string::npos) {
         result.error = isTailscaleConnection(config) && output.find("login.tailscale.com") != std::string::npos
             ? "Tailscale SSH requires browser approval. Approve the session, then retry the probe."
             : "Failed to probe remote host capabilities";
@@ -860,12 +860,12 @@ SshOperationResult SshService::provisionDockerHost(const SshConnectionConfig& co
         : "sudo -n true >/dev/null 2>&1";
     const std::string remoteCommand =
         "set -e; "
-        "echo __DOKSCP_PROVISION_DOCKER_START__; "
+        "echo __STACKPILOT_PROVISION_DOCKER_START__; "
         "if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then "
-        "  echo docker_status=ready; echo __DOKSCP_PROVISION_DOCKER_DONE__; exit 0; "
+        "  echo docker_status=ready; echo __STACKPILOT_PROVISION_DOCKER_DONE__; exit 0; "
         "fi; "
         "if [ \"$(id -u)\" -ne 0 ] && ! " + sudoCheck + "; then "
-        "  echo __DOKSCP_SUDO_REQUIRED__; exit 20; "
+        "  echo __STACKPILOT_SUDO_REQUIRED__; exit 20; "
         "fi; "
         "SUDO=''; [ \"$(id -u)\" -eq 0 ] || SUDO='" + sudoCmd + "'; "
         "if command -v apt-get >/dev/null 2>&1; then "
@@ -882,19 +882,19 @@ SshOperationResult SshService::provisionDockerHost(const SshConnectionConfig& co
         "  echo package_manager=pacman; "
         "  $SUDO pacman -Sy --noconfirm docker docker-compose; "
         "else "
-        "  echo __DOKSCP_UNSUPPORTED_PACKAGE_MANAGER__; exit 21; "
+        "  echo __STACKPILOT_UNSUPPORTED_PACKAGE_MANAGER__; exit 21; "
         "fi; "
         "($SUDO systemctl enable --now docker >/dev/null 2>&1 || $SUDO service docker start >/dev/null 2>&1 || true); "
         "$SUDO usermod -aG docker \"$(id -un)\" >/dev/null 2>&1 || true; "
         "if docker info >/dev/null 2>&1; then "
         "  echo docker_status=ready; "
         "elif $SUDO docker info >/dev/null 2>&1; then "
-        "  echo __DOKSCP_DOCKER_RELOGIN_REQUIRED__; "
+        "  echo __STACKPILOT_DOCKER_RELOGIN_REQUIRED__; "
         "else "
-        "  echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 22; "
+        "  echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 22; "
         "fi; "
         "docker --version 2>/dev/null || true; "
-        "echo __DOKSCP_PROVISION_DOCKER_DONE__";
+        "echo __STACKPILOT_PROVISION_DOCKER_DONE__";
 
     const std::string command =
         "timeout 600s sh -lc " +
@@ -906,12 +906,12 @@ SshOperationResult SshService::provisionDockerHost(const SshConnectionConfig& co
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_PROVISION_DOCKER_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_SUDO_REQUIRED__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_PROVISION_DOCKER_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_SUDO_REQUIRED__") != std::string::npos) {
             result.error = "Docker provisioning requires root or passwordless sudo on the remote host";
-        } else if (output.find("__DOKSCP_UNSUPPORTED_PACKAGE_MANAGER__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_UNSUPPORTED_PACKAGE_MANAGER__") != std::string::npos) {
             result.error = "Unsupported Linux package manager. Install Docker manually, then probe again.";
-        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker was installed, but the daemon is not reachable";
         } else if (exitCode == 124) {
             result.error = "Docker provisioning timed out";
@@ -922,7 +922,7 @@ SshOperationResult SshService::provisionDockerHost(const SshConnectionConfig& co
     }
 
     result.success = true;
-    if (output.find("__DOKSCP_DOCKER_RELOGIN_REQUIRED__") != std::string::npos) {
+    if (output.find("__STACKPILOT_DOCKER_RELOGIN_REQUIRED__") != std::string::npos) {
         result.error = "Docker is installed, but this user may need to reconnect before docker commands work without sudo";
     }
     return result;
@@ -946,25 +946,25 @@ SshOperationResult SshService::provisionLightweightKubernetesHost(const SshConne
         : "sudo -n true >/dev/null 2>&1";
     const std::string remoteCommand =
         "set -e; "
-        "echo __DOKSCP_PROVISION_K8S_START__; "
+        "echo __STACKPILOT_PROVISION_K8S_START__; "
         "if (command -v kubectl >/dev/null 2>&1 && kubectl get nodes >/dev/null 2>&1) || "
         "   (command -v k3s >/dev/null 2>&1 && (k3s kubectl get nodes >/dev/null 2>&1 || " + sudoCmd + " k3s kubectl get nodes >/dev/null 2>&1)); then "
-        "  echo kubernetes_status=ready; echo __DOKSCP_PROVISION_K8S_DONE__; exit 0; "
+        "  echo kubernetes_status=ready; echo __STACKPILOT_PROVISION_K8S_DONE__; exit 0; "
         "fi; "
         "if [ \"$(id -u)\" -ne 0 ] && ! " + sudoCheck + "; then "
-        "  echo __DOKSCP_SUDO_REQUIRED__; exit 20; "
+        "  echo __STACKPILOT_SUDO_REQUIRED__; exit 20; "
         "fi; "
-        "command -v curl >/dev/null 2>&1 || { echo __DOKSCP_CURL_MISSING__; exit 21; }; "
+        "command -v curl >/dev/null 2>&1 || { echo __STACKPILOT_CURL_MISSING__; exit 21; }; "
         "SUDO=''; [ \"$(id -u)\" -eq 0 ] || SUDO='" + sudoCmd + "'; "
-        "curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='--secrets-encryption --write-kubeconfig-mode=644' $SUDO sh - || { echo __DOKSCP_K3S_INSTALL_FAILED__; exit 22; }; "
+        "curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC='--secrets-encryption --write-kubeconfig-mode=644' $SUDO sh - || { echo __STACKPILOT_K3S_INSTALL_FAILED__; exit 22; }; "
         "sleep 4; "
         "if command -v kubectl >/dev/null 2>&1; then K='kubectl'; "
         "elif [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl'; "
         "else K='" + sudoCmd + " k3s kubectl'; fi; "
-        "$K get nodes || { echo __DOKSCP_K8S_VERIFY_FAILED__; exit 23; }; "
+        "$K get nodes || { echo __STACKPILOT_K8S_VERIFY_FAILED__; exit 23; }; "
         "$K get ingressclass >/dev/null 2>&1 || true; "
         "echo kubernetes_status=ready; "
-        "echo __DOKSCP_PROVISION_K8S_DONE__";
+        "echo __STACKPILOT_PROVISION_K8S_DONE__";
 
     const std::string command =
         "timeout 900s sh -lc " +
@@ -976,14 +976,14 @@ SshOperationResult SshService::provisionLightweightKubernetesHost(const SshConne
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_PROVISION_K8S_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_SUDO_REQUIRED__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_PROVISION_K8S_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_SUDO_REQUIRED__") != std::string::npos) {
             result.error = "Lightweight Kubernetes setup requires root or passwordless sudo on the remote host";
-        } else if (output.find("__DOKSCP_CURL_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CURL_MISSING__") != std::string::npos) {
             result.error = "curl is required to install lightweight Kubernetes";
-        } else if (output.find("__DOKSCP_K3S_INSTALL_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_INSTALL_FAILED__") != std::string::npos) {
             result.error = "k3s installation failed on the remote host";
-        } else if (output.find("__DOKSCP_K8S_VERIFY_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K8S_VERIFY_FAILED__") != std::string::npos) {
             result.error = "k3s installed, but the Kubernetes node did not become ready";
         } else if (exitCode == 124) {
             result.error = "Lightweight Kubernetes provisioning timed out";
@@ -1053,18 +1053,18 @@ SshOperationResult SshService::initializeK3sControlPlane(const SshConnectionConf
 
     const std::string remoteCommand =
         "set -e; "
-        "echo __DOKSCP_K3S_CLUSTER_INIT_START__; "
-        "if [ \"$(id -u)\" -ne 0 ] && ! " + sudoCheck + "; then echo __DOKSCP_SUDO_REQUIRED__; exit 20; fi; "
-        "command -v curl >/dev/null 2>&1 || { echo __DOKSCP_CURL_MISSING__; exit 21; }; "
-        "if command -v k3s >/dev/null 2>&1; then echo dokscp_k3s_existing=yes; "
-        "else tmp=$(mktemp); curl -sfL https://get.k3s.io -o \"$tmp\" || { rm -f \"$tmp\"; echo __DOKSCP_K3S_DOWNLOAD_FAILED__; exit 22; }; chmod +x \"$tmp\"; "
-        "if [ \"$(id -u)\" -eq 0 ]; then " + installAsRoot + "; else " + installWithSudo + "; fi || { rm -f \"$tmp\"; echo __DOKSCP_K3S_INSTALL_FAILED__; exit 23; }; rm -f \"$tmp\"; fi; "
+        "echo __STACKPILOT_K3S_CLUSTER_INIT_START__; "
+        "if [ \"$(id -u)\" -ne 0 ] && ! " + sudoCheck + "; then echo __STACKPILOT_SUDO_REQUIRED__; exit 20; fi; "
+        "command -v curl >/dev/null 2>&1 || { echo __STACKPILOT_CURL_MISSING__; exit 21; }; "
+        "if command -v k3s >/dev/null 2>&1; then echo STACKPILOT_k3s_existing=yes; "
+        "else tmp=$(mktemp); curl -sfL https://get.k3s.io -o \"$tmp\" || { rm -f \"$tmp\"; echo __STACKPILOT_K3S_DOWNLOAD_FAILED__; exit 22; }; chmod +x \"$tmp\"; "
+        "if [ \"$(id -u)\" -eq 0 ]; then " + installAsRoot + "; else " + installWithSudo + "; fi || { rm -f \"$tmp\"; echo __STACKPILOT_K3S_INSTALL_FAILED__; exit 23; }; rm -f \"$tmp\"; fi; "
         "sleep 5; "
-        "(" + getNodesCommand + ") || { echo __DOKSCP_K3S_VERIFY_FAILED__; exit 24; }; "
-        "echo dokscp_cluster_server_url=" + shellQuote("https://" + apiHost + ":6443") + "; "
-        "printf 'dokscp_cluster_token='; if [ \"$(id -u)\" -eq 0 ]; then cat /var/lib/rancher/k3s/server/node-token; else " + tokenCommand + "; fi; "
-        "echo __DOKSCP_K3S_CLUSTER_NODES_BEGIN__; " + getNodesCommand + "; echo __DOKSCP_K3S_CLUSTER_NODES_END__; "
-        "echo __DOKSCP_K3S_CLUSTER_INIT_DONE__";
+        "(" + getNodesCommand + ") || { echo __STACKPILOT_K3S_VERIFY_FAILED__; exit 24; }; "
+        "echo STACKPILOT_cluster_server_url=" + shellQuote("https://" + apiHost + ":6443") + "; "
+        "printf 'STACKPILOT_cluster_token='; if [ \"$(id -u)\" -eq 0 ]; then cat /var/lib/rancher/k3s/server/node-token; else " + tokenCommand + "; fi; "
+        "echo __STACKPILOT_K3S_CLUSTER_NODES_BEGIN__; " + getNodesCommand + "; echo __STACKPILOT_K3S_CLUSTER_NODES_END__; "
+        "echo __STACKPILOT_K3S_CLUSTER_INIT_DONE__";
 
     const std::string command =
         "timeout 900s sh -lc " +
@@ -1077,16 +1077,16 @@ SshOperationResult SshService::initializeK3sControlPlane(const SshConnectionConf
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_K3S_CLUSTER_INIT_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_SUDO_REQUIRED__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_K3S_CLUSTER_INIT_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_SUDO_REQUIRED__") != std::string::npos) {
             result.error = "Control-plane bootstrap requires root or passwordless sudo on the remote host";
-        } else if (output.find("__DOKSCP_CURL_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CURL_MISSING__") != std::string::npos) {
             result.error = "curl is required to install k3s on the control plane";
-        } else if (output.find("__DOKSCP_K3S_DOWNLOAD_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_DOWNLOAD_FAILED__") != std::string::npos) {
             result.error = "Unable to download the k3s installer on the control plane";
-        } else if (output.find("__DOKSCP_K3S_INSTALL_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_INSTALL_FAILED__") != std::string::npos) {
             result.error = "k3s server installation failed on the control plane";
-        } else if (output.find("__DOKSCP_K3S_VERIFY_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_VERIFY_FAILED__") != std::string::npos) {
             result.error = "k3s server installed, but the control-plane node did not become ready";
         } else if (exitCode == 124) {
             result.error = "Control-plane bootstrap timed out";
@@ -1131,16 +1131,16 @@ SshOperationResult SshService::joinK3sWorker(const SshConnectionConfig& config,
 
     const std::string remoteCommand =
         "set -e; "
-        "echo __DOKSCP_K3S_WORKER_JOIN_START__; "
-        "if [ \"$(id -u)\" -ne 0 ] && ! " + sudoCheck + "; then echo __DOKSCP_SUDO_REQUIRED__; exit 20; fi; "
-        "command -v curl >/dev/null 2>&1 || { echo __DOKSCP_CURL_MISSING__; exit 21; }; "
-        "if systemctl is-active --quiet k3s-agent 2>/dev/null || systemctl is-active --quiet k3s 2>/dev/null; then echo dokscp_k3s_existing=yes; "
-        "else tmp=$(mktemp); curl -sfL https://get.k3s.io -o \"$tmp\" || { rm -f \"$tmp\"; echo __DOKSCP_K3S_DOWNLOAD_FAILED__; exit 22; }; chmod +x \"$tmp\"; "
-        "if [ \"$(id -u)\" -eq 0 ]; then " + installAsRoot + "; else " + installWithSudo + "; fi || { rm -f \"$tmp\"; echo __DOKSCP_K3S_AGENT_INSTALL_FAILED__; exit 23; }; rm -f \"$tmp\"; fi; "
+        "echo __STACKPILOT_K3S_WORKER_JOIN_START__; "
+        "if [ \"$(id -u)\" -ne 0 ] && ! " + sudoCheck + "; then echo __STACKPILOT_SUDO_REQUIRED__; exit 20; fi; "
+        "command -v curl >/dev/null 2>&1 || { echo __STACKPILOT_CURL_MISSING__; exit 21; }; "
+        "if systemctl is-active --quiet k3s-agent 2>/dev/null || systemctl is-active --quiet k3s 2>/dev/null; then echo STACKPILOT_k3s_existing=yes; "
+        "else tmp=$(mktemp); curl -sfL https://get.k3s.io -o \"$tmp\" || { rm -f \"$tmp\"; echo __STACKPILOT_K3S_DOWNLOAD_FAILED__; exit 22; }; chmod +x \"$tmp\"; "
+        "if [ \"$(id -u)\" -eq 0 ]; then " + installAsRoot + "; else " + installWithSudo + "; fi || { rm -f \"$tmp\"; echo __STACKPILOT_K3S_AGENT_INSTALL_FAILED__; exit 23; }; rm -f \"$tmp\"; fi; "
         "sleep 5; "
         "if systemctl is-active --quiet k3s-agent 2>/dev/null || systemctl is-active --quiet k3s 2>/dev/null; then "
-        "echo dokscp_worker_status=ready; echo __DOKSCP_K3S_WORKER_JOIN_DONE__; "
-        "else echo __DOKSCP_K3S_AGENT_VERIFY_FAILED__; exit 24; fi";
+        "echo STACKPILOT_worker_status=ready; echo __STACKPILOT_K3S_WORKER_JOIN_DONE__; "
+        "else echo __STACKPILOT_K3S_AGENT_VERIFY_FAILED__; exit 24; fi";
 
     const std::string command =
         "timeout 900s sh -lc " +
@@ -1153,16 +1153,16 @@ SshOperationResult SshService::joinK3sWorker(const SshConnectionConfig& config,
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_K3S_WORKER_JOIN_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_SUDO_REQUIRED__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_K3S_WORKER_JOIN_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_SUDO_REQUIRED__") != std::string::npos) {
             result.error = "Worker join requires root or passwordless sudo on the remote host";
-        } else if (output.find("__DOKSCP_CURL_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CURL_MISSING__") != std::string::npos) {
             result.error = "curl is required to install k3s on the worker";
-        } else if (output.find("__DOKSCP_K3S_DOWNLOAD_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_DOWNLOAD_FAILED__") != std::string::npos) {
             result.error = "Unable to download the k3s installer on the worker";
-        } else if (output.find("__DOKSCP_K3S_AGENT_INSTALL_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_AGENT_INSTALL_FAILED__") != std::string::npos) {
             result.error = "k3s agent installation failed on the worker";
-        } else if (output.find("__DOKSCP_K3S_AGENT_VERIFY_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K3S_AGENT_VERIFY_FAILED__") != std::string::npos) {
             result.error = "k3s agent installed, but the worker service did not become ready";
         } else if (exitCode == 124) {
             result.error = "Worker join timed out";
@@ -1187,15 +1187,15 @@ SshOperationResult SshService::inspectK3sCluster(const SshConnectionConfig& conf
     const SessionFiles files = prepareSessionFiles(config);
     const std::string remoteCommand =
         "set -e; "
-        "echo __DOKSCP_K3S_CLUSTER_STATUS_START__; "
+        "echo __STACKPILOT_K3S_CLUSTER_STATUS_START__; "
         "if command -v kubectl >/dev/null 2>&1; then K='kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl'; "
-        "else echo __DOKSCP_KUBECTL_MISSING__; exit 20; fi; "
-        "echo __DOKSCP_K3S_CLUSTER_NODES_BEGIN__; $K get nodes -o wide; echo __DOKSCP_K3S_CLUSTER_NODES_END__; "
-        "echo __DOKSCP_K3S_CLUSTER_PODS_BEGIN__; $K get pods -A -o wide; echo __DOKSCP_K3S_CLUSTER_PODS_END__; "
-        "echo __DOKSCP_K3S_CLUSTER_INFO_BEGIN__; $K cluster-info || true; echo __DOKSCP_K3S_CLUSTER_INFO_END__; "
-        "echo __DOKSCP_K3S_CLUSTER_STATUS_DONE__";
+        "else echo __STACKPILOT_KUBECTL_MISSING__; exit 20; fi; "
+        "echo __STACKPILOT_K3S_CLUSTER_NODES_BEGIN__; $K get nodes -o wide; echo __STACKPILOT_K3S_CLUSTER_NODES_END__; "
+        "echo __STACKPILOT_K3S_CLUSTER_PODS_BEGIN__; $K get pods -A -o wide; echo __STACKPILOT_K3S_CLUSTER_PODS_END__; "
+        "echo __STACKPILOT_K3S_CLUSTER_INFO_BEGIN__; $K cluster-info || true; echo __STACKPILOT_K3S_CLUSTER_INFO_END__; "
+        "echo __STACKPILOT_K3S_CLUSTER_STATUS_DONE__";
 
     const std::string command =
         "timeout 90s sh -lc " +
@@ -1208,8 +1208,8 @@ SshOperationResult SshService::inspectK3sCluster(const SshConnectionConfig& conf
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_K3S_CLUSTER_STATUS_DONE__") == std::string::npos) {
-        result.error = output.find("__DOKSCP_KUBECTL_MISSING__") != std::string::npos
+    if (exitCode != 0 || output.find("__STACKPILOT_K3S_CLUSTER_STATUS_DONE__") == std::string::npos) {
+        result.error = output.find("__STACKPILOT_KUBECTL_MISSING__") != std::string::npos
             ? "kubectl or k3s is not available on the control-plane host"
             : "Failed to inspect the Kubernetes cluster";
         return result;
@@ -1243,12 +1243,12 @@ SshOperationResult SshService::runRemoteCommand(const SshConnectionConfig& confi
     const std::string remoteCommand =
         "set +e; "
         "target=" + shellQuote(workingDirectory) + "; "
-        "[ -d \"$target\" ] || { echo __DOKSCP_INVALID_CWD__; exit 9; }; "
+        "[ -d \"$target\" ] || { echo __STACKPILOT_INVALID_CWD__; exit 9; }; "
         "cd \"$target\"; "
         "export TERM=dumb CI=1; "
-        "echo __DOKSCP_CWD__=$(pwd); "
+        "echo __STACKPILOT_CWD__=$(pwd); "
         "(" + command + "); "
-        "code=$?; echo __DOKSCP_EXIT_CODE__=$code; exit $code";
+        "code=$?; echo __STACKPILOT_EXIT_CODE__=$code; exit $code";
 
     const std::string wrappedCommand =
         "timeout " + std::to_string(boundedTimeout) + "s sh -lc " +
@@ -1261,7 +1261,7 @@ SshOperationResult SshService::runRemoteCommand(const SshConnectionConfig& confi
 
     result.exitCode = exitCode;
     result.output = output;
-    if (output.find("__DOKSCP_INVALID_CWD__") != std::string::npos) {
+    if (output.find("__STACKPILOT_INVALID_CWD__") != std::string::npos) {
         result.error = "Working directory does not exist on the remote host";
         return result;
     }
@@ -1306,7 +1306,7 @@ SshOperationResult SshService::uploadFile(const SshConnectionConfig& config,
         "set -e; mkdir -p " + shellQuote(remoteDir) +
         "; cat > " + shellQuote(remotePath) +
         "; chmod 600 " + shellQuote(remotePath) +
-        "; echo __DOKSCP_UPLOAD_DONE__";
+        "; echo __STACKPILOT_UPLOAD_DONE__";
     const std::string command =
         "timeout " + std::to_string(std::max(30, timeoutSeconds)) + "s sh -lc " +
         shellQuote("cat " + shellQuote(localPath) + " | " +
@@ -1328,7 +1328,7 @@ SshOperationResult SshService::uploadFile(const SshConnectionConfig& config,
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_UPLOAD_DONE__") == std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_UPLOAD_DONE__") == std::string::npos) {
         result.error = exitCode == 124 ? "Remote file upload timed out" : "Failed to upload file to remote host";
         return result;
     }
@@ -1380,23 +1380,23 @@ SshOperationResult SshService::cloneGitRepository(const SshConnectionConfig& con
             "askpass_file=$(mktemp \"$target/.git-askpass.XXXXXX\"); "
             "chmod 600 \"$token_file\"; "
             "printf '%s' " + shellQuote(gitToken) + " > \"$token_file\"; "
-            "cat > \"$askpass_file\" <<'__DOKSCP_ASKPASS_EOF__'\n"
+            "cat > \"$askpass_file\" <<'__STACKPILOT_ASKPASS_EOF__'\n"
             "#!/bin/sh\n"
             "case \"$1\" in\n"
             "  *Username*) printf '%s\\n' 'x-access-token' ;;\n"
-            "  *Password*) cat \"$DOKSCP_GIT_TOKEN_FILE\" ;;\n"
+            "  *Password*) cat \"$STACKPILOT_GIT_TOKEN_FILE\" ;;\n"
             "  *) printf '\\n' ;;\n"
             "esac\n"
-            "__DOKSCP_ASKPASS_EOF__\n"
+            "__STACKPILOT_ASKPASS_EOF__\n"
             "chmod 700 \"$askpass_file\"; "
-            "export DOKSCP_GIT_TOKEN_FILE=\"$token_file\" GIT_ASKPASS=\"$askpass_file\" GIT_TERMINAL_PROMPT=0; "
+            "export STACKPILOT_GIT_TOKEN_FILE=\"$token_file\" GIT_ASKPASS=\"$askpass_file\" GIT_TERMINAL_PROMPT=0; "
             "trap 'rm -f \"$token_file\" \"$askpass_file\"' EXIT; ";
     }
     const std::string remoteCommand =
         "set -e; "
         "target=" + shellQuote(workingDirectory) + "; "
-        "[ -d \"$target\" ] || { echo __DOKSCP_INVALID_CWD__; exit 9; }; "
-        "command -v git >/dev/null 2>&1 || { echo __DOKSCP_GIT_MISSING__; exit 10; }; "
+        "[ -d \"$target\" ] || { echo __STACKPILOT_INVALID_CWD__; exit 9; }; "
+        "command -v git >/dev/null 2>&1 || { echo __STACKPILOT_GIT_MISSING__; exit 10; }; "
         "cd \"$target\"; "
         + credentialSetup +
         "git clone --progress --depth 1" + branchArg + " " + shellQuote(trim(repositoryUrl)) + targetArg + "; "
@@ -1406,7 +1406,7 @@ SshOperationResult SshService::cloneGitRepository(const SshConnectionConfig& con
               "git checkout --detach " + shellQuote(trim(commitSha)) + " || "
               "(git fetch --depth 1 origin " + shellQuote(trim(commitSha)) + " && git checkout --detach " + shellQuote(trim(commitSha)) + "); "
               "cd \"$target\"; ") +
-        "echo __DOKSCP_CLONE_PATH__=$(pwd)/" + (trim(targetDirectory).empty() ? "" : shellQuote(trim(targetDirectory)));
+        "echo __STACKPILOT_CLONE_PATH__=$(pwd)/" + (trim(targetDirectory).empty() ? "" : shellQuote(trim(targetDirectory)));
 
     const std::string wrappedCommand =
         "timeout " + std::to_string(boundedTimeout) + "s sh -lc " +
@@ -1420,9 +1420,9 @@ SshOperationResult SshService::cloneGitRepository(const SshConnectionConfig& con
     result.exitCode = exitCode;
     result.output = output;
     if (exitCode != 0) {
-        if (output.find("__DOKSCP_INVALID_CWD__") != std::string::npos) {
+        if (output.find("__STACKPILOT_INVALID_CWD__") != std::string::npos) {
             result.error = "Clone destination does not exist on the remote host";
-        } else if (output.find("__DOKSCP_GIT_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_GIT_MISSING__") != std::string::npos) {
             result.error = "Git is not installed on the remote host";
         } else if (exitCode == 124) {
             result.error = "Git clone timed out";
@@ -1472,40 +1472,40 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
     }
 
     const SessionFiles files = prepareSessionFiles(config);
-    const std::string envFile = ".env.dokscp." + containerName;
+    const std::string envFile = ".env.StackPilot." + containerName;
     const std::string remoteCommand =
         "set -e; "
         "target=" + shellQuote(remotePath) + "; "
-        "[ -d \"$target\" ] || { echo __DOKSCP_INVALID_PATH__; exit 9; }; "
+        "[ -d \"$target\" ] || { echo __STACKPILOT_INVALID_PATH__; exit 9; }; "
         "cd \"$target\"; "
-        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
         "compose_file=''; "
-        "for f in docker-compose.dokscp.yml docker-compose.dokscp.yaml docker-compose.prod.yml docker-compose.prod.yaml compose.prod.yml compose.prod.yaml docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do [ -f \"$f\" ] && { compose_file=\"$f\"; break; }; done; "
+        "for f in docker-compose.StackPilot.yml docker-compose.StackPilot.yaml docker-compose.prod.yml docker-compose.prod.yaml compose.prod.yml compose.prod.yaml docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do [ -f \"$f\" ] && { compose_file=\"$f\"; break; }; done; "
         "if [ -n \"$compose_file\" ]; then "
         "  compose_cmd='docker compose'; "
-        "  if ! docker compose version >/dev/null 2>&1; then if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; fi; "
-        "  cat > " + shellQuote(envFile) + " <<'__DOKSCP_ENV_EOF__'\n" +
+        "  if ! docker compose version >/dev/null 2>&1; then if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; else echo __STACKPILOT_COMPOSE_MISSING__; exit 20; fi; fi; "
+        "  cat > " + shellQuote(envFile) + " <<'__STACKPILOT_ENV_EOF__'\n" +
         envContent.str() +
-        "__DOKSCP_ENV_EOF__\n"
+        "__STACKPILOT_ENV_EOF__\n"
         "  cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
         "  cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
         "  cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
-        "  compose_parallel_limit=$(sed -n 's/^DOKSCP_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  compose_parallel_limit=$(sed -n 's/^STACKPILOT_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
         "  [ -n \"$compose_parallel_limit\" ] || compose_parallel_limit=1; "
         "  export COMPOSE_PARALLEL_LIMIT=\"$compose_parallel_limit\"; "
         "  echo 'Detected Docker Compose project: '\"$compose_file\"; "
-        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " config --services > .dokscp-compose-services; "
-        "  services=$(paste -sd, .dokscp-compose-services 2>/dev/null || true); "
-        "  echo __DOKSCP_REMOTE_COMPOSE_PROJECT__=" + containerName + "; "
-        "  echo __DOKSCP_REMOTE_COMPOSE_FILE__=$compose_file; "
-        "  echo __DOKSCP_REMOTE_COMPOSE_SERVICES__=$services; "
+        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " config --services > .stackpilot-compose-services; "
+        "  services=$(paste -sd, .stackpilot-compose-services 2>/dev/null || true); "
+        "  echo __STACKPILOT_REMOTE_COMPOSE_PROJECT__=" + containerName + "; "
+        "  echo __STACKPILOT_REMOTE_COMPOSE_FILE__=$compose_file; "
+        "  echo __STACKPILOT_REMOTE_COMPOSE_SERVICES__=$services; "
         "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " pull --ignore-pull-failures || true; "
         + composePortFallbackShell("\"$compose_file\"", shellQuote(containerName)) +
-        "  runtime=''; domain=$(sed -n 's/^DOKSCP_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  require_https=$(sed -n 's/^DOKSCP_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
-        "  http_port=$(sed -n 's/^DOKSCP_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  https_port=$(sed -n 's/^DOKSCP_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  runtime=''; domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  require_https=$(sed -n 's/^STACKPILOT_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
+        "  http_port=$(sed -n 's/^STACKPILOT_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "  https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
         "  if [ -n \"$domain\" ]; then "
         "    if [ \"$require_https\" = 'true' ]; then "
         "      if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; "
@@ -1514,23 +1514,23 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "    fi; "
         "  fi; "
         "  if [ -z \"$runtime\" ]; then "
-        "    for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
+        "    for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
         "      for port in 80 443 3000 8080 8000 5000 5173 15672 9001 8222 9090 3100 5432 3306 6379 27017 5672 9000 4222; do "
         "        mapped=$($compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
         "        if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://" + config.host + ":$mapped\"; break 2; fi; "
         "      done; "
         "    done; "
         "  fi; "
-        "  echo __DOKSCP_REMOTE_URL__=$runtime; "
+        "  echo __STACKPILOT_REMOTE_URL__=$runtime; "
         "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " ps; "
         "  exit 0; "
         "fi; "
         "dockerfile_arg='-f Dockerfile'; "
         "if [ ! -f Dockerfile ]; then "
-        "  mkdir -p .dokscp; "
-        "  dockerfile_arg='-f .dokscp/Dockerfile'; "
+        "  mkdir -p .StackPilot; "
+        "  dockerfile_arg='-f .StackPilot/Dockerfile'; "
         "  if [ -f package.json ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM node:20-alpine\n"
         "WORKDIR /app\n"
         "COPY package*.json ./\n"
@@ -1539,9 +1539,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "RUN if [ -f next.config.js ] || [ -f next.config.mjs ] || [ -f next.config.ts ] || node -e \"const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));if(!(pkg.scripts&&pkg.scripts.build)) process.exit(1)\"; then npm run build; fi\n"
         "EXPOSE 3000\n"
         "CMD [\"sh\", \"-c\", \"node -e \\\"const p=require('./package.json');process.exit(p.scripts&&p.scripts.start?0:1)\\\" && npm start || node server.js || node index.js || node app.js\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f requirements.txt ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM python:3.12-slim\n"
         "WORKDIR /app\n"
         "COPY requirements.txt ./\n"
@@ -1549,27 +1549,27 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "COPY . .\n"
         "EXPOSE 3000\n"
         "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(ls app.py main.py *.py 2>/dev/null | head -n1); exec streamlit run ${f:-app.py} --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); exec uvicorn ${m}:app --host 0.0.0.0 --port 3000; else exec python $( [ -f app.py ] && echo app.py || echo main.py ); fi\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f pyproject.toml ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM python:3.12-slim\n"
         "WORKDIR /app\n"
         "COPY . .\n"
         "RUN pip install --no-cache-dir .\n"
         "EXPOSE 3000\n"
         "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(ls app.py main.py *.py 2>/dev/null | head -n1); exec streamlit run ${f:-app.py} --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); exec uvicorn ${m}:app --host 0.0.0.0 --port 3000; else exec python $( [ -f app.py ] && echo app.py || echo main.py ); fi\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f main.py ] || [ -f app.py ]; then "
         "    entry='app.py'; [ -f app.py ] || entry='main.py'; "
-        "    cat > .dokscp/Dockerfile <<__DOKSCP_DOCKERFILE_EOF__\n"
+        "    cat > .StackPilot/Dockerfile <<__STACKPILOT_DOCKERFILE_EOF__\n"
         "FROM python:3.12-slim\n"
         "WORKDIR /app\n"
         "COPY . .\n"
         "EXPOSE 3000\n"
         "CMD [\"python\", \"$entry\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f go.mod ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM golang:1.24-alpine AS build\n"
         "WORKDIR /src\n"
         "COPY go.mod go.sum* ./\n"
@@ -1582,9 +1582,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "ENV PORT=3000\n"
         "EXPOSE 3000\n"
         "CMD [\"./server\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f CMakeLists.txt ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM ubuntu:24.04\n"
         "RUN apt-get update && apt-get install -y build-essential cmake libssl-dev zlib1g-dev uuid-dev && rm -rf /var/lib/apt/lists/*\n"
         "WORKDIR /app\n"
@@ -1593,9 +1593,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "ENV PORT=3000\n"
         "EXPOSE 3000\n"
         "CMD [\"/bin/sh\", \"-c\", \"exe=$(find build -maxdepth 4 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No executable found after CMake build'; exit 1; }; exec \\\"$exe\\\"\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f Cargo.toml ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM rust:1-bookworm AS build\n"
         "WORKDIR /src\n"
         "COPY . .\n"
@@ -1606,9 +1606,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "ENV PORT=3000\n"
         "EXPOSE 3000\n"
         "CMD [\"/bin/sh\", \"-c\", \"exe=$(find /app/bin -maxdepth 1 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No Rust release binary found'; exit 1; }; exec \\\"$exe\\\"\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
         "  elif [ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ] || [ -f gradlew ]; then "
-        "    cat > .dokscp/Dockerfile <<'__DOKSCP_DOCKERFILE_EOF__'\n"
+        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
         "FROM eclipse-temurin:21-jdk AS build\n"
         "WORKDIR /src\n"
         "COPY . .\n"
@@ -1620,20 +1620,20 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "ENV SERVER_PORT=3000\n"
         "EXPOSE 3000\n"
         "CMD [\"/bin/sh\", \"-c\", \"jar=$(find . -path '*/target/*.jar' -o -path '*/build/libs/*.jar' | grep -v plain | head -n1); [ -n \\\"$jar\\\" ] || { echo 'No runnable jar found'; exit 1; }; exec java -jar \\\"$jar\\\"\"]\n"
-        "__DOKSCP_DOCKERFILE_EOF__\n"
-        "  else echo __DOKSCP_DOCKERFILE_MISSING__; exit 12; fi; "
-        "  echo 'Generated remote Dockerfile at .dokscp/Dockerfile'; "
+        "__STACKPILOT_DOCKERFILE_EOF__\n"
+        "  else echo __STACKPILOT_DOCKERFILE_MISSING__; exit 12; fi; "
+        "  echo 'Generated remote Dockerfile at .StackPilot/Dockerfile'; "
         "fi; "
-        "cat > " + shellQuote(envFile) + " <<'__DOKSCP_ENV_EOF__'\n" +
+        "cat > " + shellQuote(envFile) + " <<'__STACKPILOT_ENV_EOF__'\n" +
         envContent.str() +
-        "__DOKSCP_ENV_EOF__\n"
+        "__STACKPILOT_ENV_EOF__\n"
         "cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
         "cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
         "cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
-        "build_parallel=$(sed -n 's/^DOKSCP_BACKEND_BUILD_PARALLELISM=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+        "build_parallel=$(sed -n 's/^STACKPILOT_BACKEND_BUILD_PARALLELISM=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
         "[ -n \"$build_parallel\" ] || build_parallel=1; "
         "echo 'Building remote Docker image " + imageName + "'; "
-        "docker build --pull=false --build-arg DOKSCP_BACKEND_BUILD_PARALLELISM=\"$build_parallel\" $dockerfile_arg -t " + shellQuote(imageName) + " .; "
+        "docker build --pull=false --build-arg STACKPILOT_BACKEND_BUILD_PARALLELISM=\"$build_parallel\" $dockerfile_arg -t " + shellQuote(imageName) + " .; "
         "docker rm -f " + shellQuote(containerName) + " >/dev/null 2>&1 || true; "
         "echo 'Starting remote container " + containerName + "'; "
         "docker run -d --restart unless-stopped --name " + shellQuote(containerName) +
@@ -1642,9 +1642,9 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         " -p " + std::to_string(containerPort) +
         " " + shellQuote(imageName) + "; "
         "published=$(docker port " + shellQuote(containerName) + " " + std::to_string(containerPort) + "/tcp 2>/dev/null | head -n1 | awk -F: '{print $NF}'); "
-        "echo __DOKSCP_REMOTE_IMAGE__=" + imageName + "; "
-        "echo __DOKSCP_REMOTE_CONTAINER__=" + containerName + "; "
-        "echo __DOKSCP_REMOTE_PORT__=$published";
+        "echo __STACKPILOT_REMOTE_IMAGE__=" + imageName + "; "
+        "echo __STACKPILOT_REMOTE_CONTAINER__=" + containerName + "; "
+        "echo __STACKPILOT_REMOTE_PORT__=$published";
 
     const std::string command =
         "timeout " + std::to_string(std::max(60, timeoutSeconds)) + "s sh -lc " +
@@ -1658,20 +1658,20 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         std::istringstream stream(output);
         std::string line;
         while (std::getline(stream, line)) {
-            if (!trim(line).empty() && line.find("__DOKSCP_ENV_EOF__") == std::string::npos) {
+            if (!trim(line).empty() && line.find("__STACKPILOT_ENV_EOF__") == std::string::npos) {
                 onLogLine(line);
             }
         }
     }
 
     if (exitCode != 0) {
-        if (output.find("__DOKSCP_INVALID_PATH__") != std::string::npos) {
+        if (output.find("__STACKPILOT_INVALID_PATH__") != std::string::npos) {
             result.error = "Remote path does not exist or is not a directory";
-        } else if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
             result.error = "Docker is not installed on the remote host";
-        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker is installed but the remote Docker daemon is not running or accessible";
-        } else if (output.find("__DOKSCP_DOCKERFILE_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKERFILE_MISSING__") != std::string::npos) {
             result.error = "No Dockerfile found and the remote project type could not be auto-detected";
         } else if (exitCode == 124) {
             result.error = "Remote Docker build timed out";
@@ -1703,12 +1703,12 @@ SshOperationResult SshService::inspectDockerContainer(const SshConnectionConfig&
     const SessionFiles files = prepareSessionFiles(config);
     const std::string remoteCommand =
         "set -e; "
-        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
-        "docker inspect " + shellQuote(containerName) + " >/dev/null 2>&1 || { echo __DOKSCP_CONTAINER_MISSING__; exit 12; }; "
+        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "docker inspect " + shellQuote(containerName) + " >/dev/null 2>&1 || { echo __STACKPILOT_CONTAINER_MISSING__; exit 12; }; "
         "docker inspect --format 'status={{.State.Status}}\nrunning={{.State.Running}}\npaused={{.State.Paused}}\nexit_code={{.State.ExitCode}}\nimage={{.Config.Image}}\nstarted_at={{.State.StartedAt}}\nfinished_at={{.State.FinishedAt}}\nrestart_count={{.RestartCount}}' " + shellQuote(containerName) + "; "
         "printf 'published_ports='; docker port " + shellQuote(containerName) + " 2>/dev/null | tr '\\n' ',' || true; echo; "
-        "echo __DOKSCP_REMOTE_LOG_TAIL__; "
+        "echo __STACKPILOT_REMOTE_LOG_TAIL__; "
         "docker logs --tail 80 " + shellQuote(containerName) + " 2>&1 || true";
 
     const std::string command =
@@ -1720,11 +1720,11 @@ SshOperationResult SshService::inspectDockerContainer(const SshConnectionConfig&
     cleanupSessionFiles(files);
 
     if (exitCode != 0) {
-        if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+        if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
             result.error = "Docker is not installed on the remote host";
-        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker daemon is not reachable on the remote host";
-        } else if (output.find("__DOKSCP_CONTAINER_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CONTAINER_MISSING__") != std::string::npos) {
             result.error = "Remote Docker container is not present";
         } else if (exitCode == 124) {
             result.error = "Remote Docker inspect timed out";
@@ -1765,20 +1765,20 @@ SshOperationResult SshService::removeDockerContainer(const SshConnectionConfig& 
             ? std::string(
                   "if docker image inspect " + shellQuote(imageName) + " >/dev/null 2>&1; then "
                   "  if docker image rm " + shellQuote(imageName) + " >/dev/null 2>&1; then "
-                  "    echo __DOKSCP_REMOTE_IMAGE_REMOVED__; "
+                  "    echo __STACKPILOT_REMOTE_IMAGE_REMOVED__; "
                   "  else "
-                  "    echo __DOKSCP_REMOTE_IMAGE_REMOVE_FAILED__; "
+                  "    echo __STACKPILOT_REMOTE_IMAGE_REMOVE_FAILED__; "
                   "  fi; "
                   "else "
-                  "  echo __DOKSCP_REMOTE_IMAGE_ALREADY_ABSENT__; "
+                  "  echo __STACKPILOT_REMOTE_IMAGE_ALREADY_ABSENT__; "
                   "fi; ")
             : "";
     const std::string remoteCommand =
         "set -e; "
-        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
         "docker rm -f " + shellQuote(containerName) + " >/dev/null 2>&1 || true; "
-        "echo __DOKSCP_REMOTE_CONTAINER_REMOVED__; " +
+        "echo __STACKPILOT_REMOTE_CONTAINER_REMOVED__; " +
         imageCleanup;
 
     const std::string command =
@@ -1789,11 +1789,11 @@ SshOperationResult SshService::removeDockerContainer(const SshConnectionConfig& 
     const int exitCode = runCommand(command, output);
     cleanupSessionFiles(files);
 
-    const bool imageRemoveFailed = output.find("__DOKSCP_REMOTE_IMAGE_REMOVE_FAILED__") != std::string::npos;
-    if (exitCode != 0 || output.find("__DOKSCP_REMOTE_CONTAINER_REMOVED__") == std::string::npos || imageRemoveFailed) {
-        if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+    const bool imageRemoveFailed = output.find("__STACKPILOT_REMOTE_IMAGE_REMOVE_FAILED__") != std::string::npos;
+    if (exitCode != 0 || output.find("__STACKPILOT_REMOTE_CONTAINER_REMOVED__") == std::string::npos || imageRemoveFailed) {
+        if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
             result.error = "Docker is not installed on the remote host";
-        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker daemon is not reachable on the remote host";
         } else if (imageRemoveFailed) {
             result.error = "Remote Docker container was removed, but the image could not be deleted because it may still be in use";
@@ -1833,23 +1833,23 @@ SshOperationResult SshService::removeDockerImage(const SshConnectionConfig& conf
 
     const std::string remoteCommand =
         "set -e; "
-        "command -v docker >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __DOKSCP_DOCKER_DAEMON_DOWN__; exit 11; }; "
+        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
+        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
         "removed=0; failed=0; "
         "for img in " + shellQuote(imageName) + " " + shellQuote(registryImage) + "; do "
         "  [ -n \"$img\" ] || continue; "
         "  if docker image inspect \"$img\" >/dev/null 2>&1; then "
         "    if docker image rm \"$img\" >/dev/null 2>&1; then "
-        "      echo __DOKSCP_REMOTE_IMAGE_REMOVED__=$img; removed=1; "
+        "      echo __STACKPILOT_REMOTE_IMAGE_REMOVED__=$img; removed=1; "
         "    else "
-        "      echo __DOKSCP_REMOTE_IMAGE_REMOVE_FAILED__=$img; failed=1; "
+        "      echo __STACKPILOT_REMOTE_IMAGE_REMOVE_FAILED__=$img; failed=1; "
         "    fi; "
         "  else "
-        "    echo __DOKSCP_REMOTE_IMAGE_ALREADY_ABSENT__=$img; "
+        "    echo __STACKPILOT_REMOTE_IMAGE_ALREADY_ABSENT__=$img; "
         "  fi; "
         "done; "
         "[ \"$failed\" -eq 0 ] || exit 12; "
-        "echo __DOKSCP_REMOTE_IMAGE_CLEANUP_DONE__";
+        "echo __STACKPILOT_REMOTE_IMAGE_CLEANUP_DONE__";
 
     const std::string command =
         "timeout 45s sh -lc " +
@@ -1861,12 +1861,12 @@ SshOperationResult SshService::removeDockerImage(const SshConnectionConfig& conf
 
     result.exitCode = exitCode;
     result.output = output;
-    if (exitCode != 0 || output.find("__DOKSCP_REMOTE_IMAGE_CLEANUP_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_DOCKER_MISSING__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_REMOTE_IMAGE_CLEANUP_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
             result.error = "Docker is not installed on the remote host";
-        } else if (output.find("__DOKSCP_DOCKER_DAEMON_DOWN__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
             result.error = "Docker daemon is not reachable on the remote host";
-        } else if (output.find("__DOKSCP_REMOTE_IMAGE_REMOVE_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_REMOTE_IMAGE_REMOVE_FAILED__") != std::string::npos) {
             result.error = "Remote Docker image could not be deleted because it may still be in use";
         } else if (exitCode == 124) {
             result.error = "Remote Docker image cleanup timed out";
@@ -1893,7 +1893,7 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         return result;
     }
 
-    result.nameSpace = options.nameSpace.empty() ? "dokscp-apps" : toLower(trim(options.nameSpace));
+    result.nameSpace = options.nameSpace.empty() ? "stackpilot-apps" : toLower(trim(options.nameSpace));
     result.exposureMode = normalizeKubernetesExposure(options.exposureMode);
     result.runtimeScheme = normalizeRuntimeScheme(options.runtimeScheme);
     result.desiredReplicas = std::clamp(options.replicas, 1, 10);
@@ -1996,7 +1996,7 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         << "      terminationGracePeriodSeconds: 30\n"
         << "      containers:\n"
         << "        - name: app\n"
-        << "          image: __DOKSCP_K8S_IMAGE__\n"
+        << "          image: __STACKPILOT_K8S_IMAGE__\n"
         << "          imagePullPolicy: IfNotPresent\n"
         << "          ports:\n"
         << "            - containerPort: " << containerPort << "\n"
@@ -2063,13 +2063,13 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
             << "  name: " << result.ingressName << "\n"
             << "  namespace: " << result.nameSpace << "\n"
             << "  annotations:\n"
-            << "    kubernetes.io/ingress.class: \"__DOKSCP_REMOTE_INGRESS_CLASS__\"\n";
+            << "    kubernetes.io/ingress.class: \"__STACKPILOT_REMOTE_INGRESS_CLASS__\"\n";
         if (result.runtimeScheme == "https") {
-            manifest << "    cert-manager.io/cluster-issuer: \"__DOKSCP_REMOTE_CLUSTER_ISSUER__\"\n";
+            manifest << "    cert-manager.io/cluster-issuer: \"__STACKPILOT_REMOTE_CLUSTER_ISSUER__\"\n";
         }
         manifest
             << "spec:\n"
-            << "  ingressClassName: __DOKSCP_REMOTE_INGRESS_CLASS__\n"
+            << "  ingressClassName: __STACKPILOT_REMOTE_INGRESS_CLASS__\n"
             << "  rules:\n"
             << "    - host: " << ingressHost << "\n"
             << "      http:\n"
@@ -2093,7 +2093,7 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
     }
 
     const SessionFiles files = prepareSessionFiles(config);
-    const std::string manifestPath = "/tmp/dokscp-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".yaml";
+    const std::string manifestPath = "/tmp/stackpilot-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".yaml";
     std::string registryImageName = "localhost:5000/" + options.imageName;
     if (registryImageName.rfind("localhost:5000/docker.io/", 0) == 0) {
         registryImageName = "localhost:5000/" + registryImageName.substr(std::string("localhost:5000/docker.io/").size());
@@ -2105,11 +2105,11 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         "if command -v kubectl >/dev/null 2>&1; then K='kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl'; "
-        "else echo __DOKSCP_KUBECTL_MISSING__; exit 30; fi; "
-        "$K get nodes >/dev/null 2>&1 || { echo __DOKSCP_K8S_NOT_READY__; exit 31; }; "
+        "else echo __STACKPILOT_KUBECTL_MISSING__; exit 30; fi; "
+        "$K get nodes >/dev/null 2>&1 || { echo __STACKPILOT_K8S_NOT_READY__; exit 31; }; "
         "k8s_image=" + shellQuote(options.imageName) + "; "
         "if ! command -v docker >/dev/null 2>&1 || ! docker image inspect " + shellQuote(options.imageName) + " >/dev/null 2>&1; then "
-        "  echo __DOKSCP_K8S_SOURCE_IMAGE_MISSING__; exit 32; "
+        "  echo __STACKPILOT_K8S_SOURCE_IMAGE_MISSING__; exit 32; "
         "fi; "
         "image_loaded=no; "
         "if command -v kind >/dev/null 2>&1 && kind load docker-image " + shellQuote(options.imageName) + " >/dev/null 2>&1; then image_loaded=yes; fi; "
@@ -2120,39 +2120,39 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         "fi; "
         "if [ \"$image_loaded\" = no ]; then "
         "  echo '[remote-k8s] Local image import unavailable; using local registry fallback'; "
-        "  docker ps --format '{{.Names}}' | grep -qx dokscp-local-registry || { docker rm -f dokscp-local-registry >/dev/null 2>&1 || true; docker run -d --restart unless-stopped --name dokscp-local-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null; }; "
+        "  docker ps --format '{{.Names}}' | grep -qx stackpilot-local-registry || { docker rm -f stackpilot-local-registry >/dev/null 2>&1 || true; docker run -d --restart unless-stopped --name stackpilot-local-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null; }; "
         "  for i in $(seq 1 20); do (command -v curl >/dev/null 2>&1 && curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1) && break || true; sleep 1; done; "
         "  docker tag " + shellQuote(options.imageName) + " " + shellQuote(registryImageName) + "; "
-        "  docker push " + shellQuote(registryImageName) + " >/dev/null || { echo __DOKSCP_K8S_REGISTRY_PUSH_FAILED__; exit 33; }; "
+        "  docker push " + shellQuote(registryImageName) + " >/dev/null || { echo __STACKPILOT_K8S_REGISTRY_PUSH_FAILED__; exit 33; }; "
         "  k8s_image=" + shellQuote(registryImageName) + "; "
         "fi; "
-        "echo __DOKSCP_K8S_IMAGE_USED__=$k8s_image; "
+        "echo __STACKPILOT_K8S_IMAGE_USED__=$k8s_image; "
         "requested_ingress_class=" + shellQuote(useIngress ? (ingressClass.empty() ? "auto" : ingressClass) : "") + "; "
         "requested_cluster_issuer=" + shellQuote(useIngress && result.runtimeScheme == "https" ? (clusterIssuer.empty() ? "letsencrypt-prod" : clusterIssuer) : "") + "; "
         "acme_email=" + shellQuote(acmeEmail) + "; "
         "cert_manager_version=" + shellQuote(certManagerVersion) + "; "
         "ingress_class=''; cluster_issuer=''; "
         "if [ " + shellQuote(useIngress ? "yes" : "no") + " = 'yes' ]; then "
-        "  case \"$requested_ingress_class\" in ''|auto) requested_ingress_class='';; *[!A-Za-z0-9.-]*) echo __DOKSCP_INGRESS_CLASS_INVALID__; exit 34;; esac; "
+        "  case \"$requested_ingress_class\" in ''|auto) requested_ingress_class='';; *[!A-Za-z0-9.-]*) echo __STACKPILOT_INGRESS_CLASS_INVALID__; exit 34;; esac; "
         "  if [ -n \"$requested_ingress_class\" ] && $K get ingressclass \"$requested_ingress_class\" >/dev/null 2>&1; then ingress_class=\"$requested_ingress_class\"; fi; "
         "  if [ -z \"$ingress_class\" ]; then ingress_class=$($K get ingressclass -o jsonpath='{.items[?(@.metadata.annotations.ingressclass\\.kubernetes\\.io/is-default-class==\"true\")].metadata.name}' 2>/dev/null | awk '{print $1}'); fi; "
         "  if [ -z \"$ingress_class\" ]; then ingress_class=$($K get ingressclass -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true); fi; "
-        "  [ -n \"$ingress_class\" ] || { echo __DOKSCP_INGRESS_CLASS_MISSING__; exit 35; }; "
-        "  echo __DOKSCP_K8S_INGRESS_CLASS__=$ingress_class; "
+        "  [ -n \"$ingress_class\" ] || { echo __STACKPILOT_INGRESS_CLASS_MISSING__; exit 35; }; "
+        "  echo __STACKPILOT_K8S_INGRESS_CLASS__=$ingress_class; "
         "fi; "
         "if [ " + shellQuote(useIngress && result.runtimeScheme == "https" ? "yes" : "no") + " = 'yes' ]; then "
-        "  case \"$requested_cluster_issuer\" in ''|auto) requested_cluster_issuer='letsencrypt-prod';; *[!A-Za-z0-9.-]*) echo __DOKSCP_CLUSTER_ISSUER_INVALID__; exit 36;; esac; "
+        "  case \"$requested_cluster_issuer\" in ''|auto) requested_cluster_issuer='letsencrypt-prod';; *[!A-Za-z0-9.-]*) echo __STACKPILOT_CLUSTER_ISSUER_INVALID__; exit 36;; esac; "
         "  cluster_issuer=\"$requested_cluster_issuer\"; "
         "  if ! $K get clusterissuer \"$cluster_issuer\" >/dev/null 2>&1; then "
-        "    [ -n \"$acme_email\" ] && [ \"$acme_email\" != 'admin@example.com' ] || { echo __DOKSCP_ACME_EMAIL_MISSING__; exit 37; }; "
+        "    [ -n \"$acme_email\" ] && [ \"$acme_email\" != 'admin@example.com' ] || { echo __STACKPILOT_ACME_EMAIL_MISSING__; exit 37; }; "
         "    if ! $K get crd certificates.cert-manager.io >/dev/null 2>&1; then "
         "      echo '[remote-k8s] Installing cert-manager for HTTPS certificates'; "
-        "      $K apply -f https://github.com/cert-manager/cert-manager/releases/download/${cert_manager_version}/cert-manager.yaml >/dev/null || { echo __DOKSCP_CERT_MANAGER_INSTALL_FAILED__; exit 38; }; "
-        "      $K -n cert-manager wait --for=condition=Available deploy/cert-manager --timeout=180s >/dev/null || { echo __DOKSCP_CERT_MANAGER_NOT_READY__; exit 39; }; "
-        "      $K -n cert-manager wait --for=condition=Available deploy/cert-manager-webhook --timeout=180s >/dev/null || { echo __DOKSCP_CERT_MANAGER_NOT_READY__; exit 39; }; "
-        "      $K -n cert-manager wait --for=condition=Available deploy/cert-manager-cainjector --timeout=180s >/dev/null || { echo __DOKSCP_CERT_MANAGER_NOT_READY__; exit 39; }; "
+        "      $K apply -f https://github.com/cert-manager/cert-manager/releases/download/${cert_manager_version}/cert-manager.yaml >/dev/null || { echo __STACKPILOT_CERT_MANAGER_INSTALL_FAILED__; exit 38; }; "
+        "      $K -n cert-manager wait --for=condition=Available deploy/cert-manager --timeout=180s >/dev/null || { echo __STACKPILOT_CERT_MANAGER_NOT_READY__; exit 39; }; "
+        "      $K -n cert-manager wait --for=condition=Available deploy/cert-manager-webhook --timeout=180s >/dev/null || { echo __STACKPILOT_CERT_MANAGER_NOT_READY__; exit 39; }; "
+        "      $K -n cert-manager wait --for=condition=Available deploy/cert-manager-cainjector --timeout=180s >/dev/null || { echo __STACKPILOT_CERT_MANAGER_NOT_READY__; exit 39; }; "
         "    fi; "
-        "    cat <<__DOKSCP_CLUSTER_ISSUER__ | $K apply -f - >/dev/null\n"
+        "    cat <<__STACKPILOT_CLUSTER_ISSUER__ | $K apply -f - >/dev/null\n"
         "apiVersion: cert-manager.io/v1\n"
         "kind: ClusterIssuer\n"
         "metadata:\n"
@@ -2167,21 +2167,21 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         "      - http01:\n"
         "          ingress:\n"
         "            class: $ingress_class\n"
-        "__DOKSCP_CLUSTER_ISSUER__\n"
-        "    $K get clusterissuer \"$cluster_issuer\" >/dev/null 2>&1 || { echo __DOKSCP_CLUSTER_ISSUER_FAILED__; exit 40; }; "
+        "__STACKPILOT_CLUSTER_ISSUER__\n"
+        "    $K get clusterissuer \"$cluster_issuer\" >/dev/null 2>&1 || { echo __STACKPILOT_CLUSTER_ISSUER_FAILED__; exit 40; }; "
         "  fi; "
-        "  echo __DOKSCP_K8S_CLUSTER_ISSUER__=$cluster_issuer; "
+        "  echo __STACKPILOT_K8S_CLUSTER_ISSUER__=$cluster_issuer; "
         "fi; "
         "$K get namespace " + shellQuote(result.nameSpace) + " >/dev/null 2>&1 || $K create namespace " + shellQuote(result.nameSpace) + "; "
-        "cat > " + shellQuote(manifestPath) + " <<'__DOKSCP_K8S_MANIFEST__'\n" +
+        "cat > " + shellQuote(manifestPath) + " <<'__STACKPILOT_K8S_MANIFEST__'\n" +
         manifest.str() +
-        "__DOKSCP_K8S_MANIFEST__\n"
-        "sed -i \"s|__DOKSCP_K8S_IMAGE__|${k8s_image}|g\" " + shellQuote(manifestPath) + "; "
-        "sed -i \"s|__DOKSCP_REMOTE_INGRESS_CLASS__|${ingress_class}|g\" " + shellQuote(manifestPath) + "; "
-        "sed -i \"s|__DOKSCP_REMOTE_CLUSTER_ISSUER__|${cluster_issuer}|g\" " + shellQuote(manifestPath) + "; "
+        "__STACKPILOT_K8S_MANIFEST__\n"
+        "sed -i \"s|__STACKPILOT_K8S_IMAGE__|${k8s_image}|g\" " + shellQuote(manifestPath) + "; "
+        "sed -i \"s|__STACKPILOT_REMOTE_INGRESS_CLASS__|${ingress_class}|g\" " + shellQuote(manifestPath) + "; "
+        "sed -i \"s|__STACKPILOT_REMOTE_CLUSTER_ISSUER__|${cluster_issuer}|g\" " + shellQuote(manifestPath) + "; "
         "$K apply -f " + shellQuote(manifestPath) + "; "
         "if ! $K rollout status deployment/" + shellQuote(result.deploymentName) + " -n " + shellQuote(result.nameSpace) + " --timeout=180s; then "
-        "  echo __DOKSCP_K8S_ROLLOUT_FAILED__; "
+        "  echo __STACKPILOT_K8S_ROLLOUT_FAILED__; "
         "  $K get pods -n " + shellQuote(result.nameSpace) + " -l app=" + shellQuote(result.deploymentName) + " -o wide || true; "
         "  $K describe pods -n " + shellQuote(result.nameSpace) + " -l app=" + shellQuote(result.deploymentName) + " || true; "
         "  exit 40; "
@@ -2190,16 +2190,16 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
         "desired=$($K get deployment " + shellQuote(result.deploymentName) + " -n " + shellQuote(result.nameSpace) + " -o jsonpath='{.spec.replicas}' 2>/dev/null || true); "
         "nodeport=$($K get service " + shellQuote(result.serviceName) + " -n " + shellQuote(result.nameSpace) + " -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true); "
         "rm -f " + shellQuote(manifestPath) + "; "
-        "echo __DOKSCP_K8S_NAMESPACE__=" + result.nameSpace + "; "
-        "echo __DOKSCP_K8S_DEPLOYMENT__=" + result.deploymentName + "; "
-        "echo __DOKSCP_K8S_SERVICE__=" + result.serviceName + "; "
-        "echo __DOKSCP_K8S_INGRESS__=" + (useIngress ? result.ingressName : "") + "; "
-        "echo __DOKSCP_K8S_EXPOSURE__=" + result.exposureMode + "; "
-        "echo __DOKSCP_K8S_READY__=${ready:-0}; "
-        "echo __DOKSCP_K8S_DESIRED__=${desired:-0}; "
-        "if [ -n \"$nodeport\" ]; then echo __DOKSCP_K8S_URL__=http://" + config.host + ":$nodeport; "
-        "elif [ " + shellQuote(useIngress ? "yes" : "no") + " = 'yes' ]; then echo __DOKSCP_K8S_URL__=" + result.runtimeScheme + "://" + ingressHost + "; fi; "
-        "echo __DOKSCP_K8S_DONE__";
+        "echo __STACKPILOT_K8S_NAMESPACE__=" + result.nameSpace + "; "
+        "echo __STACKPILOT_K8S_DEPLOYMENT__=" + result.deploymentName + "; "
+        "echo __STACKPILOT_K8S_SERVICE__=" + result.serviceName + "; "
+        "echo __STACKPILOT_K8S_INGRESS__=" + (useIngress ? result.ingressName : "") + "; "
+        "echo __STACKPILOT_K8S_EXPOSURE__=" + result.exposureMode + "; "
+        "echo __STACKPILOT_K8S_READY__=${ready:-0}; "
+        "echo __STACKPILOT_K8S_DESIRED__=${desired:-0}; "
+        "if [ -n \"$nodeport\" ]; then echo __STACKPILOT_K8S_URL__=http://" + config.host + ":$nodeport; "
+        "elif [ " + shellQuote(useIngress ? "yes" : "no") + " = 'yes' ]; then echo __STACKPILOT_K8S_URL__=" + result.runtimeScheme + "://" + ingressHost + "; fi; "
+        "echo __STACKPILOT_K8S_DONE__";
 
     const std::string command =
         "timeout 260s sh -lc " +
@@ -2210,30 +2210,30 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
     cleanupSessionFiles(files);
     result.logs = output;
 
-    if (exitCode != 0 || output.find("__DOKSCP_K8S_DONE__") == std::string::npos) {
-        if (output.find("__DOKSCP_KUBECTL_MISSING__") != std::string::npos) {
+    if (exitCode != 0 || output.find("__STACKPILOT_K8S_DONE__") == std::string::npos) {
+        if (output.find("__STACKPILOT_KUBECTL_MISSING__") != std::string::npos) {
             result.error = "kubectl or k3s is not installed on the remote host";
-        } else if (output.find("__DOKSCP_K8S_NOT_READY__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K8S_NOT_READY__") != std::string::npos) {
             result.error = "Remote Kubernetes cluster is not reachable";
-        } else if (output.find("__DOKSCP_K8S_SOURCE_IMAGE_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K8S_SOURCE_IMAGE_MISSING__") != std::string::npos) {
             result.error = "Remote Docker image is missing before Kubernetes deploy";
-        } else if (output.find("__DOKSCP_K8S_REGISTRY_PUSH_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K8S_REGISTRY_PUSH_FAILED__") != std::string::npos) {
             result.error = "Remote Kubernetes image handoff failed: unable to push to local registry";
-        } else if (output.find("__DOKSCP_INGRESS_CLASS_INVALID__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_INGRESS_CLASS_INVALID__") != std::string::npos) {
             result.error = "Remote Kubernetes ingress class contains unsupported characters";
-        } else if (output.find("__DOKSCP_INGRESS_CLASS_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_INGRESS_CLASS_MISSING__") != std::string::npos) {
             result.error = "Remote Kubernetes ingress exposure requires an installed IngressClass";
-        } else if (output.find("__DOKSCP_CLUSTER_ISSUER_INVALID__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CLUSTER_ISSUER_INVALID__") != std::string::npos) {
             result.error = "Remote Kubernetes certificate issuer contains unsupported characters";
-        } else if (output.find("__DOKSCP_ACME_EMAIL_MISSING__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_ACME_EMAIL_MISSING__") != std::string::npos) {
             result.error = "HTTPS requires ACME_EMAIL to create Let's Encrypt certificates";
-        } else if (output.find("__DOKSCP_CERT_MANAGER_INSTALL_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CERT_MANAGER_INSTALL_FAILED__") != std::string::npos) {
             result.error = "Failed to install cert-manager for HTTPS certificates";
-        } else if (output.find("__DOKSCP_CERT_MANAGER_NOT_READY__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CERT_MANAGER_NOT_READY__") != std::string::npos) {
             result.error = "cert-manager did not become ready on the remote Kubernetes host";
-        } else if (output.find("__DOKSCP_CLUSTER_ISSUER_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_CLUSTER_ISSUER_FAILED__") != std::string::npos) {
             result.error = "Failed to create the remote Kubernetes ClusterIssuer";
-        } else if (output.find("__DOKSCP_K8S_ROLLOUT_FAILED__") != std::string::npos) {
+        } else if (output.find("__STACKPILOT_K8S_ROLLOUT_FAILED__") != std::string::npos) {
             result.error = "Remote Kubernetes deployment rollout failed";
         } else if (exitCode == 124) {
             result.error = "Remote Kubernetes deployment timed out";
@@ -2245,9 +2245,9 @@ KubernetesRuntimeInfo SshService::deployKubernetesRuntime(const SshConnectionCon
 
     result.success = true;
     result.deployed = true;
-    result.readyReplicas = markerInt(output, "__DOKSCP_K8S_READY__", 0);
-    result.desiredReplicas = markerInt(output, "__DOKSCP_K8S_DESIRED__", result.desiredReplicas);
-    result.runtimeUrl = markerValue(output, "__DOKSCP_K8S_URL__");
+    result.readyReplicas = markerInt(output, "__STACKPILOT_K8S_READY__", 0);
+    result.desiredReplicas = markerInt(output, "__STACKPILOT_K8S_DESIRED__", result.desiredReplicas);
+    result.runtimeUrl = markerValue(output, "__STACKPILOT_K8S_URL__");
     result.status = result.desiredReplicas > 0 && result.readyReplicas >= result.desiredReplicas ? "running" : "deploying";
     return result;
 }
@@ -2269,7 +2269,7 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
         return result;
     }
 
-    result.nameSpace = options.nameSpace.empty() ? "dokscp-apps" : toLower(trim(options.nameSpace));
+    result.nameSpace = options.nameSpace.empty() ? "stackpilot-apps" : toLower(trim(options.nameSpace));
     result.exposureMode = normalizeKubernetesExposure(options.exposureMode);
     result.runtimeScheme = normalizeRuntimeScheme(options.runtimeScheme);
     result.desiredReplicas = std::clamp(options.replicas, 1, 10);
@@ -2284,7 +2284,7 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
         "compose_cmd='docker compose'; "
         "if ! docker compose version >/dev/null 2>&1; then "
         "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
-        "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
+        "  else echo __STACKPILOT_COMPOSE_MISSING__; exit 20; fi; "
         "fi; "
         "$compose_cmd -f " + shellQuote(composeFile) +
         " -p " + shellQuote(composeProjectName) +
@@ -2293,7 +2293,7 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
     );
     if (!configResult.success) {
         result.logs = configResult.output;
-        result.error = configResult.output.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos
+        result.error = configResult.output.find("__STACKPILOT_COMPOSE_MISSING__") != std::string::npos
             ? "Docker Compose is not available on the remote host"
             : (configResult.error.empty() ? "Failed to read remote Docker Compose config" : configResult.error);
         return result;
@@ -2357,15 +2357,15 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
     result.desiredReplicas = plan.desiredReplicas;
 
     const std::filesystem::path localManifestPath =
-        std::filesystem::temp_directory_path() / ("dokscp-remote-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".yaml");
+        std::filesystem::temp_directory_path() / ("stackpilot-remote-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".yaml");
     const std::filesystem::path localScriptPath =
-        std::filesystem::temp_directory_path() / ("dokscp-remote-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".sh");
+        std::filesystem::temp_directory_path() / ("stackpilot-remote-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId) + ".sh");
     {
         std::ofstream manifest(localManifestPath, std::ios::trunc);
         manifest << plan.manifest;
     }
 
-    const std::string remoteBase = "/tmp/dokscp-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId);
+    const std::string remoteBase = "/tmp/stackpilot-compose-k8s-" + sanitizeDnsLabelValue(options.deploymentId);
     const std::string remoteManifestPath = remoteBase + ".yaml";
     const std::string remoteScriptPath = remoteBase + ".sh";
 
@@ -2378,8 +2378,8 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             << "if command -v kubectl >/dev/null 2>&1; then K='kubectl';\n"
             << "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl';\n"
             << "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl';\n"
-            << "else echo __DOKSCP_KUBECTL_MISSING__; exit 30; fi\n"
-            << "$K get nodes >/dev/null 2>&1 || { echo __DOKSCP_K8S_NOT_READY__; exit 31; }\n"
+            << "else echo __STACKPILOT_KUBECTL_MISSING__; exit 30; fi\n"
+            << "$K get nodes >/dev/null 2>&1 || { echo __STACKPILOT_K8S_NOT_READY__; exit 31; }\n"
             << "find_build_node() {\n"
             << "  ips=\"$(hostname -I 2>/dev/null || true)\"\n"
             << "  nodes=\"$($K get nodes -o jsonpath='{range .items[*]}{.metadata.name}{\"|\"}{range .status.addresses[*]}{.address}{\",\"}{end}{\"\\n\"}{end}' 2>/dev/null || true)\"\n"
@@ -2392,22 +2392,22 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             << "  $K get nodes -o jsonpath='{.items[0].metadata.name}'\n"
             << "}\n"
             << "build_node=\"$(find_build_node)\"\n"
-            << "[ -n \"$build_node\" ] || { echo __DOKSCP_K8S_BUILD_NODE_NOT_FOUND__; exit 35; }\n"
-            << "$K label node \"$build_node\" dokscp.io/local-build-node=true --overwrite >/dev/null 2>&1 || true\n"
-            << "echo __DOKSCP_K8S_BUILD_NODE__=$build_node\n"
+            << "[ -n \"$build_node\" ] || { echo __STACKPILOT_K8S_BUILD_NODE_NOT_FOUND__; exit 35; }\n"
+            << "$K label node \"$build_node\" StackPilot.io/local-build-node=true --overwrite >/dev/null 2>&1 || true\n"
+            << "echo __STACKPILOT_K8S_BUILD_NODE__=$build_node\n"
             << "$K get namespace " << shellQuote(plan.nameSpace) << " >/dev/null 2>&1 || $K create namespace " << shellQuote(plan.nameSpace) << "\n"
             << "cd " << shellQuote(remoteComposeWorkdir) << "\n"
             << "compose_cmd='docker compose'\n"
             << "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi\n"
             << "$compose_cmd -f " << shellQuote(composeFile) << " -p " << shellQuote(composeProjectName) << " down --remove-orphans || true\n"
             << "ensure_registry() {\n"
-            << "  docker ps --format '{{.Names}}' | grep -qx dokscp-local-registry || { docker rm -f dokscp-local-registry >/dev/null 2>&1 || true; docker run -d --restart unless-stopped --name dokscp-local-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null; }\n"
+            << "  docker ps --format '{{.Names}}' | grep -qx stackpilot-local-registry || { docker rm -f stackpilot-local-registry >/dev/null 2>&1 || true; docker run -d --restart unless-stopped --name stackpilot-local-registry -p 127.0.0.1:5000:5000 registry:2 >/dev/null; }\n"
             << "  for i in $(seq 1 20); do (command -v curl >/dev/null 2>&1 && curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1) && return 0 || true; sleep 1; done\n"
             << "  return 1\n"
             << "}\n"
             << "prepare_image() {\n"
             << "  placeholder=\"$1\"; image=\"$2\"; local_build=\"$3\"; replacement=\"$image\"; image_loaded=no\n"
-            << "  if ! command -v docker >/dev/null 2>&1 || ! docker image inspect \"$image\" >/dev/null 2>&1; then echo __DOKSCP_K8S_SOURCE_IMAGE_MISSING__=$image; exit 32; fi\n"
+            << "  if ! command -v docker >/dev/null 2>&1 || ! docker image inspect \"$image\" >/dev/null 2>&1; then echo __STACKPILOT_K8S_SOURCE_IMAGE_MISSING__=$image; exit 32; fi\n"
             << "  if command -v kind >/dev/null 2>&1 && kind load docker-image \"$image\" >/dev/null 2>&1; then image_loaded=yes; fi\n"
             << "  if [ \"$image_loaded\" = no ] && command -v minikube >/dev/null 2>&1 && minikube image load \"$image\" >/dev/null 2>&1; then image_loaded=yes; fi\n"
             << "  if [ \"$image_loaded\" = no ] && command -v k3s >/dev/null 2>&1; then\n"
@@ -2415,12 +2415,12 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             << "    elif sudo -n true >/dev/null 2>&1 && docker save \"$image\" | sudo -n k3s ctr -n k8s.io images import - >/dev/null 2>&1; then image_loaded=yes; fi\n"
             << "  fi\n"
             << "  if [ \"$local_build\" = yes ] && [ \"$image_loaded\" = no ]; then\n"
-            << "    echo __DOKSCP_K8S_IMAGE_IMPORT_FAILED__=$image\n"
+            << "    echo __STACKPILOT_K8S_IMAGE_IMPORT_FAILED__=$image\n"
             << "    exit 34\n"
             << "  fi\n"
             << "  safe=$(printf '%s' \"$replacement\" | sed 's/[&|]/\\\\&/g')\n"
             << "  sed -i \"s|$placeholder|$safe|g\" " << shellQuote(remoteManifestPath) << "\n"
-            << "  echo __DOKSCP_K8S_IMAGE_USED__=$replacement\n"
+            << "  echo __STACKPILOT_K8S_IMAGE_USED__=$replacement\n"
             << "}\n";
         for (const auto& service : plan.services) {
             script
@@ -2433,22 +2433,22 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             const std::string acmeEmail = acmeEmailEnv && *acmeEmailEnv ? acmeEmailEnv : "";
             script
                 << "if ! $K get crd certificates.cert-manager.io >/dev/null 2>&1; then\n"
-                << "  [ -n " << shellQuote(acmeEmail) << " ] || { echo __DOKSCP_ACME_EMAIL_MISSING__; exit 37; }\n"
+                << "  [ -n " << shellQuote(acmeEmail) << " ] || { echo __STACKPILOT_ACME_EMAIL_MISSING__; exit 37; }\n"
                 << "  echo '[remote-compose-k8s] cert-manager is not installed; install it before HTTPS Compose deployments'\n"
-                << "  echo __DOKSCP_CERT_MANAGER_NOT_READY__; exit 39\n"
+                << "  echo __STACKPILOT_CERT_MANAGER_NOT_READY__; exit 39\n"
                 << "fi\n";
         }
         script
             << "dump_rollout_debug() {\n"
             << "  deployment=\"$1\"; service=\"$2\"\n"
-            << "  echo __DOKSCP_K8S_ROLLOUT_DEBUG__=$service\n"
+            << "  echo __STACKPILOT_K8S_ROLLOUT_DEBUG__=$service\n"
             << "  $K get deployment \"$deployment\" -n " << shellQuote(plan.nameSpace) << " -o wide || true\n"
             << "  $K get pods -n " << shellQuote(plan.nameSpace) << " -l app=\"$deployment\" -o wide || true\n"
             << "  $K describe deployment \"$deployment\" -n " << shellQuote(plan.nameSpace) << " || true\n"
             << "  for pod in $($K get pods -n " << shellQuote(plan.nameSpace) << " -l app=\"$deployment\" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do\n"
-            << "    echo __DOKSCP_K8S_POD_DESCRIBE__=$pod\n"
+            << "    echo __STACKPILOT_K8S_POD_DESCRIBE__=$pod\n"
             << "    $K describe pod \"$pod\" -n " << shellQuote(plan.nameSpace) << " || true\n"
-            << "    echo __DOKSCP_K8S_POD_LOGS__=$pod\n"
+            << "    echo __STACKPILOT_K8S_POD_LOGS__=$pod\n"
             << "    $K logs \"$pod\" -n " << shellQuote(plan.nameSpace) << " --all-containers --tail=120 || true\n"
             << "  done\n"
             << "}\n"
@@ -2460,7 +2460,7 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             script
                 << "$K patch deployment/" << shellQuote(service.deploymentName)
                 << " -n " << shellQuote(plan.nameSpace)
-                << " --type merge -p '{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"dokscp.io/local-build-node\":\"true\"}}}}}' >/dev/null\n";
+                << " --type merge -p '{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"StackPilot.io/local-build-node\":\"true\"}}}}}' >/dev/null\n";
         }
         for (const auto& service : plan.services) {
             script
@@ -2472,7 +2472,7 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
                 << "$K rollout status deployment/" << shellQuote(service.deploymentName)
                 << " -n " << shellQuote(plan.nameSpace) << " --timeout=180s || { dump_rollout_debug "
                 << shellQuote(service.deploymentName) << " " << shellQuote(service.serviceName)
-                << "; echo __DOKSCP_K8S_ROLLOUT_FAILED__=" << service.serviceName << "; exit 40; }\n";
+                << "; echo __STACKPILOT_K8S_ROLLOUT_FAILED__=" << service.serviceName << "; exit 40; }\n";
         }
         script
             << "ready=$($K get deployment " << shellQuote(plan.primaryDeploymentName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)\n"
@@ -2480,25 +2480,25 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
             << "nodeport=$($K get service " << shellQuote(plan.primaryServiceName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)\n"
             << "lbhost=$($K get service " << shellQuote(plan.primaryServiceName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)\n"
             << "lbip=$($K get service " << shellQuote(plan.primaryServiceName) << " -n " << shellQuote(plan.nameSpace) << " -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)\n"
-            << "echo __DOKSCP_K8S_NAMESPACE__=" << plan.nameSpace << "\n"
-            << "echo __DOKSCP_K8S_DEPLOYMENT__=" << plan.primaryDeploymentName << "\n"
-            << "echo __DOKSCP_K8S_SERVICE__=" << plan.primaryServiceName << "\n"
-            << "echo __DOKSCP_K8S_INGRESS__=" << (plan.exposureMode == "ingress" ? plan.ingressName : "") << "\n"
-            << "echo __DOKSCP_K8S_EXPOSURE__=" << plan.exposureMode << "\n"
-            << "echo __DOKSCP_K8S_READY__=${ready:-0}\n"
-            << "echo __DOKSCP_K8S_DESIRED__=${desired:-0}\n";
+            << "echo __STACKPILOT_K8S_NAMESPACE__=" << plan.nameSpace << "\n"
+            << "echo __STACKPILOT_K8S_DEPLOYMENT__=" << plan.primaryDeploymentName << "\n"
+            << "echo __STACKPILOT_K8S_SERVICE__=" << plan.primaryServiceName << "\n"
+            << "echo __STACKPILOT_K8S_INGRESS__=" << (plan.exposureMode == "ingress" ? plan.ingressName : "") << "\n"
+            << "echo __STACKPILOT_K8S_EXPOSURE__=" << plan.exposureMode << "\n"
+            << "echo __STACKPILOT_K8S_READY__=${ready:-0}\n"
+            << "echo __STACKPILOT_K8S_DESIRED__=${desired:-0}\n";
         if (plan.exposureMode == "ingress") {
-            script << "echo __DOKSCP_K8S_URL__=" << plan.runtimeScheme << "://" << plan.ingressHost << "\n";
+            script << "echo __STACKPILOT_K8S_URL__=" << plan.runtimeScheme << "://" << plan.ingressHost << "\n";
         } else {
             script
-                << "if [ -n \"$nodeport\" ]; then echo __DOKSCP_K8S_URL__=http://" << config.host << ":$nodeport;\n"
-                << "elif [ -n \"$lbhost\" ]; then echo __DOKSCP_K8S_URL__=" << plan.runtimeScheme << "://$lbhost;\n"
-                << "elif [ -n \"$lbip\" ]; then echo __DOKSCP_K8S_URL__=" << plan.runtimeScheme << "://$lbip;\n"
-                << "else echo __DOKSCP_K8S_URL__=http://" << plan.primaryServiceName << "." << plan.nameSpace << ".svc.cluster.local; fi\n";
+                << "if [ -n \"$nodeport\" ]; then echo __STACKPILOT_K8S_URL__=http://" << config.host << ":$nodeport;\n"
+                << "elif [ -n \"$lbhost\" ]; then echo __STACKPILOT_K8S_URL__=" << plan.runtimeScheme << "://$lbhost;\n"
+                << "elif [ -n \"$lbip\" ]; then echo __STACKPILOT_K8S_URL__=" << plan.runtimeScheme << "://$lbip;\n"
+                << "else echo __STACKPILOT_K8S_URL__=http://" << plan.primaryServiceName << "." << plan.nameSpace << ".svc.cluster.local; fi\n";
         }
         script
             << "rm -f " << shellQuote(remoteManifestPath) << " " << shellQuote(remoteScriptPath) << "\n"
-            << "echo __DOKSCP_K8S_DONE__\n";
+            << "echo __STACKPILOT_K8S_DONE__\n";
     }
 
     auto cleanupLocalFiles = [&]() {
@@ -2532,20 +2532,20 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
 
     result.logs = uploadManifest.output + uploadScript.output +
         ComposeKubernetesPlanner::joinWarnings(plan.warnings) + commandResult.output;
-    if (!commandResult.success || commandResult.output.find("__DOKSCP_K8S_DONE__") == std::string::npos) {
-        if (commandResult.output.find("__DOKSCP_KUBECTL_MISSING__") != std::string::npos) {
+    if (!commandResult.success || commandResult.output.find("__STACKPILOT_K8S_DONE__") == std::string::npos) {
+        if (commandResult.output.find("__STACKPILOT_KUBECTL_MISSING__") != std::string::npos) {
             result.error = "kubectl or k3s is not installed on the remote host";
-        } else if (commandResult.output.find("__DOKSCP_K8S_NOT_READY__") != std::string::npos) {
+        } else if (commandResult.output.find("__STACKPILOT_K8S_NOT_READY__") != std::string::npos) {
             result.error = "Remote Kubernetes cluster is not reachable";
-        } else if (commandResult.output.find("__DOKSCP_K8S_SOURCE_IMAGE_MISSING__") != std::string::npos) {
+        } else if (commandResult.output.find("__STACKPILOT_K8S_SOURCE_IMAGE_MISSING__") != std::string::npos) {
             result.error = "One or more Compose-built images are missing before Kubernetes deploy";
-        } else if (commandResult.output.find("__DOKSCP_K8S_REGISTRY_PUSH_FAILED__") != std::string::npos) {
+        } else if (commandResult.output.find("__STACKPILOT_K8S_REGISTRY_PUSH_FAILED__") != std::string::npos) {
             result.error = "Remote Kubernetes image handoff failed: unable to push to local registry";
-        } else if (commandResult.output.find("__DOKSCP_ACME_EMAIL_MISSING__") != std::string::npos) {
+        } else if (commandResult.output.find("__STACKPILOT_ACME_EMAIL_MISSING__") != std::string::npos) {
             result.error = "HTTPS requires ACME_EMAIL to create Let's Encrypt certificates";
-        } else if (commandResult.output.find("__DOKSCP_CERT_MANAGER_NOT_READY__") != std::string::npos) {
+        } else if (commandResult.output.find("__STACKPILOT_CERT_MANAGER_NOT_READY__") != std::string::npos) {
             result.error = "cert-manager must be installed before HTTPS Compose Kubernetes deployment";
-        } else if (commandResult.output.find("__DOKSCP_K8S_ROLLOUT_FAILED__") != std::string::npos) {
+        } else if (commandResult.output.find("__STACKPILOT_K8S_ROLLOUT_FAILED__") != std::string::npos) {
             result.error = "Remote Compose Kubernetes rollout failed";
         } else {
             result.error = commandResult.error.empty() ? "Remote Compose Kubernetes deployment failed" : commandResult.error;
@@ -2555,9 +2555,9 @@ KubernetesRuntimeInfo SshService::deployComposeKubernetesRuntime(const SshConnec
 
     result.success = true;
     result.deployed = true;
-    result.readyReplicas = markerInt(commandResult.output, "__DOKSCP_K8S_READY__", 0);
-    result.desiredReplicas = markerInt(commandResult.output, "__DOKSCP_K8S_DESIRED__", result.desiredReplicas);
-    result.runtimeUrl = markerValue(commandResult.output, "__DOKSCP_K8S_URL__");
+    result.readyReplicas = markerInt(commandResult.output, "__STACKPILOT_K8S_READY__", 0);
+    result.desiredReplicas = markerInt(commandResult.output, "__STACKPILOT_K8S_DESIRED__", result.desiredReplicas);
+    result.runtimeUrl = markerValue(commandResult.output, "__STACKPILOT_K8S_URL__");
     result.status = result.desiredReplicas > 0 && result.readyReplicas >= result.desiredReplicas ? "running" : "deploying";
     return result;
 }
@@ -2592,19 +2592,19 @@ KubernetesRuntimeInfo SshService::inspectKubernetesRuntime(const SshConnectionCo
         "if command -v kubectl >/dev/null 2>&1; then K='kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl'; "
-        "else echo __DOKSCP_KUBECTL_MISSING__; exit 30; fi; "
-        "$K get deployment " + shellQuote(deploymentName) + " -n " + shellQuote(nameSpace) + " >/dev/null 2>&1 || { echo __DOKSCP_K8S_DEPLOYMENT_MISSING__; exit 32; }; "
-        "$K get service " + shellQuote(serviceName) + " -n " + shellQuote(nameSpace) + " >/dev/null 2>&1 || { echo __DOKSCP_K8S_SERVICE_MISSING__; exit 33; }; "
+        "else echo __STACKPILOT_KUBECTL_MISSING__; exit 30; fi; "
+        "$K get deployment " + shellQuote(deploymentName) + " -n " + shellQuote(nameSpace) + " >/dev/null 2>&1 || { echo __STACKPILOT_K8S_DEPLOYMENT_MISSING__; exit 32; }; "
+        "$K get service " + shellQuote(serviceName) + " -n " + shellQuote(nameSpace) + " >/dev/null 2>&1 || { echo __STACKPILOT_K8S_SERVICE_MISSING__; exit 33; }; "
         "ready=$($K get deployment " + shellQuote(deploymentName) + " -n " + shellQuote(nameSpace) + " -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true); "
         "desired=$($K get deployment " + shellQuote(deploymentName) + " -n " + shellQuote(nameSpace) + " -o jsonpath='{.spec.replicas}' 2>/dev/null || true); "
         "nodeport=$($K get service " + shellQuote(serviceName) + " -n " + shellQuote(nameSpace) + " -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true); "
         "ingress_host=''; if [ " + shellQuote(useIngress ? "yes" : "no") + " = 'yes' ]; then ingress_host=$($K get ingress " + shellQuote(result.ingressName) + " -n " + shellQuote(nameSpace) + " -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true); fi; "
-        "echo __DOKSCP_K8S_READY__=${ready:-0}; echo __DOKSCP_K8S_DESIRED__=${desired:-0}; "
-        "if [ -n \"$nodeport\" ]; then echo __DOKSCP_K8S_URL__=http://" + config.host + ":$nodeport; "
-        "elif [ -n \"$ingress_host\" ]; then echo __DOKSCP_K8S_URL__=" + result.runtimeScheme + "://$ingress_host; fi; "
-        "echo __DOKSCP_K8S_LOGS__; $K get pods -n " + shellQuote(nameSpace) + " -l app=" + shellQuote(deploymentName) + " -o wide; "
+        "echo __STACKPILOT_K8S_READY__=${ready:-0}; echo __STACKPILOT_K8S_DESIRED__=${desired:-0}; "
+        "if [ -n \"$nodeport\" ]; then echo __STACKPILOT_K8S_URL__=http://" + config.host + ":$nodeport; "
+        "elif [ -n \"$ingress_host\" ]; then echo __STACKPILOT_K8S_URL__=" + result.runtimeScheme + "://$ingress_host; fi; "
+        "echo __STACKPILOT_K8S_LOGS__; $K get pods -n " + shellQuote(nameSpace) + " -l app=" + shellQuote(deploymentName) + " -o wide; "
         + (useIngress ? "$K describe ingress " + shellQuote(result.ingressName) + " -n " + shellQuote(nameSpace) + " 2>&1 || true; " : "") +
-        "echo __DOKSCP_K8S_DONE__";
+        "echo __STACKPILOT_K8S_DONE__";
 
     const std::string command =
         "timeout 60s sh -lc " +
@@ -2614,8 +2614,8 @@ KubernetesRuntimeInfo SshService::inspectKubernetesRuntime(const SshConnectionCo
     const int exitCode = runCommand(command, output);
     cleanupSessionFiles(files);
     result.logs = output;
-    if (exitCode != 0 || output.find("__DOKSCP_K8S_DONE__") == std::string::npos) {
-        result.error = output.find("__DOKSCP_K8S_DEPLOYMENT_MISSING__") != std::string::npos
+    if (exitCode != 0 || output.find("__STACKPILOT_K8S_DONE__") == std::string::npos) {
+        result.error = output.find("__STACKPILOT_K8S_DEPLOYMENT_MISSING__") != std::string::npos
             ? "Remote Kubernetes deployment is not present"
             : "Failed to inspect remote Kubernetes runtime";
         return result;
@@ -2623,9 +2623,9 @@ KubernetesRuntimeInfo SshService::inspectKubernetesRuntime(const SshConnectionCo
 
     result.success = true;
     result.deployed = true;
-    result.readyReplicas = markerInt(output, "__DOKSCP_K8S_READY__", 0);
-    result.desiredReplicas = markerInt(output, "__DOKSCP_K8S_DESIRED__", 0);
-    result.runtimeUrl = markerValue(output, "__DOKSCP_K8S_URL__");
+    result.readyReplicas = markerInt(output, "__STACKPILOT_K8S_READY__", 0);
+    result.desiredReplicas = markerInt(output, "__STACKPILOT_K8S_DESIRED__", 0);
+    result.runtimeUrl = markerValue(output, "__STACKPILOT_K8S_URL__");
     result.status = result.desiredReplicas > 0 && result.readyReplicas >= result.desiredReplicas ? "running" : "deploying";
     return result;
 }
@@ -2675,7 +2675,7 @@ KubernetesRuntimeInfo SshService::rollbackKubernetesRuntime(const SshConnectionC
         "if command -v kubectl >/dev/null 2>&1; then K='kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && [ \"$(id -u)\" -eq 0 ]; then K='k3s kubectl'; "
         "elif command -v k3s >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then K='sudo -n k3s kubectl'; "
-        "else echo __DOKSCP_KUBECTL_MISSING__; exit 30; fi; ";
+        "else echo __STACKPILOT_KUBECTL_MISSING__; exit 30; fi; ";
 
     const SshOperationResult historyResult = runRemoteCommand(
         config,
@@ -2691,7 +2691,7 @@ KubernetesRuntimeInfo SshService::rollbackKubernetesRuntime(const SshConnectionC
         failed.serviceName = serviceName;
         failed.exposureMode = normalizeKubernetesExposure(exposureMode);
         failed.logs = historyResult.output;
-        failed.error = historyResult.output.find("__DOKSCP_KUBECTL_MISSING__") != std::string::npos
+        failed.error = historyResult.output.find("__STACKPILOT_KUBECTL_MISSING__") != std::string::npos
             ? "kubectl or k3s is not installed on the remote host"
             : (historyResult.error.empty() ? "Unable to read remote Kubernetes rollout history" : historyResult.error);
         return failed;
@@ -2789,7 +2789,7 @@ KubernetesRuntimeInfo SshService::removeComposeKubernetesRuntime(const SshConnec
         return result;
     }
 
-    const std::string selector = "dokscp.io/compose-project=" + stackName;
+    const std::string selector = "StackPilot.io/compose-project=" + stackName;
     const SshOperationResult commandResult = runRemoteCommand(
         config,
         "/tmp",
@@ -2845,4 +2845,4 @@ int SshService::runCommand(const std::string& command, std::string& output) cons
     return rawExit;
 }
 
-} // namespace dokscp
+} // namespace stackpilot

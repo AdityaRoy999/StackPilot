@@ -17,8 +17,8 @@ const jetBrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DOKSCP | Developer Operations Kubernetes Source Control Platform",
-  description: "Developer Operations Kubernetes Source Control Platform for AI-assisted builds, deployments, and runtime operations.",
+  title: "StackPilot | AI Application Delivery Cockpit",
+  description: "AI-assisted application delivery cockpit for Docker, Kubernetes, source projects, and ready-to-run application templates.",
 };
 
 export default function RootLayout({

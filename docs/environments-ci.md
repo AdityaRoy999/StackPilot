@@ -1,6 +1,6 @@
 # Environments and CI
 
-DOKSCP supports project environments that map branches to deployment targets.
+StackPilot supports project environments that map branches to deployment targets.
 
 ## Environment Model
 
@@ -20,7 +20,7 @@ The default map is:
 - `development` -> `dev`, auto deploy enabled, CI optional, cleanup previous runtime after a newer successful build.
 - `production` -> `main`, auto deploy disabled by default, CI required, previous runtime kept for rollback unless you enable cleanup.
 
-The cleanup policy is deliberately success-gated: DOKSCP keeps the current environment deployment live while a newer commit is building. Only after the new commit builds and is promoted does it retire the previous deployment, remove runtime resources, remove the Docker image when possible, and clean local or remote build workspaces. Failed builds and failed CI never replace or delete the last good deployment.
+The cleanup policy is deliberately success-gated: StackPilot keeps the current environment deployment live while a newer commit is building. Only after the new commit builds and is promoted does it retire the previous deployment, remove runtime resources, remove the Docker image when possible, and clean local or remote build workspaces. Failed builds and failed CI never replace or delete the last good deployment.
 
 ## GitHub Push Automation
 
@@ -30,7 +30,7 @@ GitHub sends push events to:
 POST /api/v1/github/webhooks
 ```
 
-DOKSCP verifies `X-Hub-Signature-256` when `GITHUB_WEBHOOK_SECRET` is set. It then matches repository and branch to configured project environments.
+StackPilot verifies `X-Hub-Signature-256` when `GITHUB_WEBHOOK_SECRET` is set. It then matches repository and branch to configured project environments.
 
 If a push targets `dev`, only the environment mapped to `dev` deploys. If a push targets `main`, only the environment mapped to `main` deploys.
 
@@ -38,11 +38,11 @@ The deployment records and checks out the exact pushed commit SHA, not just the 
 
 ## CI Gating
 
-When `require_ci=true`, DOKSCP creates a blocked deployment and waits for GitHub Checks or check suite events.
+When `require_ci=true`, StackPilot creates a blocked deployment and waits for GitHub Checks or check suite events.
 
 - Success: mark CI passed and queue deployment.
 - Failure, cancellation, or timeout: mark deployment `failed_ci` and do not replace the live environment.
-- No check events: after `DOKSCP_CI_NO_CHECKS_GRACE_SECONDS` DOKSCP marks CI `not_required` and continues, so repositories without workflows do not stay blocked forever.
+- No check events: after `STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS` StackPilot marks CI `not_required` and continues, so repositories without workflows do not stay blocked forever.
 
 Every deployment records the branch, commit SHA, trigger source, GitHub delivery id, CI status, and CI details so the dashboard can show what commit caused the update.
 
@@ -52,17 +52,17 @@ Environments do not share a single runtime URL. Each environment points at its o
 
 ## Superseding Older Commits
 
-If several pushes arrive quickly for the same environment, DOKSCP cancels stale queued or blocked candidates and keeps the newest commit as the active candidate. If an older build completes after a newer candidate arrives, it is marked `superseded` and its runtime/image/workspace are cleaned up instead of being promoted.
+If several pushes arrive quickly for the same environment, StackPilot cancels stale queued or blocked candidates and keeps the newest commit as the active candidate. If an older build completes after a newer candidate arrives, it is marked `superseded` and its runtime/image/workspace are cleaned up instead of being promoted.
 
-This makes GitHub Actions the first CI source of truth. Native DOKSCP pipeline steps can be added later without removing GitHub Checks.
+This makes GitHub Actions the first CI source of truth. Native StackPilot pipeline steps can be added later without removing GitHub Checks.
 
 ## Webhook Setup
 
-Recommended production setup is the GitHub App model. In that mode, one central GitHub App webhook sends push and check events to DOKSCP for all repositories where the App is installed. Set `GITHUB_APP_WEBHOOK_MODE=true` to prevent DOKSCP from creating per-repository hooks.
+Recommended production setup is the GitHub App model. In that mode, one central GitHub App webhook sends push and check events to StackPilot for all repositories where the App is installed. Set `GITHUB_APP_WEBHOOK_MODE=true` to prevent StackPilot from creating per-repository hooks.
 
 See [GitHub App Integration](github-app.md) for the full setup.
 
-When `GITHUB_APP_WEBHOOK_MODE=false`, `BACKEND_PUBLIC_URL` is a public HTTPS URL, `GITHUB_WEBHOOK_SECRET` is set, and the connected GitHub token has repo-hook permission, DOKSCP attempts to register a repository webhook automatically during project creation.
+When `GITHUB_APP_WEBHOOK_MODE=false`, `BACKEND_PUBLIC_URL` is a public HTTPS URL, `GITHUB_WEBHOOK_SECRET` is set, and the connected GitHub token has repo-hook permission, StackPilot attempts to register a repository webhook automatically during project creation.
 
 For manual setup, create a GitHub repository webhook:
 
@@ -71,4 +71,4 @@ For manual setup, create a GitHub repository webhook:
 - Secret: same as `GITHUB_WEBHOOK_SECRET`
 - Events: push, check suite, check run
 
-The OAuth flow requests `admin:repo_hook` so DOKSCP can register hooks for OAuth-connected repositories. Existing users may need to reconnect GitHub after upgrading. For production at larger scale, use the GitHub App path because users install DOKSCP once and GitHub sends events centrally.
+The OAuth flow requests `admin:repo_hook` so StackPilot can register hooks for OAuth-connected repositories. Existing users may need to reconnect GitHub after upgrading. For production at larger scale, use the GitHub App path because users install StackPilot once and GitHub sends events centrally.

@@ -10,7 +10,7 @@
 #include <set>
 #include <sstream>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -427,7 +427,7 @@ std::string ComposeKubernetesPlanner::sanitizeDnsLabel(const std::string& value,
         out.pop_back();
     }
     if (out.empty()) {
-        out = "dokscp-runtime";
+        out = "stackpilot-runtime";
     }
     maxLength = std::clamp<size_t>(maxLength, 8, 63);
     if (out.size() > maxLength) {
@@ -450,7 +450,7 @@ std::string ComposeKubernetesPlanner::joinWarnings(const std::vector<std::string
 ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& composeConfig,
                                                        const ComposeKubernetesPlanOptions& options) {
     ComposeKubernetesPlan plan;
-    const std::string baseNamespace = options.nameSpace.empty() ? "dokscp-apps" : sanitizeDnsLabel(options.nameSpace, 63);
+    const std::string baseNamespace = options.nameSpace.empty() ? "stackpilot-apps" : sanitizeDnsLabel(options.nameSpace, 63);
     const std::string composeImageProjectName = !trim(options.composeProjectName).empty()
         ? trim(options.composeProjectName)
         : "";
@@ -503,7 +503,7 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
         detail.service.imageName = serviceImageName(!composeImageProjectName.empty() ? composeImageProjectName : plan.stackName,
                                                     serviceName,
                                                     service);
-        detail.service.imagePlaceholder = "__DOKSCP_COMPOSE_IMAGE_" + std::to_string(placeholderIndex++) + "__";
+        detail.service.imagePlaceholder = "__STACKPILOT_COMPOSE_IMAGE_" + std::to_string(placeholderIndex++) + "__";
         detail.service.localBuildImage = service.isMember("build");
         detail.service.containerPort = firstContainerPort(service, serviceName, detail.service.imageName);
         detail.service.hasPublishedPort = hasPublishedPort(service);
@@ -605,7 +605,7 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
         appendWarning(plan.warnings, "No Compose ports were declared; using the platform default port for the only service");
     }
     if (primaryIndex < 0) {
-        plan.error = "No service in the Compose project exposes a TCP port, so DOKSCP cannot create a preview URL";
+        plan.error = "No service in the Compose project exposes a TCP port, so StackPilot cannot create a preview URL";
         return plan;
     }
     details[primaryIndex].service.publicService = true;
@@ -656,10 +656,10 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
                 << "  name: " << secretName << "\n"
                 << "  namespace: " << plan.nameSpace << "\n"
                 << "  labels:\n"
-                << "    app.kubernetes.io/managed-by: dokscp\n"
-                << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-                << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
-                << "    dokscp.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
+                << "    app.kubernetes.io/managed-by: StackPilot\n"
+                << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+                << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+                << "    StackPilot.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
                 << "type: Opaque\n"
                 << "stringData:\n";
             for (const auto& env : detail.env) {
@@ -676,10 +676,10 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
                 << "  name: " << pvc.second << "\n"
                 << "  namespace: " << plan.nameSpace << "\n"
                 << "  labels:\n"
-                << "    app.kubernetes.io/managed-by: dokscp\n"
-                << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-                << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
-                << "    dokscp.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
+                << "    app.kubernetes.io/managed-by: StackPilot\n"
+                << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+                << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+                << "    StackPilot.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
                 << "spec:\n"
                 << "  accessModes:\n"
                 << "    - ReadWriteOnce\n"
@@ -696,10 +696,10 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
             << "  name: " << svc.deploymentName << "\n"
             << "  namespace: " << plan.nameSpace << "\n"
             << "  labels:\n"
-            << "    app.kubernetes.io/managed-by: dokscp\n"
-            << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-            << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
-            << "    dokscp.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
+            << "    app.kubernetes.io/managed-by: StackPilot\n"
+            << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+            << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+            << "    StackPilot.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
             << "spec:\n"
             << "  revisionHistoryLimit: 5\n"
             << "  progressDeadlineSeconds: 180\n"
@@ -716,10 +716,10 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
             << "    metadata:\n"
             << "      labels:\n"
             << "        app: " << svc.deploymentName << "\n"
-            << "        app.kubernetes.io/managed-by: dokscp\n"
-            << "        dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-            << "        dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
-            << "        dokscp.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
+            << "        app.kubernetes.io/managed-by: StackPilot\n"
+            << "        StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+            << "        StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+            << "        StackPilot.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
             << "    spec:\n"
             << (!options.serviceAccountName.empty() ? "      serviceAccountName: " + options.serviceAccountName + "\n" : "")
             << "      terminationGracePeriodSeconds: 30\n"
@@ -805,10 +805,10 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
                 << "  name: " << svc.kubernetesServiceName << "\n"
                 << "  namespace: " << plan.nameSpace << "\n"
                 << "  labels:\n"
-                << "    app.kubernetes.io/managed-by: dokscp\n"
-                << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-                << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
-                << "    dokscp.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
+                << "    app.kubernetes.io/managed-by: StackPilot\n"
+                << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+                << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+                << "    StackPilot.io/compose-service: " << yamlQuote(svc.serviceName) << "\n"
                 << "spec:\n"
                 << "  selector:\n"
                 << "    app: " << svc.deploymentName << "\n"
@@ -828,9 +828,9 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
                 << "  name: " << sanitizeDnsLabel(svc.deploymentName + "-pdb", 63) << "\n"
                 << "  namespace: " << plan.nameSpace << "\n"
                 << "  labels:\n"
-                << "    app.kubernetes.io/managed-by: dokscp\n"
-                << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-                << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+                << "    app.kubernetes.io/managed-by: StackPilot\n"
+                << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+                << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
                 << "spec:\n"
                 << "  minAvailable: 1\n"
                 << "  selector:\n"
@@ -848,9 +848,9 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
             << "  name: " << plan.ingressName << "\n"
             << "  namespace: " << plan.nameSpace << "\n"
             << "  labels:\n"
-            << "    app.kubernetes.io/managed-by: dokscp\n"
-            << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-            << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n";
+            << "    app.kubernetes.io/managed-by: StackPilot\n"
+            << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+            << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n";
         const bool hasAnnotations = !options.ingressClassName.empty() ||
                                     (annotations.isObject() && !annotations.empty()) ||
                                     (plan.runtimeScheme == "https" && !options.ingressTlsSecretName.empty());
@@ -900,9 +900,9 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
             << "  name: " << sanitizeDnsLabel(target + "-hpa", 63) << "\n"
             << "  namespace: " << plan.nameSpace << "\n"
             << "  labels:\n"
-            << "    app.kubernetes.io/managed-by: dokscp\n"
-            << "    dokscp.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
-            << "    dokscp.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
+            << "    app.kubernetes.io/managed-by: StackPilot\n"
+            << "    StackPilot.io/deployment-id: " << yamlQuote(options.deploymentId) << "\n"
+            << "    StackPilot.io/compose-project: " << yamlQuote(plan.stackName) << "\n"
             << "spec:\n"
             << "  scaleTargetRef:\n"
             << "    apiVersion: apps/v1\n"
@@ -924,4 +924,4 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
     return plan;
 }
 
-} // namespace dokscp
+} // namespace stackpilot

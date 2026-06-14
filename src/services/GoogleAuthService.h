@@ -7,7 +7,7 @@
 #include <functional>
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct GoogleIdentity {
     std::string subject;
@@ -26,4 +26,4 @@ public:
                           ErrorCallback onError) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

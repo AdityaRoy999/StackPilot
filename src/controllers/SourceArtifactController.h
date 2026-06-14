@@ -6,7 +6,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class SourceArtifactController : public drogon::HttpController<SourceArtifactController> {
 public:
@@ -25,5 +25,5 @@ private:
     std::string extractUserId(const drogon::HttpRequestPtr& req);
 };
 
-} // namespace dokscp
+} // namespace stackpilot
 

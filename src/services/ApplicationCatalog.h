@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct ApplicationField {
     std::string id;
@@ -45,4 +45,4 @@ public:
                                                    const std::filesystem::path& baseDir);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

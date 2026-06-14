@@ -1,13 +1,13 @@
-# DOKSCP backend image.
+# StackPilot backend image.
 # The Drogon base image keeps the C++ framework and runtime ABI aligned.
 FROM drogonframework/drogon:latest
 
-LABEL org.opencontainers.image.title="DOKSCP Backend" \
-      org.opencontainers.image.description="C++ Drogon API, build worker, Kubernetes runtime controller, and MCP backend APIs for DOKSCP." \
-      org.opencontainers.image.vendor="DOKSCP"
+LABEL org.opencontainers.image.title="StackPilot Backend" \
+      org.opencontainers.image.description="C++ Drogon API, build worker, Kubernetes runtime controller, and MCP backend APIs for StackPilot." \
+      org.opencontainers.image.vendor="StackPilot"
 
 ENV DEBIAN_FRONTEND=noninteractive
-ARG DOKSCP_BACKEND_BUILD_PARALLELISM=1
+ARG STACKPILOT_BACKEND_BUILD_PARALLELISM=auto
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpqxx-dev \
@@ -43,10 +43,10 @@ WORKDIR /app
 COPY . .
 
 RUN cmake -B build -S . && \
-    if [ "$DOKSCP_BACKEND_BUILD_PARALLELISM" = "auto" ]; then \
+    if [ "$STACKPILOT_BACKEND_BUILD_PARALLELISM" = "auto" ]; then \
         cmake --build build --config Release --parallel; \
     else \
-        cmake --build build --config Release --parallel "$DOKSCP_BACKEND_BUILD_PARALLELISM"; \
+        cmake --build build --config Release --parallel "$STACKPILOT_BACKEND_BUILD_PARALLELISM"; \
     fi
 
 RUN mkdir -p logs uploads/builds uploads/source-artifacts
@@ -56,4 +56,4 @@ EXPOSE 8090
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
     CMD curl -fsS http://127.0.0.1:8090/api/v1/health >/dev/null || exit 1
 
-CMD ["./build/dokscp-platform"]
+CMD ["./build/stackpilot-platform"]

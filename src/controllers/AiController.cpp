@@ -25,7 +25,7 @@
 #include <unordered_set>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -71,7 +71,7 @@ double envDouble(const char* key, double fallback) {
 }
 
 std::size_t maxContextBytes() {
-    return static_cast<std::size_t>(std::max(8000, envInt("DOKSCP_AI_MAX_CONTEXT_BYTES", 32000)));
+    return static_cast<std::size_t>(std::max(8000, envInt("STACKPILOT_AI_MAX_CONTEXT_BYTES", 32000)));
 }
 
 double clampConfidence(double value) {
@@ -281,7 +281,7 @@ bool rateLimitAllows(const std::string& userId, Json::Value& error) {
     static std::mutex mutex;
     static std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> buckets;
 
-    const int limit = std::max(1, envInt("DOKSCP_AI_RATE_LIMIT_PER_MINUTE", 12));
+    const int limit = std::max(1, envInt("STACKPILOT_AI_RATE_LIMIT_PER_MINUTE", 12));
     const auto now = std::chrono::steady_clock::now();
     const auto window = std::chrono::seconds(60);
 
@@ -301,12 +301,12 @@ bool rateLimitAllows(const std::string& userId, Json::Value& error) {
 
 Json::Value loadPreferences(pqxx::work& txn, const std::string& userId) {
     Json::Value prefs;
-    prefs["enabled"] = envBool("DOKSCP_AI_ENABLED", true);
-    prefs["provider"] = envOrDefault("DOKSCP_AI_PROVIDER", "nvidia_nim");
-    prefs["model"] = envOrDefault("DOKSCP_AI_MODEL", "");
+    prefs["enabled"] = envBool("STACKPILOT_AI_ENABLED", true);
+    prefs["provider"] = envOrDefault("STACKPILOT_AI_PROVIDER", "nvidia_nim");
+    prefs["model"] = envOrDefault("STACKPILOT_AI_MODEL", "");
     prefs["openai_compatible_base_url"] = envOrDefault("OPENAI_COMPATIBLE_BASE_URL", "");
     prefs["openai_compatible_api_key"] = envOrDefault("OPENAI_COMPATIBLE_API_KEY", "");
-    prefs["confidence_threshold"] = clampConfidence(envDouble("DOKSCP_AI_CONFIDENCE_THRESHOLD", 0.72));
+    prefs["confidence_threshold"] = clampConfidence(envDouble("STACKPILOT_AI_CONFIDENCE_THRESHOLD", 0.72));
     prefs["history_retention_days"] = 90;
 
     const auto rows = txn.exec_params(
@@ -408,7 +408,7 @@ std::string insertAiRun(pqxx::work& txn,
         "RETURNING id",
         userId,
         workflow,
-        response.isMember("provider") ? response["provider"].asString() : envOrDefault("DOKSCP_AI_PROVIDER", "nvidia_nim"),
+        response.isMember("provider") ? response["provider"].asString() : envOrDefault("STACKPILOT_AI_PROVIDER", "nvidia_nim"),
         response.isMember("model") ? response["model"].asString() : "",
         status,
         confidence,
@@ -647,11 +647,11 @@ void AiController::health(const drogon::HttpRequestPtr& req,
 
     Json::Value payload;
     const auto result = AiServiceClient::instance().health();
-    payload["configured"] = envBool("DOKSCP_AI_ENABLED", true);
-    payload["provider"] = envOrDefault("DOKSCP_AI_PROVIDER", "nvidia_nim");
+    payload["configured"] = envBool("STACKPILOT_AI_ENABLED", true);
+    payload["provider"] = envOrDefault("STACKPILOT_AI_PROVIDER", "nvidia_nim");
     payload["model"] = result.body.isObject() && result.body.isMember("model")
         ? result.body["model"].asString()
-        : envOrDefault("DOKSCP_AI_MODEL", envOrDefault("NVIDIA_NIM_FAST_MODEL", envOrDefault("NVIDIA_NIM_MODEL", "")));
+        : envOrDefault("STACKPILOT_AI_MODEL", envOrDefault("NVIDIA_NIM_FAST_MODEL", envOrDefault("NVIDIA_NIM_MODEL", "")));
     payload["service_ok"] = result.ok;
     payload["service"] = result.body;
     if (!result.error.empty()) {
@@ -724,7 +724,7 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
     }
     const double threshold = body.isMember("confidence_threshold")
                                  ? clampConfidence(body["confidence_threshold"].asDouble())
-                                 : clampConfidence(envDouble("DOKSCP_AI_CONFIDENCE_THRESHOLD", 0.72));
+                                 : clampConfidence(envDouble("STACKPILOT_AI_CONFIDENCE_THRESHOLD", 0.72));
     const int retentionDays = body.isMember("history_retention_days")
                                   ? std::max(1, std::min(3650, body["history_retention_days"].asInt()))
                                   : 90;
@@ -1480,4 +1480,4 @@ void AiController::analyzeRuntimeFailure(const drogon::HttpRequestPtr& req,
     }
 }
 
-} // namespace dokscp
+} // namespace stackpilot

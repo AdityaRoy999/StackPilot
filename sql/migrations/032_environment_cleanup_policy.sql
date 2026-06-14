@@ -1,5 +1,5 @@
 -- Environment cleanup policy for branch-driven production deployments.
--- When enabled, DOKSCP keeps the previous environment deployment live until
+-- When enabled, StackPilot keeps the previous environment deployment live until
 -- the newest commit builds and deploys successfully, then retires the older
 -- runtime resources and image while preserving the audit record.
 

@@ -11,7 +11,7 @@
 
 #include <cstdlib>
 
-namespace dokscp {
+namespace stackpilot {
 
 void GoogleAuthService::verifyCredential(const std::string& credential,
                                          SuccessCallback onSuccess,
@@ -74,4 +74,4 @@ void GoogleAuthService::verifyCredential(const std::string& credential,
     }, 8.0);
 }
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -1,9 +1,9 @@
 apiVersion: 1
 
 providers:
-  - name: DOKSCP Platform
+  - name: stackpilot Platform
     orgId: 1
-    folder: DOKSCP
+    folder: StackPilot
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30

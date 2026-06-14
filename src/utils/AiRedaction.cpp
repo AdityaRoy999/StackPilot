@@ -4,7 +4,7 @@
 #include <cctype>
 #include <regex>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -90,4 +90,4 @@ Json::Value AiRedaction::redactJson(const Json::Value& value, std::size_t maxByt
     return value;
 }
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -1,21 +1,21 @@
-name: dokscp
+name: stackpilot
 
-x-dokscp-logging: &dokscp-logging
+x-stackpilot-logging: &stackpilot-logging
   driver: json-file
   options:
-    max-size: ${DOKSCP_LOG_MAX_SIZE:-10m}
-    max-file: ${DOKSCP_LOG_MAX_FILE:-5}
+    max-size: ${STACKPILOT_LOG_MAX_SIZE:-10m}
+    max-file: ${STACKPILOT_LOG_MAX_FILE:-5}
 
 services:
   caddy:
     image: caddy:2.8-alpine
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     env_file:
       - .env
     ports:
-      - "${DOKSCP_HTTP_PORT:-8081}:80"
-      - "${DOKSCP_HTTPS_PORT:-9443}:443"
+      - "${STACKPILOT_HTTP_PORT:-8081}:80"
+      - "${STACKPILOT_HTTPS_PORT:-9443}:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -28,7 +28,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     environment:
       POSTGRES_USER: ${DB_USER:?Set DB_USER in .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
@@ -46,7 +46,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
@@ -62,14 +62,14 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        DOKSCP_BACKEND_BUILD_PARALLELISM: ${DOKSCP_BACKEND_BUILD_PARALLELISM:-1}
+        STACKPILOT_BACKEND_BUILD_PARALLELISM: ${STACKPILOT_BACKEND_BUILD_PARALLELISM:-1}
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     environment:
-      - DOKSCP_ENV=production
-      - DOKSCP_REQUIRE_HTTPS=${DOKSCP_REQUIRE_HTTPS:-true}
-      - DOKSCP_TRUST_PROXY_HEADERS=true
-      - DOKSCP_API_RATE_LIMIT_PER_MINUTE=${DOKSCP_API_RATE_LIMIT_PER_MINUTE:-240}
+      - STACKPILOT_ENV=production
+      - STACKPILOT_REQUIRE_HTTPS=${STACKPILOT_REQUIRE_HTTPS:-true}
+      - STACKPILOT_TRUST_PROXY_HEADERS=true
+      - STACKPILOT_API_RATE_LIMIT_PER_MINUTE=${STACKPILOT_API_RATE_LIMIT_PER_MINUTE:-240}
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:?Set DB_NAME in .env}
@@ -78,21 +78,21 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - DOKSCP_REDIS_QUEUE=${DOKSCP_REDIS_QUEUE:-dokscp:jobs:deployment}
-      - DOKSCP_JOB_WORKERS=${DOKSCP_JOB_WORKERS:-2}
-      - DOKSCP_JOB_MAX_ATTEMPTS=${DOKSCP_JOB_MAX_ATTEMPTS:-3}
+      - STACKPILOT_REDIS_QUEUE=${STACKPILOT_REDIS_QUEUE:-stackpilot:jobs:deployment}
+      - STACKPILOT_JOB_WORKERS=${STACKPILOT_JOB_WORKERS:-2}
+      - STACKPILOT_JOB_MAX_ATTEMPTS=${STACKPILOT_JOB_MAX_ATTEMPTS:-3}
       - PROMETHEUS_PUBLIC_URL=${PROMETHEUS_PUBLIC_URL:-}
-      - GRAFANA_PUBLIC_URL=${GRAFANA_PUBLIC_URL:-https://${DOKSCP_DOMAIN}:${DOKSCP_HTTPS_PORT:-9443}/grafana}
-      - LOKI_PUBLIC_URL=${LOKI_PUBLIC_URL:-https://${DOKSCP_DOMAIN}:${DOKSCP_HTTPS_PORT:-9443}/grafana/explore}
-      - DOKSCP_METRICS_BEARER_TOKEN=${DOKSCP_METRICS_BEARER_TOKEN:-}
+      - GRAFANA_PUBLIC_URL=${GRAFANA_PUBLIC_URL:-https://${STACKPILOT_DOMAIN}:${STACKPILOT_HTTPS_PORT:-9443}/grafana}
+      - LOKI_PUBLIC_URL=${LOKI_PUBLIC_URL:-https://${STACKPILOT_DOMAIN}:${STACKPILOT_HTTPS_PORT:-9443}/grafana/explore}
+      - STACKPILOT_METRICS_BEARER_TOKEN=${STACKPILOT_METRICS_BEARER_TOKEN:-}
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env}
       - JWT_EXPIRY_SECONDS=${JWT_EXPIRY_SECONDS:-3600}
       - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
-      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-https://${DOKSCP_DOMAIN:?Set DOKSCP_DOMAIN in .env}:${DOKSCP_HTTPS_PORT:-9443}}
-      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-https://${DOKSCP_DOMAIN:?Set DOKSCP_DOMAIN in .env}:${DOKSCP_HTTPS_PORT:-9443}}
-      - BACKEND_PUBLIC_URL=${BACKEND_PUBLIC_URL:-https://${DOKSCP_DOMAIN:?Set DOKSCP_DOMAIN in .env}:${DOKSCP_HTTPS_PORT:-9443}}
-      - DOKSCP_AUTH_REGISTRATION_MODE=${DOKSCP_AUTH_REGISTRATION_MODE:-first_user_only}
-      - DOKSCP_AUTH_INVITE_CODE=${DOKSCP_AUTH_INVITE_CODE:-}
+      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-https://${STACKPILOT_DOMAIN:?Set STACKPILOT_DOMAIN in .env}:${STACKPILOT_HTTPS_PORT:-9443}}
+      - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-https://${STACKPILOT_DOMAIN:?Set STACKPILOT_DOMAIN in .env}:${STACKPILOT_HTTPS_PORT:-9443}}
+      - BACKEND_PUBLIC_URL=${BACKEND_PUBLIC_URL:-https://${STACKPILOT_DOMAIN:?Set STACKPILOT_DOMAIN in .env}:${STACKPILOT_HTTPS_PORT:-9443}}
+      - STACKPILOT_AUTH_REGISTRATION_MODE=${STACKPILOT_AUTH_REGISTRATION_MODE:-first_user_only}
+      - STACKPILOT_AUTH_INVITE_CODE=${STACKPILOT_AUTH_INVITE_CODE:-}
       - ACME_EMAIL=${ACME_EMAIL:?Set ACME_EMAIL in .env}
       - APP_PASSWORD=${APP_PASSWORD:-}
       - SMTP_HOST=${SMTP_HOST:-}
@@ -100,30 +100,30 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
-      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-DOKSCP Platform}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-StackPilot Platform}
       - BUILD_WORKSPACE_DIR=/app/uploads/builds
       - SOURCE_ARTIFACT_DIR=/app/uploads/source-artifacts
       - BUILD_MAX_LOG_BYTES=${BUILD_MAX_LOG_BYTES:-200000}
       - BUILD_CLONE_TIMEOUT_SECONDS=${BUILD_CLONE_TIMEOUT_SECONDS:-300}
       - BUILD_COMMAND_TIMEOUT_SECONDS=${BUILD_COMMAND_TIMEOUT_SECONDS:-3600}
       - BUILD_DOCKER_MEMORY=${BUILD_DOCKER_MEMORY:-1g}
-      - DOKSCP_CI_NO_CHECKS_GRACE_SECONDS=${DOKSCP_CI_NO_CHECKS_GRACE_SECONDS:-30}
+      - STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS=${STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS:-30}
       - LOCAL_SOURCE_ROOTS=${LOCAL_SOURCE_ROOTS:-/app/local-projects}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://${DOKSCP_DOMAIN}:${DOKSCP_HTTP_PORT:-8081}/api/v1/auth/github/callback}
+      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-http://${STACKPILOT_DOMAIN}:${STACKPILOT_HTTP_PORT:-8081}/api/v1/auth/github/callback}
       - GITHUB_OAUTH_REDIRECT_URL=${GITHUB_OAUTH_REDIRECT_URL:-}
       - GITHUB_FORCE_REDIRECT_URI=${GITHUB_FORCE_REDIRECT_URI:-false}
       - GITHUB_APP_WEBHOOK_MODE=${GITHUB_APP_WEBHOOK_MODE:-false}
-      - GITHUB_APP_NAME=${GITHUB_APP_NAME:-DOKSCP}
+      - GITHUB_APP_NAME=${GITHUB_APP_NAME:-StackPilot}
       - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:-}
       - GITHUB_APP_ID=${GITHUB_APP_ID:-}
       - GITHUB_APP_CLIENT_ID=${GITHUB_APP_CLIENT_ID:-}
       - GITHUB_APP_CLIENT_SECRET=${GITHUB_APP_CLIENT_SECRET:-}
       - GITHUB_APP_PRIVATE_KEY_PATH=${GITHUB_APP_PRIVATE_KEY_PATH:-}
       - GITHUB_APP_PRIVATE_KEY_BASE64=${GITHUB_APP_PRIVATE_KEY_BASE64:-}
-      - K8S_NAMESPACE=${K8S_NAMESPACE:-dokscp-apps}
+      - K8S_NAMESPACE=${K8S_NAMESPACE:-stackpilot-apps}
       - K8S_SERVICE_TYPE=${K8S_SERVICE_TYPE:-NodePort}
       - K8S_EXPOSURE_MODE=${K8S_EXPOSURE_MODE:-ingress}
       - K8S_NODE_HOST=${K8S_NODE_HOST:-localhost}
@@ -157,15 +157,15 @@ services:
       - K8S_ROLLOUT_TIMEOUT_SECONDS=${K8S_ROLLOUT_TIMEOUT_SECONDS:-180}
       - KUBECONFIG_PATH=${KUBECONFIG_PATH:-/root/.kube/config}
       - KUBECONFIG=/root/.kube/config
-      - DOKSCP_AI_ENABLED=${DOKSCP_AI_ENABLED:-true}
-      - DOKSCP_AI_SERVICE_URL=${DOKSCP_AI_SERVICE_URL:-http://ai-service:8010}
-      - DOKSCP_AI_PROVIDER=${DOKSCP_AI_PROVIDER:-nvidia_nim}
-      - DOKSCP_AI_MODEL=${DOKSCP_AI_MODEL:-}
-      - DOKSCP_AI_CONFIDENCE_THRESHOLD=${DOKSCP_AI_CONFIDENCE_THRESHOLD:-0.72}
-      - DOKSCP_AI_RATE_LIMIT_PER_MINUTE=${DOKSCP_AI_RATE_LIMIT_PER_MINUTE:-12}
-      - DOKSCP_AI_MAX_CONTEXT_BYTES=${DOKSCP_AI_MAX_CONTEXT_BYTES:-32000}
-      - DOKSCP_AI_SERVICE_TIMEOUT_SECONDS=${DOKSCP_AI_SERVICE_TIMEOUT_SECONDS:-120}
-      - DOKSCP_AI_EMBEDDING_DIMENSIONS=${DOKSCP_AI_EMBEDDING_DIMENSIONS:-384}
+      - STACKPILOT_AI_ENABLED=${STACKPILOT_AI_ENABLED:-true}
+      - STACKPILOT_AI_SERVICE_URL=${STACKPILOT_AI_SERVICE_URL:-http://ai-service:8010}
+      - STACKPILOT_AI_PROVIDER=${STACKPILOT_AI_PROVIDER:-nvidia_nim}
+      - STACKPILOT_AI_MODEL=${STACKPILOT_AI_MODEL:-}
+      - STACKPILOT_AI_CONFIDENCE_THRESHOLD=${STACKPILOT_AI_CONFIDENCE_THRESHOLD:-0.72}
+      - STACKPILOT_AI_RATE_LIMIT_PER_MINUTE=${STACKPILOT_AI_RATE_LIMIT_PER_MINUTE:-12}
+      - STACKPILOT_AI_MAX_CONTEXT_BYTES=${STACKPILOT_AI_MAX_CONTEXT_BYTES:-32000}
+      - STACKPILOT_AI_SERVICE_TIMEOUT_SECONDS=${STACKPILOT_AI_SERVICE_TIMEOUT_SECONDS:-120}
+      - STACKPILOT_AI_EMBEDDING_DIMENSIONS=${STACKPILOT_AI_EMBEDDING_DIMENSIONS:-384}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
       - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
       - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
@@ -189,7 +189,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./uploads:/app/uploads
-      - ${DOKSCP_LOCAL_PROJECTS_DIR:-./local-projects}:/app/local-projects:ro
+      - ${STACKPILOT_LOCAL_PROJECTS_DIR:-./local-projects}:/app/local-projects:ro
       - ${KUBECONFIG_HOST_PATH:-./config/kubeconfig}:/root/.kube/config:ro
     depends_on:
       postgres:
@@ -210,10 +210,10 @@ services:
       context: ./ai-service
       dockerfile: Dockerfile
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     environment:
-      - DOKSCP_AI_PROVIDER=${DOKSCP_AI_PROVIDER:-nvidia_nim}
-      - DOKSCP_AI_MODEL=${DOKSCP_AI_MODEL:-}
+      - STACKPILOT_AI_PROVIDER=${STACKPILOT_AI_PROVIDER:-nvidia_nim}
+      - STACKPILOT_AI_MODEL=${STACKPILOT_AI_MODEL:-}
       - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
       - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
       - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
@@ -230,10 +230,10 @@ services:
       - OPENAI_COMPATIBLE_MODEL=${OPENAI_COMPATIBLE_MODEL:-}
       - OPENAI_COMPATIBLE_THINKING_MODEL=${OPENAI_COMPATIBLE_THINKING_MODEL:-}
       - OPENAI_COMPATIBLE_EMBEDDING_MODEL=${OPENAI_COMPATIBLE_EMBEDDING_MODEL:-text-embedding-3-small}
-      - DOKSCP_AI_REQUEST_TIMEOUT_SECONDS=${DOKSCP_AI_REQUEST_TIMEOUT_SECONDS:-90}
-      - DOKSCP_AI_MAX_TEXT_BYTES=${DOKSCP_AI_MAX_TEXT_BYTES:-24000}
-      - DOKSCP_AI_EMBEDDING_DIMENSIONS=${DOKSCP_AI_EMBEDDING_DIMENSIONS:-384}
-      - DOKSCP_AI_EMBEDDING_FALLBACK=${DOKSCP_AI_EMBEDDING_FALLBACK:-true}
+      - STACKPILOT_AI_REQUEST_TIMEOUT_SECONDS=${STACKPILOT_AI_REQUEST_TIMEOUT_SECONDS:-90}
+      - STACKPILOT_AI_MAX_TEXT_BYTES=${STACKPILOT_AI_MAX_TEXT_BYTES:-24000}
+      - STACKPILOT_AI_EMBEDDING_DIMENSIONS=${STACKPILOT_AI_EMBEDDING_DIMENSIONS:-384}
+      - STACKPILOT_AI_EMBEDDING_FALLBACK=${STACKPILOT_AI_EMBEDDING_FALLBACK:-true}
     expose:
       - "8010"
     healthcheck:
@@ -249,11 +249,11 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: /api/v1
-        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-wss://${DOKSCP_DOMAIN:?Set DOKSCP_DOMAIN in .env}:${DOKSCP_HTTPS_PORT:-9443}}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-wss://${STACKPILOT_DOMAIN:?Set STACKPILOT_DOMAIN in .env}:${STACKPILOT_HTTPS_PORT:-9443}}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_GITHUB_CLIENT_ID: ${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     environment:
       - NODE_ENV=production
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
@@ -267,7 +267,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.55.1
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -283,7 +283,7 @@ services:
   loki:
     image: grafana/loki:3.4.2
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     command: ["-config.file=/etc/loki/config.yml"]
     volumes:
       - ./observability/loki/config.yml:/etc/loki/config.yml:ro
@@ -292,7 +292,7 @@ services:
   promtail:
     image: grafana/promtail:3.4.2
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     command: ["-config.file=/etc/promtail/config.yml"]
     volumes:
       - ./observability/promtail/config.yml:/etc/promtail/config.yml:ro
@@ -303,7 +303,7 @@ services:
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     privileged: true
     volumes:
       - /:/rootfs:ro
@@ -315,13 +315,13 @@ services:
   grafana:
     image: grafana/grafana-oss:11.5.2
     restart: unless-stopped
-    logging: *dokscp-logging
+    logging: *stackpilot-logging
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_SERVER_ROOT_URL=${GRAFANA_PUBLIC_URL:-http://${DOKSCP_DOMAIN:?Set DOKSCP_DOMAIN in .env}:${DOKSCP_HTTP_PORT:-8081}/grafana}/
+      - GF_SERVER_ROOT_URL=${GRAFANA_PUBLIC_URL:-http://${STACKPILOT_DOMAIN:?Set STACKPILOT_DOMAIN in .env}:${STACKPILOT_HTTP_PORT:-8081}/grafana}/
       - GF_SERVER_SERVE_FROM_SUB_PATH=true
     volumes:
       - grafana_data:/var/lib/grafana

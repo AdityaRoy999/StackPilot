@@ -19,7 +19,7 @@
 #include <iomanip>
 #include <sstream>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -37,7 +37,7 @@ drogon::HttpResponsePtr corsOptions() {
     resp->setStatusCode(drogon::k204NoContent);
     resp->addHeader("Access-Control-Allow-Origin", getCorsOrigin());
     resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-DOKSCP-CSRF, X-DOKSCP-MCP");
+    resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-stackpilot-CSRF, X-stackpilot-MCP");
     resp->addHeader("Access-Control-Allow-Credentials", "true");
     resp->addHeader("Access-Control-Max-Age", "86400");
     return resp;
@@ -48,14 +48,14 @@ void setCors(const drogon::HttpResponsePtr& resp) {
     resp->addHeader("Access-Control-Allow-Credentials", "true");
 }
 
-// Generate a secure random token: dokscp_mcp_<40hex>
+// Generate a secure random token: STACKPILOT_mcp_<40hex>
 std::string generateMcpToken() {
     unsigned char bytes[20]; // 40 hex chars
     if (RAND_bytes(bytes, sizeof(bytes)) != 1) {
         throw std::runtime_error("Failed to generate secure random MCP token");
     }
     std::ostringstream out;
-    out << "dokscp_mcp_" << std::hex << std::setfill('0');
+    out << "STACKPILOT_mcp_" << std::hex << std::setfill('0');
     for (int i = 0; i < 20; ++i) {
         out << std::setw(2) << static_cast<int>(bytes[i]);
     }
@@ -112,7 +112,7 @@ std::string McpController::extractMcpUserId(const drogon::HttpRequestPtr& req) {
     }
 
     std::string token = authHeader.substr(7);
-    if (token.rfind("dokscp_mcp_", 0) != 0) {
+    if (token.rfind("STACKPILOT_mcp_", 0) != 0) {
         return "";  // Not an MCP token, might be a JWT
     }
 
@@ -183,7 +183,7 @@ void McpController::createToken(
         // Generate token
         std::string rawToken = generateMcpToken();
         std::string tokenHash = sha256Hex(rawToken);
-        std::string tokenPrefix = rawToken.substr(0, 12); // "dokscp_mcp_xxx"
+        std::string tokenPrefix = rawToken.substr(0, 12); // "STACKPILOT_mcp_xxx"
 
         auto& db = Database::getInstance();
         auto conn = db.getConnection();
@@ -392,4 +392,4 @@ void McpController::verifyToken(
     callback(resp);
 }
 
-} // namespace dokscp
+} // namespace stackpilot

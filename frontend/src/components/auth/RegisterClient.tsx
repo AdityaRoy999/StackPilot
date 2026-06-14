@@ -84,7 +84,7 @@ export function RegisterClient({
           Create an Account
         </CardTitle>
         <CardDescription className="text-center">
-          Join the DOKSCP Platform
+          Join the StackPilot Platform
         </CardDescription>
       </CardHeader>
       <div className="px-6">

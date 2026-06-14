@@ -54,7 +54,7 @@
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "expr": "sum(dokscp_running_runtimes_total)",
+          "expr": "sum(STACKPILOT_running_runtimes_total)",
           "legendFormat": "Running runtimes",
           "refId": "A"
         }
@@ -112,7 +112,7 @@
       "pluginVersion": "11.5.2",
       "targets": [
         {
-          "expr": "sum by (status) (dokscp_deployments_total)",
+          "expr": "sum by (status) (STACKPILOT_deployments_total)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -145,7 +145,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (status) (dokscp_deployment_jobs_total)",
+          "expr": "sum by (status) (STACKPILOT_deployment_jobs_total)",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -177,18 +177,18 @@
       },
       "targets": [
         {
-          "expr": "{compose_project=~\".*dokscp.*\"}",
+          "expr": "{compose_project=~\".*StackPilot.*\"}",
           "refId": "A"
         }
       ],
-      "title": "DOKSCP Service Logs",
+      "title": "StackPilot Service Logs",
       "type": "logs"
     }
   ],
   "refresh": "10s",
   "schemaVersion": 40,
   "tags": [
-    "dokscp",
+    "StackPilot",
     "observability"
   ],
   "templating": {
@@ -200,8 +200,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "DOKSCP Platform Observability",
-  "uid": "dokscp-platform-observability",
+  "title": "StackPilot Platform Observability",
+  "uid": "stackpilot-platform-observability",
   "version": 1,
   "weekStart": ""
 }

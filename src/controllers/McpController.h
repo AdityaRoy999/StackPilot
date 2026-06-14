@@ -14,7 +14,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class McpController : public drogon::HttpController<McpController> {
 public:
@@ -50,4 +50,4 @@ private:
     std::string extractMcpUserId(const drogon::HttpRequestPtr& req);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

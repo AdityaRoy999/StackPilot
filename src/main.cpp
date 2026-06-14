@@ -30,6 +30,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 #include <pqxx/pqxx>
@@ -135,7 +136,7 @@ std::string portFromDockerPortOutput(const std::string& output) {
 
 void reconcileLocalDockerRuntimeUrls() {
     try {
-        auto conn = dokscp::Database::getInstance().getConnection();
+        auto conn = stackpilot::Database::getInstance().getConnection();
         pqxx::work txn(*conn);
         auto rows = txn.exec(
             "SELECT id, remote_container_name, runtime_url "
@@ -198,7 +199,7 @@ void reconcileLocalDockerRuntimeUrls() {
 }
 
 bool isProductionEnv() {
-    const std::string env = getEnvOrDefault("DOKSCP_ENV", getEnvOrDefault("NODE_ENV", "development"));
+    const std::string env = getEnvOrDefault("STACKPILOT_ENV", getEnvOrDefault("NODE_ENV", "development"));
     return env == "production";
 }
 
@@ -234,8 +235,8 @@ bool hasAuthCookie(const drogon::HttpRequestPtr& req) {
 }
 
 bool hasCsrfHeader(const drogon::HttpRequestPtr& req) {
-    const std::string header = req->getHeader("X-DOKSCP-CSRF");
-    const std::string mcpHeader = req->getHeader("X-DOKSCP-MCP");
+    const std::string header = req->getHeader("X-stackpilot-CSRF");
+    const std::string mcpHeader = req->getHeader("X-stackpilot-MCP");
     return header == "1" || header == "true" || mcpHeader == "1" || mcpHeader == "true";
 }
 
@@ -333,7 +334,7 @@ void validateProductionConfiguration(const std::string& jwtSecret,
         tokenKey.find("local-development") != std::string::npos) {
         errors.push_back("JWT_SECRET and TOKEN_ENCRYPTION_KEY must be replaced with high-entropy production secrets");
     }
-    if (getEnvOrDefault("DB_PASSWORD", "").find("dokscp_secret") != std::string::npos) {
+    if (getEnvOrDefault("DB_PASSWORD", "").find("STACKPILOT_secret") != std::string::npos) {
         errors.push_back("DB_PASSWORD must be changed from the local default in production");
     }
 
@@ -361,7 +362,7 @@ int main() {
     // ─── Step 1: Setup logging ──────────────────────────────
     // spdlog is a fast C++ logging library
     // "info" level means we see INFO, WARN, ERROR (not DEBUG)
-    auto console = spdlog::stdout_color_mt("dokscp");
+    auto console = spdlog::stdout_color_mt("StackPilot");
     spdlog::set_default_logger(console);
     spdlog::set_level(spdlog::level::info);
     const std::string frontendPublicUrl = getEnvOrDefault("FRONTEND_PUBLIC_URL", "http://localhost:3000");
@@ -369,7 +370,7 @@ int main() {
     const std::vector<std::string> allowedOriginsForValidation = splitCsv(
         getEnvOrDefault("CORS_ALLOWED_ORIGIN", frontendPublicUrl)
     );
-    const bool requireHttpsForValidation = getEnvBoolOrDefault("DOKSCP_REQUIRE_HTTPS", isProductionEnv());
+    const bool requireHttpsForValidation = getEnvBoolOrDefault("STACKPILOT_REQUIRE_HTTPS", isProductionEnv());
     try {
         validateProductionConfiguration(
             jwtSecret,
@@ -384,22 +385,41 @@ int main() {
         return 1;
     }
     spdlog::info("===========================================");
-    spdlog::info("  DOKSCP Platform — Starting up...");
+    spdlog::info("  StackPilot Platform — Starting up...");
     spdlog::info("===========================================");
 
     // ─── Step 2: Initialize database connection ─────────────
     // We connect to PostgreSQL before starting the HTTP server
     // so that all controllers can use the DB immediately
     try {
-        auto& db = dokscp::Database::getInstance();
-        db.initialize(
-            getEnvOrDefault("DB_HOST", "localhost"),
-            getEnvIntOrDefault("DB_PORT", 5433),
-            getEnvOrDefault("DB_NAME", "dokscp_platform"),
-            getEnvOrDefault("DB_USER", "dokscp_admin"),
-            getEnvOrDefault("DB_PASSWORD", "")
-        );
-        spdlog::info("Database connection initialized successfully");
+        auto& db = stackpilot::Database::getInstance();
+        const int dbConnectAttempts = std::max(1, getEnvIntOrDefault("STACKPILOT_DB_CONNECT_ATTEMPTS", 20));
+        const int dbRetrySeconds = std::max(1, getEnvIntOrDefault("STACKPILOT_DB_CONNECT_RETRY_SECONDS", 3));
+        for (int attempt = 1; attempt <= dbConnectAttempts; ++attempt) {
+            try {
+                db.initialize(
+                    getEnvOrDefault("DB_HOST", "localhost"),
+                    getEnvIntOrDefault("DB_PORT", 5433),
+                    getEnvOrDefault("DB_NAME", "stackpilot_platform"),
+                    getEnvOrDefault("DB_USER", "stackpilot_admin"),
+                    getEnvOrDefault("DB_PASSWORD", "")
+                );
+                spdlog::info("Database connection initialized successfully");
+                break;
+            } catch (const std::exception& e) {
+                if (attempt >= dbConnectAttempts) {
+                    throw;
+                }
+                spdlog::warn(
+                    "Database connection attempt {}/{} failed: {}. Retrying in {}s...",
+                    attempt,
+                    dbConnectAttempts,
+                    e.what(),
+                    dbRetrySeconds
+                );
+                std::this_thread::sleep_for(std::chrono::seconds(dbRetrySeconds));
+            }
+        }
 
         // ─── Step 2.5: Run migrations ───────────────────────────
         const char* migrationsPath = std::getenv("MIGRATIONS_PATH");
@@ -434,7 +454,7 @@ int main() {
     // using the METHOD_LIST macros. You don't need to manually
     // register routes — just define controllers and they work.
 
-    dokscp::JobQueueService::getInstance().start();
+    stackpilot::JobQueueService::getInstance().start();
 
     auto& app = drogon::app();
     const std::vector<std::string> allowedOrigins = splitCsv(
@@ -442,9 +462,9 @@ int main() {
     );
     const std::string backendPublicUrl = getEnvOrDefault("BACKEND_PUBLIC_URL", "http://localhost:8090");
     const bool backendUsesHttps = startsWith(backendPublicUrl, "https://");
-    const bool requireHttps = getEnvBoolOrDefault("DOKSCP_REQUIRE_HTTPS", isProductionEnv());
-    const bool trustProxyHeaders = getEnvBoolOrDefault("DOKSCP_TRUST_PROXY_HEADERS", isProductionEnv());
-    const int apiRateLimitPerMinute = getEnvIntOrDefault("DOKSCP_API_RATE_LIMIT_PER_MINUTE", isProductionEnv() ? 240 : 0);
+    const bool requireHttps = getEnvBoolOrDefault("STACKPILOT_REQUIRE_HTTPS", isProductionEnv());
+    const bool trustProxyHeaders = getEnvBoolOrDefault("STACKPILOT_TRUST_PROXY_HEADERS", isProductionEnv());
+    const int apiRateLimitPerMinute = getEnvIntOrDefault("STACKPILOT_API_RATE_LIMIT_PER_MINUTE", isProductionEnv() ? 240 : 0);
 
     // Load config from file
     app.loadConfigFile("config.json");
@@ -462,7 +482,7 @@ int main() {
                 resp->addHeader("Access-Control-Allow-Origin", corsOrigin);
                 resp->addHeader("Access-Control-Allow-Credentials", "true");
                 resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-DOKSCP-CSRF, X-DOKSCP-MCP, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery");
+                resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-stackpilot-CSRF, X-stackpilot-MCP, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery");
                 resp->addHeader("Access-Control-Max-Age", "86400");
                 callback(resp);
                 return;
@@ -516,7 +536,7 @@ int main() {
             resp->addHeader("Access-Control-Allow-Origin", chooseCorsOrigin(req, allowedOrigins));
             resp->addHeader("Access-Control-Allow-Credentials", "true");
             resp->addHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-DOKSCP-CSRF, X-DOKSCP-MCP, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery");
+            resp->addHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-stackpilot-CSRF, X-stackpilot-MCP, X-Hub-Signature-256, X-GitHub-Event, X-GitHub-Delivery");
             resp->addHeader("Vary", "Origin");
             resp->addHeader("X-Content-Type-Options", "nosniff");
             resp->addHeader("X-Frame-Options", "DENY");

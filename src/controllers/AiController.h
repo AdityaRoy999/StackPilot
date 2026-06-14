@@ -2,7 +2,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class AiController : public drogon::HttpController<AiController> {
 public:
@@ -67,4 +67,4 @@ private:
     std::string extractUserId(const drogon::HttpRequestPtr& req) const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot

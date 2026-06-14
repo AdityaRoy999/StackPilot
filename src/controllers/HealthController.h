@@ -6,7 +6,7 @@
 
 #include <drogon/HttpController.h>
 
-namespace dokscp {
+namespace stackpilot {
 
 class HealthController : public drogon::HttpController<HealthController> {
 public:
@@ -80,4 +80,4 @@ private:
     std::string extractUserId(const drogon::HttpRequestPtr& req);
 };
 
-} // namespace dokscp
+} // namespace stackpilot

@@ -37,8 +37,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface BaseResource {
-  managed_by_dokscp: boolean;
-  claimed_by_dokscp: boolean;
+  managed_by_stackpilot: boolean;
+  claimed_by_StackPilot: boolean;
   claim_id: string;
   ownership_state: string;
   provider_type: "docker" | "kubernetes";
@@ -326,7 +326,7 @@ function shortText(value: string, max = 22) {
 }
 
 function resourceDisplayName(resource?: GraphResource) {
-  if (!resource) return "DOKSCP Cluster";
+  if (!resource) return "StackPilot Cluster";
   if ("namespace" in resource && resource.namespace) return `${resource.namespace}/${resource.name}`;
   return resource.name;
 }
@@ -467,7 +467,7 @@ export function ClusterVisualization() {
     const nodes: GraphNode[] = [{
       id: "cluster",
       kind: "cluster",
-      label: "DOKSCP Cluster",
+      label: "StackPilot Cluster",
       sublabel: inventory?.kubernetes.available ? "Kubernetes reachable" : "Topology view",
       status: inventory?.kubernetes.available ? "ready" : "observed",
       x: 820,
@@ -904,7 +904,7 @@ export function ClusterVisualization() {
         command: "generate_yaml",
         model_mode: "fast",
         message:
-          "Generate Kubernetes YAML for the selected resource using the supplied DOKSCP cluster context. " +
+          "Generate Kubernetes YAML for the selected resource using the supplied StackPilot cluster context. " +
           "Return only valid Kubernetes YAML. Do not wrap it in markdown fences. Preserve namespace and object identity unless the user clearly needs a replacement.",
         runtime: {
           selected_resource: resource,
@@ -982,7 +982,7 @@ export function ClusterVisualization() {
   }, [dockerStatsByName, nodeMetricsByName, selectedResource, summary]);
 
   const canUseYaml = selectedResource?.provider_type === "kubernetes";
-  const canApplyYaml = Boolean(canUseYaml && selectedResource?.claimed_by_dokscp && yamlDraft.trim());
+  const canApplyYaml = Boolean(canUseYaml && selectedResource?.claimed_by_StackPilot && yamlDraft.trim());
 
   return (
     <div className="space-y-6">
@@ -1003,7 +1003,7 @@ export function ClusterVisualization() {
               <SelectValue placeholder="Select infrastructure target" />
             </SelectTrigger>
             <SelectContent align="end" className="min-w-[280px]">
-              <SelectItem value="local">Local DOKSCP host</SelectItem>
+              <SelectItem value="local">Local StackPilot host</SelectItem>
               {(connectionsQuery.data || []).map((connection) => (
                 <SelectItem key={connection.id} value={connection.id}>
                   {connection.name} - {connection.username}@{connection.host}:{connection.port}
@@ -1105,14 +1105,14 @@ export function ClusterVisualization() {
           <CardContent className="max-h-[calc(100vh-12rem)] space-y-4 overflow-auto p-4">
             <div className="rounded-xl border border-border bg-muted/20 p-4">
               <div className="min-w-0">
-                <div className="truncate text-lg font-semibold text-foreground">{selectedNode?.label || "DOKSCP Cluster"}</div>
+                <div className="truncate text-lg font-semibold text-foreground">{selectedNode?.label || "StackPilot Cluster"}</div>
                 <div className="mt-1 truncate text-sm text-muted-foreground">
-                  {selectedResource ? resourceSubtitle(selectedResource) : "DOKSCP topology overview"}
+                  {selectedResource ? resourceSubtitle(selectedResource) : "StackPilot topology overview"}
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Badge variant={selectedResource?.claimed_by_dokscp ? "default" : "outline"}>
-                  {selectedResource?.claimed_by_dokscp ? "claimed" : selectedResource ? "observed" : "system"}
+                <Badge variant={selectedResource?.claimed_by_StackPilot ? "default" : "outline"}>
+                  {selectedResource?.claimed_by_StackPilot ? "claimed" : selectedResource ? "observed" : "system"}
                 </Badge>
                 <span className={cn("text-sm font-medium", statusTone(selectedNode?.status || ""))}>
                   {selectedNode?.status || "ready"}
@@ -1132,9 +1132,9 @@ export function ClusterVisualization() {
             <div className="flex flex-wrap gap-2">
               <Link href={selectedMonitorHref} className={buttonVariants({ variant: "outline", size: "sm" })}>
                 <Network className="h-4 w-4" />
-                {selectedResource && !selectedResource.claimed_by_dokscp ? "Claim resource" : "Open monitor"}
+                {selectedResource && !selectedResource.claimed_by_StackPilot ? "Claim resource" : "Open monitor"}
               </Link>
-              {selectedResource?.claimed_by_dokscp ? (
+              {selectedResource?.claimed_by_StackPilot ? (
                 <Button size="sm" variant="outline" onClick={() => inspectMutation.mutate(selectedResource)} disabled={inspectMutation.isPending}>
                   {inspectMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
                   Inspect
@@ -1152,7 +1152,7 @@ export function ClusterVisualization() {
                   Generate YAML
                 </Button>
               ) : null}
-              {selectedResource?.claimed_by_dokscp && selectedResource.resource_type === "deployment" ? (
+              {selectedResource?.claimed_by_StackPilot && selectedResource.resource_type === "deployment" ? (
                 <Button size="sm" variant="outline" onClick={() => restartMutation.mutate(selectedResource)} disabled={restartMutation.isPending}>
                   {restartMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
                   Restart
@@ -1160,7 +1160,7 @@ export function ClusterVisualization() {
               ) : null}
             </div>
 
-            {selectedResource?.claimed_by_dokscp && selectedResource.resource_type === "deployment" ? (
+            {selectedResource?.claimed_by_StackPilot && selectedResource.resource_type === "deployment" ? (
               <div className="rounded-lg border border-border bg-muted/15 p-3">
                 <Label htmlFor="visualization-replicas" className="text-xs">Replicas</Label>
                 <div className="mt-2 flex gap-2">
@@ -1176,7 +1176,7 @@ export function ClusterVisualization() {
               </div>
             ) : null}
 
-            {selectedResource?.claimed_by_dokscp && selectedResource.resource_type === "node" ? (
+            {selectedResource?.claimed_by_StackPilot && selectedResource.resource_type === "node" ? (
               <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
                 <Button size="sm" variant="outline" onClick={() => nodeControlMutation.mutate({ resource: selectedResource as KubernetesNode, action: "node_describe" })}>Describe</Button>
                 <Button size="sm" variant="outline" onClick={() => nodeControlMutation.mutate({ resource: selectedResource as KubernetesNode, action: "cordon_node", dryRun: true })}>Dry-run cordon</Button>
@@ -1185,7 +1185,7 @@ export function ClusterVisualization() {
               </div>
             ) : null}
 
-            {selectedResource?.claimed_by_dokscp && selectedResource.provider_type === "docker" && selectedResource.resource_type === "container" ? (
+            {selectedResource?.claimed_by_StackPilot && selectedResource.provider_type === "docker" && selectedResource.resource_type === "container" ? (
               <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
                 <Button size="sm" variant="outline" onClick={() => dockerStateMutation.mutate({ resource: selectedResource as DockerContainer, action: "start" })}>Start</Button>
                 <Button size="sm" variant="outline" onClick={() => dockerStateMutation.mutate({ resource: selectedResource as DockerContainer, action: "stop" })}>

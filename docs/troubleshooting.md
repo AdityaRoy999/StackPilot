@@ -5,7 +5,7 @@
 Check environment:
 
 ```bash
-docker logs dokscp-backend
+docker logs stackpilot-backend
 docker compose config
 ```
 
@@ -26,16 +26,16 @@ GitHub no longer supports password authentication for Git operations. Use a conn
 Run:
 
 ```bash
-dokscp_health
-dokscp_verify_auth
-dokscp_inspect_local_project
+STACKPILOT_health
+STACKPILOT_verify_auth
+STACKPILOT_inspect_local_project
 ```
 
 Check:
 
-- `DOKSCP_MCP_TOKEN` is set.
-- `DOKSCP_API_URL` points to `/api/v1`.
-- `DOKSCP_PROJECT_PATH` points to the actual project.
+- `STACKPILOT_MCP_TOKEN` is set.
+- `STACKPILOT_API_URL` points to `/api/v1`.
+- `STACKPILOT_PROJECT_PATH` points to the actual project.
 - The backend can write `SOURCE_ARTIFACT_DIR`.
 - Remote host name matches a saved SSH connection.
 

@@ -16,7 +16,7 @@
 #include <sys/wait.h>
 #include <unordered_set>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -58,8 +58,8 @@ bool hasFile(const std::filesystem::path& dir, const std::string& name) {
 
 std::filesystem::path findComposeFile(const std::filesystem::path& dir) {
     const std::vector<std::string> candidates = {
-        "docker-compose.dokscp.yml",
-        "docker-compose.dokscp.yaml",
+        "docker-compose.StackPilot.yml",
+        "docker-compose.StackPilot.yaml",
         "docker-compose.prod.yml",
         "docker-compose.prod.yaml",
         "compose.prod.yml",
@@ -254,9 +254,9 @@ if [ "$compose_up_exit" -ne 0 ]; then
     rewrite_conflicting_application_ports || true
     http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
     https_port=$(choose_port 8443 9443 10443 4443)
-    write_env_value DOKSCP_HTTP_PORT "$http_port"
-    write_env_value DOKSCP_HTTPS_PORT "$https_port"
-    echo "Host port conflict detected; retrying Compose with DOKSCP_HTTP_PORT=$http_port and DOKSCP_HTTPS_PORT=$https_port"
+    write_env_value STACKPILOT_HTTP_PORT "$http_port"
+    write_env_value STACKPILOT_HTTPS_PORT "$https_port"
+    echo "Host port conflict detected; retrying Compose with STACKPILOT_HTTP_PORT=$http_port and STACKPILOT_HTTPS_PORT=$https_port"
     $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
   else
     exit "$compose_up_exit"
@@ -1020,7 +1020,7 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
                                                     const std::vector<BuildEnvVar>& envVars,
                                                     LogCallback onLogLine) const {
     BuildResult result;
-    const std::string imageName = "dokscp/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string imageName = "StackPilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
     std::string projectSlug = sanitizeName(projectName);
     if (projectSlug.size() > 32) {
         projectSlug.resize(32);
@@ -1031,7 +1031,7 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     if (projectSlug.empty()) {
         projectSlug = "project";
     }
-    const std::string containerName = "dokscp-" + projectSlug + "-" + sanitizeName(deploymentId).substr(0, 8);
+    const std::string containerName = "stackpilot-" + projectSlug + "-" + sanitizeName(deploymentId).substr(0, 8);
 
     std::vector<std::pair<std::string, std::string>> sshEnvVars;
     for (const auto& envVar : envVars) {
@@ -1062,21 +1062,21 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     result.remoteContainerName = containerName;
     result.runtimeProvider = "remote_docker";
 
-    const std::string remoteComposeProject = markerValue(remoteResult.output, "__DOKSCP_REMOTE_COMPOSE_PROJECT__");
+    const std::string remoteComposeProject = markerValue(remoteResult.output, "__STACKPILOT_REMOTE_COMPOSE_PROJECT__");
     if (!remoteComposeProject.empty()) {
         result.composeProject = true;
         result.composeProjectName = remoteComposeProject;
-        result.composeFile = markerValue(remoteResult.output, "__DOKSCP_REMOTE_COMPOSE_FILE__");
-        result.composeServices = markerValue(remoteResult.output, "__DOKSCP_REMOTE_COMPOSE_SERVICES__");
+        result.composeFile = markerValue(remoteResult.output, "__STACKPILOT_REMOTE_COMPOSE_FILE__");
+        result.composeServices = markerValue(remoteResult.output, "__STACKPILOT_REMOTE_COMPOSE_SERVICES__");
         result.composeWorkdir = remotePath;
         result.imageName = "compose:" + remoteComposeProject;
         result.remoteContainerName = remoteComposeProject;
         result.runtimeProvider = "remote_compose";
-        result.runtimeUrl = markerValue(remoteResult.output, "__DOKSCP_REMOTE_URL__");
+        result.runtimeUrl = markerValue(remoteResult.output, "__STACKPILOT_REMOTE_URL__");
     }
 
     if (!remoteResult.success) {
-        if (remoteResult.output.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos) {
+        if (remoteResult.output.find("__STACKPILOT_COMPOSE_MISSING__") != std::string::npos) {
             result.error = "Docker Compose is not installed on the remote host";
         } else {
             result.error = remoteResult.error.empty() ? "Remote Docker execution failed" : remoteResult.error;
@@ -1093,8 +1093,8 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     std::istringstream stream(remoteResult.output);
     std::string line;
     while (std::getline(stream, line)) {
-        if (line.rfind("__DOKSCP_REMOTE_PORT__=", 0) == 0) {
-            publishedPort = line.substr(std::string("__DOKSCP_REMOTE_PORT__=").size());
+        if (line.rfind("__STACKPILOT_REMOTE_PORT__=", 0) == 0) {
+            publishedPort = line.substr(std::string("__STACKPILOT_REMOTE_PORT__=").size());
         }
     }
 
@@ -1128,7 +1128,7 @@ BuildResult BuildService::buildArtifactAndRunOnRemoteDocker(const std::string& d
 
     const std::string safeDeployment = sanitizeName(deploymentId);
     const std::string baseWorkspace = remoteWorkspacePath.empty() ? "/tmp" : remoteWorkspacePath;
-    const std::string remoteBase = baseWorkspace + "/dokscp-builds/" + safeDeployment;
+    const std::string remoteBase = baseWorkspace + "/stackpilot-builds/" + safeDeployment;
     const std::string remoteArchive = remoteBase + "/source.tar";
     const std::string remoteSourcePath = remoteBase + "/source";
 
@@ -1177,9 +1177,9 @@ BuildResult BuildService::buildArtifactAndRunOnRemoteDocker(const std::string& d
         "set -e; mkdir -p " + shellQuote(remoteSourcePath) +
         " && tar --no-same-owner --no-same-permissions --delay-directory-restore -xf " +
         shellQuote(remoteArchive) + " -C " + shellQuote(remoteSourcePath) +
-        " && echo __DOKSCP_ARTIFACT_EXTRACTED__";
+        " && echo __STACKPILOT_ARTIFACT_EXTRACTED__";
     auto extractResult = sshService.runRemoteCommand(sshConfig, "/", extractCommand, 120);
-    if (!extractResult.success || extractResult.output.find("__DOKSCP_ARTIFACT_EXTRACTED__") == std::string::npos) {
+    if (!extractResult.success || extractResult.output.find("__STACKPILOT_ARTIFACT_EXTRACTED__") == std::string::npos) {
         result.error = extractResult.error.empty() ? "Unable to extract source artifact on remote host" : extractResult.error;
         result.logs = extractResult.output;
         if (onLogLine) onLogLine(result.error);
@@ -1283,7 +1283,7 @@ BuildResult BuildService::buildRepositoryAndRunOnRemoteDocker(const std::string&
 
     const std::string safeDeployment = sanitizeName(deploymentId);
     const std::string baseWorkspace = remoteWorkspacePath.empty() ? "/tmp" : remoteWorkspacePath;
-    const std::string remoteBase = baseWorkspace + "/dokscp-builds/" + safeDeployment;
+    const std::string remoteBase = baseWorkspace + "/stackpilot-builds/" + safeDeployment;
     const std::string remoteSourcePath = remoteBase + "/source";
 
     if (onLogLine) {
@@ -1382,7 +1382,7 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         if (composeProjectSuffix.empty()) {
             composeProjectSuffix = "deployment";
         }
-        const std::string composeProject = "dokscp-" + composeProjectSuffix;
+        const std::string composeProject = "stackpilot-" + composeProjectSuffix;
         appendLogLine(logFile, "Detected Docker Compose project: " + composeFile, onLogLine);
         appendLogLine(logFile, "Starting Compose build and runtime stack: " + composeProject, onLogLine);
 
@@ -1393,31 +1393,31 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             "compose_cmd='docker compose'; "
             "if ! docker compose version >/dev/null 2>&1; then "
             "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
-            "  else echo __DOKSCP_COMPOSE_MISSING__; exit 20; fi; "
+            "  else echo __STACKPILOT_COMPOSE_MISSING__; exit 20; fi; "
             "fi; "
-            "compose_parallel_limit=$(sed -n 's/^DOKSCP_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "compose_parallel_limit=$(sed -n 's/^STACKPILOT_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
             "[ -n \"$compose_parallel_limit\" ] || compose_parallel_limit=1; "
             "export COMPOSE_PARALLEL_LIMIT=\"$compose_parallel_limit\"; "
-            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " config --services > .dokscp-compose-services; "
-            "services=$(paste -sd, .dokscp-compose-services 2>/dev/null || true); "
-            "echo __DOKSCP_COMPOSE_PROJECT__=" + composeProject + "; "
-            "echo __DOKSCP_COMPOSE_FILE__=" + composeFile + "; "
-            "echo __DOKSCP_COMPOSE_SERVICES__=$services; "
+            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " config --services > .stackpilot-compose-services; "
+            "services=$(paste -sd, .stackpilot-compose-services 2>/dev/null || true); "
+            "echo __STACKPILOT_COMPOSE_PROJECT__=" + composeProject + "; "
+            "echo __STACKPILOT_COMPOSE_FILE__=" + composeFile + "; "
+            "echo __STACKPILOT_COMPOSE_SERVICES__=$services; "
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " pull --ignore-pull-failures || true; "
             + composePortFallbackShell(quotedComposeFile, quotedProject) +
             "runtime=''; "
-            "domain=$(sed -n 's/^DOKSCP_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "https_port=$(sed -n 's/^DOKSCP_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
             "if [ -n \"$domain\" ]; then if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; fi; "
             "if [ -z \"$runtime\" ]; then "
-            "  for svc in $(cat .dokscp-compose-services 2>/dev/null); do "
+            "  for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
             "    for port in 80 443 3000 8080 8000 5000 5173 15672 9001 8222 9090 3100 5432 3306 6379 27017 5672 9000 4222; do "
             "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
             "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
             "    done; "
             "  done; "
             "fi; "
-            "echo __DOKSCP_COMPOSE_URL__=$runtime; "
+            "echo __STACKPILOT_COMPOSE_URL__=$runtime; "
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " ps";
 
         const int composeExit = runCommandCapture(
@@ -1433,15 +1433,15 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         result.composeProjectName = composeProject;
         result.composeFile = composeFile;
         result.composeWorkdir = sourceDir.string();
-        result.composeServices = markerValue(result.logs, "__DOKSCP_COMPOSE_SERVICES__");
-        result.runtimeUrl = markerValue(result.logs, "__DOKSCP_COMPOSE_URL__");
+        result.composeServices = markerValue(result.logs, "__STACKPILOT_COMPOSE_SERVICES__");
+        result.runtimeUrl = markerValue(result.logs, "__STACKPILOT_COMPOSE_URL__");
         result.runtimeProvider = "local_compose";
         result.remoteContainerName = composeProject;
         result.imageName = "compose:" + composeProject;
 
         if (composeExit != 0) {
-            result.error = result.logs.find("__DOKSCP_COMPOSE_MISSING__") != std::string::npos
-                ? "Docker Compose is not available to the DOKSCP backend"
+            result.error = result.logs.find("__STACKPILOT_COMPOSE_MISSING__") != std::string::npos
+                ? "Docker Compose is not available to the StackPilot backend"
                 : (composeExit == 124 ? "Docker Compose deploy timed out" : "Docker Compose deploy failed");
             appendLogLine(logFile, result.error, onLogLine);
             result.logs = readFileBounded(logFile);
@@ -1464,13 +1464,13 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         return result;
     }
 
-    const std::string imageName = "dokscp/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string imageName = "StackPilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
     const std::string buildParallel = [] {
-        const char* value = std::getenv("DOKSCP_BACKEND_BUILD_PARALLELISM");
+        const char* value = std::getenv("STACKPILOT_BACKEND_BUILD_PARALLELISM");
         return (value && *value) ? std::string(value) : std::string("1");
     }();
     const std::string buildCmd = "docker build --pull=false --memory \"" + dockerMemoryLimit_ +
-                                 "\" --build-arg DOKSCP_BACKEND_BUILD_PARALLELISM=" +
+                                 "\" --build-arg STACKPILOT_BACKEND_BUILD_PARALLELISM=" +
                                  shellQuote(buildParallel) + " -t \"" + imageName +
                                  "\" \"" + sourceDir.string() + "\"";
 
@@ -1713,7 +1713,7 @@ bool BuildService::validateTarArchive(const std::filesystem::path& archivePath,
     }
 
     const auto tempBase = std::filesystem::temp_directory_path() /
-        ("dokscp-tar-check-" + sanitizeName(archivePath.filename().string()) + "-" + std::to_string(std::rand()));
+        ("stackpilot-tar-check-" + sanitizeName(archivePath.filename().string()) + "-" + std::to_string(std::rand()));
     const auto namesFile = tempBase.string() + ".names";
     const auto verboseFile = tempBase.string() + ".verbose";
 
@@ -1866,13 +1866,13 @@ bool BuildService::tryGenerateDockerfileWithAi(const std::filesystem::path& sour
                                                const std::filesystem::path& logFile,
                                                std::string& reason,
                                                LogCallback onLogLine) const {
-    if (!envFlag("DOKSCP_AI_DOCKERFILE_ENABLED", true)) {
+    if (!envFlag("STACKPILOT_AI_DOCKERFILE_ENABLED", true)) {
         reason = "AI Dockerfile generation is disabled";
         return false;
     }
 
     Json::Value payload(Json::objectValue);
-    payload["provider"] = std::getenv("DOKSCP_AI_PROVIDER") ? std::getenv("DOKSCP_AI_PROVIDER") : "nvidia_nim";
+    payload["provider"] = std::getenv("STACKPILOT_AI_PROVIDER") ? std::getenv("STACKPILOT_AI_PROVIDER") : "nvidia_nim";
     payload["model_mode"] = "thinking";
     payload["workflow_type"] = "generate_dockerfile";
     payload["project"]["name"] = sourceDir.filename().string();
@@ -2051,4 +2051,4 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
     return true;
 }
 
-} // namespace dokscp
+} // namespace stackpilot

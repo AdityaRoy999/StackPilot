@@ -15,7 +15,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -184,4 +184,4 @@ bool TokenCrypto::isConfigured(const std::string& storedValue) {
     return !storedValue.empty();
 }
 
-} // namespace dokscp
+} // namespace stackpilot

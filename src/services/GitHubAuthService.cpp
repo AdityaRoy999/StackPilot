@@ -13,7 +13,7 @@
 #include <memory>
 #include <sstream>
 
-namespace dokscp {
+namespace stackpilot {
 
 namespace {
 
@@ -199,7 +199,7 @@ void GitHubAuthService::exchangeCode(const std::string& code,
     }
     tokenReq->setPath(tokenPath);
     tokenReq->addHeader("Accept", "application/json");
-    tokenReq->addHeader("User-Agent", "DOKSCP-Platform");
+    tokenReq->addHeader("User-Agent", "stackpilot-Platform");
 
     githubClient->sendRequest(
         tokenReq,
@@ -233,7 +233,7 @@ void GitHubAuthService::exchangeCode(const std::string& code,
             userReq->setMethod(drogon::Get);
             userReq->setPath("/user");
             userReq->addHeader("Authorization", "Bearer " + accessToken);
-            userReq->addHeader("User-Agent", "DOKSCP-Platform");
+            userReq->addHeader("User-Agent", "stackpilot-Platform");
             userReq->addHeader("Accept", "application/vnd.github+json");
 
             apiClient->sendRequest(
@@ -271,7 +271,7 @@ void GitHubAuthService::exchangeCode(const std::string& code,
                     emailsReq->setMethod(drogon::Get);
                     emailsReq->setPath("/user/emails");
                     emailsReq->addHeader("Authorization", "Bearer " + identity->accessToken);
-                    emailsReq->addHeader("User-Agent", "DOKSCP-Platform");
+                    emailsReq->addHeader("User-Agent", "stackpilot-Platform");
                     emailsReq->addHeader("Accept", "application/vnd.github+json");
 
                     apiClient->sendRequest(
@@ -300,4 +300,4 @@ void GitHubAuthService::exchangeCode(const std::string& code,
     );
 }
 
-} // namespace dokscp
+} // namespace stackpilot

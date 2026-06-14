@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace dokscp {
+namespace stackpilot {
 
 struct AiServiceResult {
     bool ok = false;
@@ -26,4 +26,4 @@ private:
     long timeoutSeconds() const;
 };
 
-} // namespace dokscp
+} // namespace stackpilot
