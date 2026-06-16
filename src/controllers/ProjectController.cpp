@@ -86,6 +86,18 @@ std::string toLower(std::string value) {
     return value;
 }
 
+bool looksLikeGeneratedApplicationName(const std::string& name, const std::string& templateId, const std::string& templateName) {
+    const std::string cleaned = trim(name);
+    if (cleaned.empty()) {
+        return true;
+    }
+    const std::string lowered = toLower(cleaned);
+    if (lowered == toLower(templateId) || lowered == toLower(templateName)) {
+        return true;
+    }
+    return lowered.rfind("ai ", 0) == 0 && cleaned.find(" 20") != std::string::npos;
+}
+
 std::string githubFullNameFromUrl(std::string value) {
     value = trim(value);
     if (value.empty()) {
@@ -305,6 +317,13 @@ void normalizeRuntimePreferences(const std::string& executionMode,
         if (executionMode != "remote_host") {
             runtimeScheme = "http";
         }
+        localHttpsEnabled = false;
+        return;
+    }
+
+    if (executionMode != "remote_host") {
+        k8sExposure = "nodeport";
+        runtimeScheme = "http";
         localHttpsEnabled = false;
         return;
     }
@@ -1016,8 +1035,8 @@ void startBackgroundBuild(const std::string& deploymentId,
                 options.projectName = projectName;
                 options.imageName = buildResult.imageName;
                 options.nameSpace = "stackpilot-apps";
-                options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
-                options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
+                options.runtimeScheme = "http";
+                options.exposureMode = "nodeport";
                 options.replicas = 1;
                 options.containerPort = 3000;
                 options.resourcePreset = "small";
@@ -1473,6 +1492,14 @@ void ProjectController::createProject(
             repoUrl.clear();
             githubPat.clear();
             sshConnectionId.clear();
+            if (const auto* tmpl = ApplicationCatalog::findTemplate(applicationTemplateId)) {
+                if (looksLikeGeneratedApplicationName(name, applicationTemplateId, tmpl->name)) {
+                    name = tmpl->name;
+                }
+                if (description.empty()) {
+                    description = tmpl->description;
+                }
+            }
             const auto missingApplicationFields =
                 ApplicationCatalog::missingRequiredFields(applicationTemplateId, (*body)["application_config"]);
             if (!missingApplicationFields.empty()) {

@@ -523,22 +523,32 @@ function randomSecret(prefix = "StackPilot") {
 
 function findApplicationIntent(message: string) {
   const normalized = message.toLowerCase();
+  const template =
+    agentApplicationTemplates.find((candidate) =>
+      candidate.aliases.some((alias) => normalized.includes(alias))
+    ) || null;
+  if (!template) return null;
+
   const explicit =
     normalized.startsWith("/app ") ||
-    normalized.includes(" database") ||
-    /\b(deploy|create|provision|install|run)\b/.test(normalized);
-  if (!explicit) return null;
-  return agentApplicationTemplates.find((template) =>
-    template.aliases.some((alias) => normalized.includes(alias))
-  ) || null;
+    /\b(deploy|create|provision|install|run|launch|spin up|start)\b/.test(normalized);
+  return explicit ? template : null;
 }
 
 function conciseApplicationProjectName(template: AgentApplicationTemplate) {
-  return template.name
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
+  const names: Record<string, string> = {
+    mysql: "MySQL",
+    postgres: "PostgreSQL",
+    redis: "Redis",
+    mongo: "MongoDB",
+    mariadb: "MariaDB",
+    rabbitmq: "RabbitMQ",
+    minio: "MinIO",
+    grafana: "Grafana",
+    prometheus: "Prometheus",
+    adminer: "Adminer",
+  };
+  return names[template.id] || template.name;
 }
 
 export default function AiAgentPage() {
@@ -784,7 +794,7 @@ export default function AiAgentPage() {
       source_path: "",
       execution_mode: "local",
       remote_runtime_type: "docker",
-      remote_k8s_exposure: "ingress",
+      remote_k8s_exposure: "nodeport",
       runtime_scheme: "http",
       local_https_enabled: false,
       env_vars: [],
@@ -894,7 +904,7 @@ export default function AiAgentPage() {
         const port = Number.parseInt(secondArg || "3000", 10) || 3000;
         const res = await api.post(`/deployments/${targetDeploymentId}/kubernetes/deploy`, {
           namespace: "stackpilot-apps",
-          exposure_mode: "ingress",
+          exposure_mode: "nodeport",
           replicas: 1,
           container_port: port,
           resource_preset: "small",
@@ -1009,14 +1019,16 @@ export default function AiAgentPage() {
 
   const isDeployIntent = (text: string) => {
     const normalized = text.toLowerCase();
-    return (
-      /\bdeploy\b/.test(normalized) ||
-      /\bship\b/.test(normalized) ||
-      /\brun\b/.test(normalized) ||
-      /\bcreate\b/.test(normalized) ||
-      /\bprovision\b/.test(normalized) ||
-      /\binstall\b/.test(normalized)
-    );
+    if (findApplicationIntent(text)) return true;
+    if (/\b(what|how|why|can|could|would|should|explain|tell me|help)\b/.test(normalized)) {
+      return false;
+    }
+    const hasActionVerb = /\b(deploy|redeploy|ship|release)\b/.test(normalized);
+    if (!hasActionVerb) return false;
+    if (/\b(this|current|selected|project|deployment|app|application)\b/.test(normalized)) {
+      return Boolean(selectedProject || findProjectForText(text));
+    }
+    return Boolean(findProjectForText(text));
   };
 
   const autonomousDeployMutation = useMutation({

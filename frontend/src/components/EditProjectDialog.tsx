@@ -233,7 +233,6 @@ function EditProjectForm({
   const [runtimeScheme, setRuntimeScheme] = useState<"http" | "https">(
     project.runtime_scheme === "https" ? "https" : "http"
   );
-  const [localHttpsEnabled, setLocalHttpsEnabled] = useState(Boolean(project.local_https_enabled));
   const [remoteBrowsePath, setRemoteBrowsePath] = useState(project.source_path || "");
   const [remoteEntries, setRemoteEntries] = useState<SshBrowseEntry[]>([]);
   const [localBrowsePath, setLocalBrowsePath] = useState(project.source_path || "");
@@ -248,13 +247,7 @@ function EditProjectForm({
   const remoteHttpsAllowed =
     remoteRuntimeType === "docker" || (remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress");
   const effectiveRuntimeScheme =
-    project.execution_mode === "remote_host"
-      ? remoteHttpsAllowed
-        ? runtimeScheme
-        : "http"
-      : localHttpsEnabled
-      ? "https"
-      : "http";
+    project.execution_mode === "remote_host" && remoteHttpsAllowed ? runtimeScheme : "http";
 const segmentedTabsListClass = "grid h-10 w-full grid-cols-2 rounded-xl border border-border bg-muted/30 p-1";
 const segmentedButtonClass =
   "h-8 justify-center rounded-lg border border-transparent px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground";
@@ -444,22 +437,44 @@ const segmentedButtonActiveClass =
               : remoteK8sExposure
             : "nodeport",
         runtime_scheme: effectiveRuntimeScheme,
-        local_https_enabled: project.execution_mode !== "remote_host" && localHttpsEnabled,
+        local_https_enabled: false,
       });
-      const environmentPayloads = displayedEnvironments.map((environment) => ({
-        ...environment,
-        name: environment.name.trim().toLowerCase(),
-        branch: environment.branch.trim(),
-        env_vars: environment.env_vars || [],
-        execution_mode: environment.execution_mode || project.execution_mode || "local",
-        remote_connection_id:
-          environment.execution_mode === "remote_host"
-            ? environment.remote_connection_id || project.remote_connection_id || project.ssh_connection_id || ""
-            : environment.remote_connection_id || "",
-        remote_runtime_type: environment.remote_runtime_type || project.remote_runtime_type || "docker",
-        remote_k8s_exposure: environment.remote_k8s_exposure || project.remote_k8s_exposure || "nodeport",
-        runtime_scheme: environment.runtime_scheme || project.runtime_scheme || "http",
-      }));
+      const environmentPayloads = displayedEnvironments.map((environment) => {
+        const environmentExecutionMode = environment.execution_mode || project.execution_mode || "local";
+        const environmentRuntimeType =
+          environmentExecutionMode === "remote_host"
+            ? environment.remote_runtime_type || project.remote_runtime_type || "docker"
+            : "docker";
+        const requestedK8sExposure =
+          environment.remote_k8s_exposure || project.remote_k8s_exposure || "nodeport";
+        const environmentK8sExposure =
+          environmentExecutionMode === "remote_host" && environmentRuntimeType === "kubernetes"
+            ? requestedK8sExposure === "ingress"
+              ? "ingress"
+              : "nodeport"
+            : "nodeport";
+        const requestedRuntimeScheme = environment.runtime_scheme || project.runtime_scheme || "http";
+        const environmentRuntimeScheme =
+          environmentExecutionMode === "remote_host" &&
+          (environmentRuntimeType === "docker" || environmentK8sExposure === "ingress")
+            ? requestedRuntimeScheme
+            : "http";
+
+        return {
+          ...environment,
+          name: environment.name.trim().toLowerCase(),
+          branch: environment.branch.trim(),
+          env_vars: environment.env_vars || [],
+          execution_mode: environmentExecutionMode,
+          remote_connection_id:
+            environmentExecutionMode === "remote_host"
+              ? environment.remote_connection_id || project.remote_connection_id || project.ssh_connection_id || ""
+              : "",
+          remote_runtime_type: environmentRuntimeType,
+          remote_k8s_exposure: environmentK8sExposure,
+          runtime_scheme: environmentRuntimeScheme,
+        };
+      });
       await Promise.all(
         environmentPayloads.map((environment) =>
           environment.id.startsWith("new-")
@@ -963,32 +978,6 @@ const segmentedButtonActiveClass =
                   NodePort is locked to HTTP. Choose Ingress to use a domain and HTTPS.
                 </div>
               )}
-            </div>
-          )}
-
-          {project.execution_mode !== "remote_host" && (
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Local Dev HTTPS
-              </Label>
-              <div className={segmentedTabsListClass}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={cn(segmentedButtonClass, !localHttpsEnabled && segmentedButtonActiveClass)}
-                  onClick={() => setLocalHttpsEnabled(false)}
-                >
-                  HTTP
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className={cn(segmentedButtonClass, localHttpsEnabled && segmentedButtonActiveClass)}
-                  onClick={() => setLocalHttpsEnabled(true)}
-                >
-                  HTTPS
-                </Button>
-              </div>
             </div>
           )}
 

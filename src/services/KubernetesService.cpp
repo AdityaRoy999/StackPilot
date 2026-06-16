@@ -408,7 +408,7 @@ KubernetesRuntimeInfo KubernetesService::deploy(const KubernetesDeployOptions& o
             << "      labels:\n"
             << "        app: " << result.deploymentName << "\n"
             << "      annotations:\n"
-            << "        StackPilot.io/deployed-at: \"" << deployStamp << "\"\n"
+            << "        stackpilot.io/deployed-at: \"" << deployStamp << "\"\n"
             << "    spec:\n"
             << (!serviceAccountName_.empty() ? "      serviceAccountName: " + serviceAccountName_ + "\n" : "")
             << "      securityContext:\n"
@@ -1156,7 +1156,7 @@ KubernetesRuntimeInfo KubernetesService::removeComposeStack(const std::string& n
         return result;
     }
 
-    const std::string selector = "StackPilot.io/compose-project=" + stackName;
+    const std::string selector = "stackpilot.io/compose-project=" + stackName;
     std::ostringstream logs;
     logs << "[compose-k8s] Removing Kubernetes stack " << stackName << "\n";
 

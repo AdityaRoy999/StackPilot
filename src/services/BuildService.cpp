@@ -227,6 +227,7 @@ rewrite_conflicting_application_ports() {
       app_public_next=$(choose_port "$next_public" 13306 13307 15432 16379 27018 15672 14222 18080 18088 19000 19090 13000 3307 5433 6380 5673 4223 8082 8089 9002 9091 3001)
       if [ -n "$app_public_next" ] && [ "$app_public_next" != "$app_public_port" ]; then
         write_env_value APP_PUBLIC_PORT "$app_public_next"
+        echo "__STACKPILOT_PORT_ADJUSTED__=APP_PUBLIC_PORT:${app_public_port}:${app_public_next}"
         echo "Application port conflict detected; retrying with APP_PUBLIC_PORT=$app_public_next"
         changed=1
       fi
@@ -239,6 +240,7 @@ rewrite_conflicting_application_ports() {
       app_ui_next=$(choose_port "$next_ui" 15673 18222 19001 19002 9002 8223 3002 8083 9092)
       if [ -n "$app_ui_next" ] && [ "$app_ui_next" != "$app_public_ui_port" ]; then
         write_env_value APP_PUBLIC_UI_PORT "$app_ui_next"
+        echo "__STACKPILOT_PORT_ADJUSTED__=APP_PUBLIC_UI_PORT:${app_public_ui_port}:${app_ui_next}"
         echo "Application UI port conflict detected; retrying with APP_PUBLIC_UI_PORT=$app_ui_next"
         changed=1
       fi
@@ -252,11 +254,17 @@ printf '%s\n' "$compose_up_output"
 if [ "$compose_up_exit" -ne 0 ]; then
   if printf '%s\n' "$compose_up_output" | grep -Eqi 'address already in use|ports are not available|only one usage of each socket address|bind:'; then
     rewrite_conflicting_application_ports || true
-    http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
-    https_port=$(choose_port 8443 9443 10443 4443)
-    write_env_value STACKPILOT_HTTP_PORT "$http_port"
-    write_env_value STACKPILOT_HTTPS_PORT "$https_port"
-    echo "Host port conflict detected; retrying Compose with STACKPILOT_HTTP_PORT=$http_port and STACKPILOT_HTTPS_PORT=$https_port"
+    if grep -Eq 'STACKPILOT_HTTP_PORT|STACKPILOT_HTTPS_PORT' )sh" + composeFileArg + R"sh( 2>/dev/null; then
+      old_http_port=$(read_env_value STACKPILOT_HTTP_PORT)
+      old_https_port=$(read_env_value STACKPILOT_HTTPS_PORT)
+      http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
+      https_port=$(choose_port 8443 9443 10443 4443)
+      write_env_value STACKPILOT_HTTP_PORT "$http_port"
+      write_env_value STACKPILOT_HTTPS_PORT "$https_port"
+      echo "__STACKPILOT_PORT_ADJUSTED__=STACKPILOT_HTTP_PORT:${old_http_port:-80}:${http_port}"
+      echo "__STACKPILOT_PORT_ADJUSTED__=STACKPILOT_HTTPS_PORT:${old_https_port:-443}:${https_port}"
+      echo "Host port conflict detected; retrying Compose with STACKPILOT_HTTP_PORT=$http_port and STACKPILOT_HTTPS_PORT=$https_port"
+    fi
     $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
   else
     exit "$compose_up_exit"
@@ -427,7 +435,7 @@ bool isNextJsApp(const std::filesystem::path& sourceDir) {
 std::string encodeEnvValue(const std::string& value) {
     bool needsQuotes = value.empty();
     for (char c : value) {
-        if (std::isspace(static_cast<unsigned char>(c)) || c == '#' || c == '"' || c == '\'' ||
+        if (std::isspace(static_cast<unsigned char>(c)) || c == '#' || c == '$' || c == '"' || c == '\'' ||
             c == '\\' || c == '\n' || c == '\r' || c == '=') {
             needsQuotes = true;
             break;
@@ -1020,7 +1028,7 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
                                                     const std::vector<BuildEnvVar>& envVars,
                                                     LogCallback onLogLine) const {
     BuildResult result;
-    const std::string imageName = "StackPilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string imageName = "stackpilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
     std::string projectSlug = sanitizeName(projectName);
     if (projectSlug.size() > 32) {
         projectSlug.resize(32);
@@ -1406,12 +1414,22 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " pull --ignore-pull-failures || true; "
             + composePortFallbackShell(quotedComposeFile, quotedProject) +
             "runtime=''; "
+            "preferred_public_port=$(sed -n 's/^APP_PUBLIC_UI_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
             "domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+            "require_https=$(sed -n 's/^STACKPILOT_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
+            "http_port=$(sed -n 's/^STACKPILOT_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
             "https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "if [ -n \"$domain\" ]; then if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; fi; "
+            "if [ -n \"$domain\" ]; then "
+            "  if [ \"$require_https\" = 'true' ]; then "
+            "    if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; "
+            "  else "
+            "    if [ -n \"$http_port\" ] && [ \"$http_port\" != '80' ]; then runtime=\"http://$domain:$http_port\"; else runtime=\"http://$domain\"; fi; "
+            "  fi; "
+            "fi; "
+            "if [ -z \"$runtime\" ] && [ -n \"$preferred_public_port\" ]; then runtime=\"http://localhost:$preferred_public_port\"; fi; "
             "if [ -z \"$runtime\" ]; then "
             "  for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
-            "    for port in 80 443 3000 8080 8000 5000 5173 15672 9001 8222 9090 3100 5432 3306 6379 27017 5672 9000 4222; do "
+            "    for port in 9001 15672 8222 3000 8080 8000 5000 5173 9090 3100 80 443 5432 3306 6379 27017 5672 9000 4222; do "
             "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
             "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
             "    done; "
@@ -1464,7 +1482,7 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         return result;
     }
 
-    const std::string imageName = "StackPilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const std::string imageName = "stackpilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
     const std::string buildParallel = [] {
         const char* value = std::getenv("STACKPILOT_BACKEND_BUILD_PARALLELISM");
         return (value && *value) ? std::string(value) : std::string("1");

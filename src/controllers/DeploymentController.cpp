@@ -459,6 +459,28 @@ void appendDeploymentLogBlock(const std::string& deploymentId, const std::string
     }
 }
 
+Json::Value extractPortAdjustments(const std::string& logs) {
+    Json::Value adjustments(Json::arrayValue);
+    const std::string marker = "__STACKPILOT_PORT_ADJUSTED__=";
+    std::size_t offset = 0;
+    while ((offset = logs.find(marker, offset)) != std::string::npos) {
+        const std::size_t payloadStart = offset + marker.size();
+        const std::size_t lineEnd = logs.find('\n', payloadStart);
+        const std::string payload = trim(logs.substr(payloadStart, lineEnd == std::string::npos ? std::string::npos : lineEnd - payloadStart));
+        const std::size_t firstColon = payload.find(':');
+        const std::size_t secondColon = firstColon == std::string::npos ? std::string::npos : payload.find(':', firstColon + 1);
+        if (firstColon != std::string::npos && secondColon != std::string::npos) {
+            Json::Value item;
+            item["key"] = payload.substr(0, firstColon);
+            item["from"] = payload.substr(firstColon + 1, secondColon - firstColon - 1);
+            item["to"] = payload.substr(secondColon + 1);
+            adjustments.append(item);
+        }
+        offset = lineEnd == std::string::npos ? logs.size() : lineEnd + 1;
+    }
+    return adjustments;
+}
+
 Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     auto& db = Database::getInstance();
     auto conn = db.getConnection();
@@ -466,7 +488,7 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     auto rows = txn.exec_params(
         "SELECT d.id, d.project_id, p.name AS project_name, p.repo_url, d.status, d.version, d.commit_hash, "
         "d.environment_id, e.name AS environment_name, d.branch, d.commit_sha, d.trigger_source, d.github_delivery_id, "
-        "d.ci_required, d.ci_status, d.image_name, "
+        "d.ci_required, d.ci_status, d.logs, d.image_name, "
         "d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.k8s_ingress_name, "
         "d.desired_replicas, d.runtime_url, d.runtime_exposure, d.runtime_provider, d.remote_container_name, "
         "d.runtime_paused, d.runtime_snapshot::text AS runtime_snapshot, d.created_at "
@@ -499,6 +521,7 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     dep["github_delivery_id"] = row["github_delivery_id"].is_null() ? "" : row["github_delivery_id"].as<std::string>();
     dep["ci_required"] = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
     dep["ci_status"] = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
+    dep["port_adjustments"] = row["logs"].is_null() ? Json::Value(Json::arrayValue) : extractPortAdjustments(row["logs"].as<std::string>());
     hydrateDeploymentRuntimeFields(dep, row);
     dep["created_at"] = row["created_at"].as<std::string>();
     return dep;
@@ -540,6 +563,116 @@ std::string shellQuote(const std::string& value) {
     }
     quoted += "'";
     return quoted;
+}
+
+std::string markerValue(const std::string& output, const std::string& marker) {
+    std::istringstream stream(output);
+    std::string line;
+    const std::string prefix = marker + "=";
+    while (std::getline(stream, line)) {
+        if (line.rfind(prefix, 0) == 0) {
+            return trim(line.substr(prefix.size()));
+        }
+    }
+    return "";
+}
+
+std::string composePortFallbackShell(const std::string& composeFileArg,
+                                     const std::string& projectArg) {
+    return R"sh(
+port_in_use() {
+  port="$1"
+  if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:|])'"$port"'$'; then return 0; fi
+  if command -v netstat >/dev/null 2>&1 && netstat -ltn 2>/dev/null | awk '{print $4}' | grep -Eq '(^|:|])'"$port"'$'; then return 0; fi
+  if docker ps --format '{{.Ports}}' 2>/dev/null | grep -Eq '(^|, )([^ ]+:)?'"$port"'->'; then return 0; fi
+  return 1
+}
+choose_port() {
+  preferred="$1"
+  shift
+  for port in "$preferred" "$@"; do
+    case "$port" in ''|*[!0-9]*) continue ;; esac
+    if ! port_in_use "$port"; then echo "$port"; return 0; fi
+  done
+  port="$preferred"
+  while [ "$port" -le 65535 ]; do
+    if ! port_in_use "$port"; then echo "$port"; return 0; fi
+    port=$((port + 1))
+  done
+  return 1
+}
+write_env_value() {
+  key="$1"
+  value="$2"
+  touch .env
+  if grep -q "^${key}=" .env 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+}
+read_env_value() {
+  key="$1"
+  sed -n "s/^${key}=//p" .env 2>/dev/null | tail -n1 | tr -d '"' | tr -d "'" || true
+}
+next_port_after() {
+  port="$1"
+  case "$port" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$port" -lt 65535 ]; then echo $((port + 1)); else return 1; fi
+}
+rewrite_conflicting_application_ports() {
+  changed=0
+  app_public_port=$(read_env_value APP_PUBLIC_PORT)
+  if [ -n "$app_public_port" ]; then
+    next_public=$(next_port_after "$app_public_port" || true)
+    if [ -n "$next_public" ]; then
+      app_public_next=$(choose_port "$next_public" 13306 13307 15432 16379 27018 15672 14222 18080 18088 19000 19090 13000 3307 5433 6380 5673 4223 8082 8089 9002 9091 3001)
+      if [ -n "$app_public_next" ] && [ "$app_public_next" != "$app_public_port" ]; then
+        write_env_value APP_PUBLIC_PORT "$app_public_next"
+        echo "__STACKPILOT_PORT_ADJUSTED__=APP_PUBLIC_PORT:${app_public_port}:${app_public_next}"
+        echo "Application port conflict detected; retrying with APP_PUBLIC_PORT=$app_public_next"
+        changed=1
+      fi
+    fi
+  fi
+  app_public_ui_port=$(read_env_value APP_PUBLIC_UI_PORT)
+  if [ -n "$app_public_ui_port" ]; then
+    next_ui=$(next_port_after "$app_public_ui_port" || true)
+    if [ -n "$next_ui" ]; then
+      app_ui_next=$(choose_port "$next_ui" 15673 18222 19001 19002 9002 8223 3002 8083 9092)
+      if [ -n "$app_ui_next" ] && [ "$app_ui_next" != "$app_public_ui_port" ]; then
+        write_env_value APP_PUBLIC_UI_PORT "$app_ui_next"
+        echo "__STACKPILOT_PORT_ADJUSTED__=APP_PUBLIC_UI_PORT:${app_public_ui_port}:${app_ui_next}"
+        echo "Application UI port conflict detected; retrying with APP_PUBLIC_UI_PORT=$app_ui_next"
+        changed=1
+      fi
+    fi
+  fi
+  return "$changed"
+}
+compose_up_exit=0
+compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
+printf '%s\n' "$compose_up_output"
+if [ "$compose_up_exit" -ne 0 ]; then
+  if printf '%s\n' "$compose_up_output" | grep -Eqi 'address already in use|ports are not available|only one usage of each socket address|bind:'; then
+    rewrite_conflicting_application_ports || true
+    if grep -Eq 'STACKPILOT_HTTP_PORT|STACKPILOT_HTTPS_PORT' )sh" + composeFileArg + R"sh( 2>/dev/null; then
+      old_http_port=$(read_env_value STACKPILOT_HTTP_PORT)
+      old_https_port=$(read_env_value STACKPILOT_HTTPS_PORT)
+      http_port=$(choose_port 8080 8081 8082 8090 8000 3000)
+      https_port=$(choose_port 8443 9443 10443 4443)
+      write_env_value STACKPILOT_HTTP_PORT "$http_port"
+      write_env_value STACKPILOT_HTTPS_PORT "$https_port"
+      echo "__STACKPILOT_PORT_ADJUSTED__=STACKPILOT_HTTP_PORT:${old_http_port:-80}:${http_port}"
+      echo "__STACKPILOT_PORT_ADJUSTED__=STACKPILOT_HTTPS_PORT:${old_https_port:-443}:${https_port}"
+      echo "Host port conflict detected; retrying Compose with STACKPILOT_HTTP_PORT=$http_port and STACKPILOT_HTTPS_PORT=$https_port"
+    fi
+    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
+  else
+    exit "$compose_up_exit"
+  fi
+fi
+)sh";
 }
 
 std::string makeDockerPauseCommand(const std::string& containerName, bool paused) {
@@ -1837,8 +1970,7 @@ void DeploymentController::triggerBuild(
         const std::string runtimeScheme = normalizeRuntimeScheme(
             deploymentRows[0]["runtime_scheme"].is_null() ? "http" : deploymentRows[0]["runtime_scheme"].as<std::string>()
         );
-        const bool localHttpsEnabled =
-            deploymentRows[0]["local_https_enabled"].is_null() ? false : deploymentRows[0]["local_https_enabled"].as<bool>();
+        const bool localHttpsEnabled = false;
         const std::string repoUrl = deploymentRows[0]["repo_url"].as<std::string>();
         const std::string sourcePath =
             deploymentRows[0]["source_path"].is_null() ? "" : deploymentRows[0]["source_path"].as<std::string>();
@@ -2245,7 +2377,7 @@ void DeploymentController::triggerBuild(
                             buildResult.imageName,
                             buildResult.runtimeUrl,
                             buildResult.composeProjectName.empty() ? buildResult.remoteContainerName : buildResult.composeProjectName,
-                            compactJson(composeRuntimeSnapshot(buildResult, "local_compose", localHttpsEnabled ? "https" : "http")),
+                            compactJson(composeRuntimeSnapshot(buildResult, "local_compose", "http")),
                             deploymentId
                         );
                         LogWebSocketController::broadcastStatus(deploymentId, "running");
@@ -2257,7 +2389,7 @@ void DeploymentController::triggerBuild(
                             "WHERE id = $4",
                             buildResult.logs,
                             buildResult.imageName,
-                            compactJson(runtimeSnapshot("local_docker", buildResult.imageName, "", "docker", 0, 3000, "small", "/", localHttpsEnabled ? "https" : "http")),
+                            compactJson(runtimeSnapshot("local_docker", buildResult.imageName, "", "docker", 0, 3000, "small", "/", "http")),
                             deploymentId
                         );
                         LogWebSocketController::broadcastStatus(deploymentId, "built");
@@ -2519,13 +2651,38 @@ void DeploymentController::deployToLocalDocker(
             LogWebSocketController::broadcastStatus(deploymentId, "deploying");
             broadcastDeploymentSummary(deploymentId);
 
+            const std::string quotedComposeFile = shellQuote(composeFile);
+            const std::string quotedComposeProject = shellQuote(composeProject);
             const std::string composeCommand =
                 "cd " + shellQuote(composeWorkdir) + " && "
                 "compose_cmd='docker compose'; "
                 "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
-                "$compose_cmd -f " + shellQuote(composeFile) +
-                " -p " + shellQuote(composeProject) +
-                " up -d --build --remove-orphans";
+                "$compose_cmd -f " + quotedComposeFile + " -p " + quotedComposeProject + " config --services > .stackpilot-compose-services; "
+                + composePortFallbackShell(quotedComposeFile, quotedComposeProject) +
+                "runtime=''; "
+                "preferred_public_port=$(sed -n 's/^APP_PUBLIC_UI_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+                "domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+                "require_https=$(sed -n 's/^STACKPILOT_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
+                "http_port=$(sed -n 's/^STACKPILOT_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+                "https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
+                "if [ -n \"$domain\" ]; then "
+                "  if [ \"$require_https\" = 'true' ]; then "
+                "    if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; "
+                "  else "
+                "    if [ -n \"$http_port\" ] && [ \"$http_port\" != '80' ]; then runtime=\"http://$domain:$http_port\"; else runtime=\"http://$domain\"; fi; "
+                "  fi; "
+                "fi; "
+                "if [ -z \"$runtime\" ] && [ -n \"$preferred_public_port\" ]; then runtime=\"http://localhost:$preferred_public_port\"; fi; "
+                "if [ -z \"$runtime\" ]; then "
+                "  for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
+                "    for port in 9001 15672 8222 3000 8080 8000 5000 5173 9090 3100 80 443 5432 3306 6379 27017 5672 9000 4222; do "
+                "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedComposeProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
+                "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
+                "    done; "
+                "  done; "
+                "fi; "
+                "echo __STACKPILOT_COMPOSE_URL__=$runtime; "
+                "$compose_cmd -f " + quotedComposeFile + " -p " + quotedComposeProject + " ps";
             std::string output;
             const int exitCode = runLocalCommand("timeout 180s sh -lc " + shellQuote(composeCommand), output);
             appendDeploymentLogBlock(deploymentId, output);
@@ -2547,13 +2704,24 @@ void DeploymentController::deployToLocalDocker(
                 callback(resp); return;
             }
 
-            const std::string runtimeUrl = jsonString(existingRuntimeSnapshot, "runtime_url");
+            const std::string updatedRuntimeUrl = markerValue(output, "__STACKPILOT_COMPOSE_URL__");
+            const std::string runtimeUrl = updatedRuntimeUrl.empty()
+                ? jsonString(existingRuntimeSnapshot, "runtime_url")
+                : updatedRuntimeUrl;
+            Json::Value updatedRuntimeSnapshot = existingRuntimeSnapshot.isObject()
+                ? existingRuntimeSnapshot
+                : Json::Value(Json::objectValue);
+            updatedRuntimeSnapshot["runtime_url"] = runtimeUrl;
+            updatedRuntimeSnapshot["runtime_scheme"] =
+                runtimeUrl.rfind("https://", 0) == 0 ? "https" : "http";
+            updatedRuntimeSnapshot["tls_enabled"] = updatedRuntimeSnapshot["runtime_scheme"].asString() == "https";
             auto updateConn = db.getConnection();
             pqxx::work updateTxn(*updateConn);
             updateTxn.exec_params(
                 "UPDATE deployments SET status = 'running', runtime_url = $1, runtime_exposure = 'local_compose', "
-                "runtime_provider = 'local_compose', runtime_paused = FALSE, updated_at = NOW() WHERE id = $2",
+                "runtime_provider = 'local_compose', runtime_snapshot = $2::jsonb, runtime_paused = FALSE, updated_at = NOW() WHERE id = $3",
                 runtimeUrl,
+                compactJson(updatedRuntimeSnapshot),
                 deploymentId
             );
             updateTxn.commit();
@@ -2774,7 +2942,13 @@ void DeploymentController::deployToKubernetes(
             : (row["runtime_exposure"].is_null() ? "" : row["runtime_exposure"].as<std::string>());
         options.runtimeScheme = requestedRuntimeScheme.empty() ? savedScheme : requestedRuntimeScheme;
         if (options.runtimeScheme == "https") {
-            options.exposureMode = "ingress";
+            options.runtimeScheme = "http";
+        }
+        const std::string localExposureMode = toLower(trim(options.exposureMode));
+        if (localExposureMode != "nodeport") {
+            options.exposureMode = "nodeport";
+        } else {
+            options.exposureMode = localExposureMode;
         }
         options.replicas = replicas;
         options.containerPort = containerPort;

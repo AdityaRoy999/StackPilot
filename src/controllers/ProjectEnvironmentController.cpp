@@ -86,6 +86,40 @@ bool isSupportedRuntimeScheme(const std::string& value) {
     return value == "http" || value == "https";
 }
 
+void normalizeRuntimePreferences(std::string& executionMode,
+                                 std::string& remoteConnectionId,
+                                 std::string& remoteRuntimeType,
+                                 std::string& remoteK8sExposure,
+                                 std::string& runtimeScheme) {
+    if (executionMode != "remote_host") {
+        executionMode = "local";
+        remoteConnectionId.clear();
+        remoteRuntimeType = "docker";
+        remoteK8sExposure = "nodeport";
+        runtimeScheme = "http";
+        return;
+    }
+
+    if (remoteRuntimeType.empty()) {
+        remoteRuntimeType = "docker";
+    }
+    if (remoteK8sExposure.empty()) {
+        remoteK8sExposure = "nodeport";
+    }
+    if (runtimeScheme.empty()) {
+        runtimeScheme = "http";
+    }
+
+    if (remoteRuntimeType != "kubernetes") {
+        remoteK8sExposure = "nodeport";
+        return;
+    }
+
+    if (remoteK8sExposure != "ingress") {
+        runtimeScheme = "http";
+    }
+}
+
 bool remoteConnectionBelongsToUser(pqxx::transaction_base& txn,
                                    const std::string& remoteConnectionId,
                                    const std::string& userId) {
@@ -407,11 +441,12 @@ void ProjectEnvironmentController::createEnvironment(
         }
         const std::string name = toLower(trim((*body).get("name", "environment").asString()));
         const std::string branch = trim((*body).get("branch", "").asString());
-        const std::string executionMode = toLower(trim((*body).get("execution_mode", "local").asString()));
-        const std::string remoteConnectionId = trim((*body).get("remote_connection_id", "").asString());
-        const std::string remoteRuntimeType = toLower(trim((*body).get("remote_runtime_type", "docker").asString()));
-        const std::string remoteK8sExposure = toLower(trim((*body).get("remote_k8s_exposure", "nodeport").asString()));
-        const std::string runtimeScheme = toLower(trim((*body).get("runtime_scheme", "http").asString()));
+        std::string executionMode = toLower(trim((*body).get("execution_mode", "local").asString()));
+        std::string remoteConnectionId = trim((*body).get("remote_connection_id", "").asString());
+        std::string remoteRuntimeType = toLower(trim((*body).get("remote_runtime_type", "docker").asString()));
+        std::string remoteK8sExposure = toLower(trim((*body).get("remote_k8s_exposure", "nodeport").asString()));
+        std::string runtimeScheme = toLower(trim((*body).get("runtime_scheme", "http").asString()));
+        normalizeRuntimePreferences(executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme);
         const auto envVars = parseEnvVars(*body);
         if (name.empty() || branch.empty() || !isSupportedExecutionMode(executionMode) ||
             !isSupportedRuntimeType(remoteRuntimeType) || !isSupportedK8sExposure(remoteK8sExposure) ||
@@ -507,15 +542,41 @@ void ProjectEnvironmentController::updateEnvironment(
         const bool hasRemoteConnection = (*body).isMember("remote_connection_id");
         const bool hasEnvVars = (*body).isMember("env_vars");
         const auto envVars = parseEnvVars(*body);
-        const std::string executionMode = toLower(trim((*body).get("execution_mode", "").asString()));
-        const std::string remoteConnectionId = trim((*body).get("remote_connection_id", "").asString());
-        const std::string remoteRuntimeType = toLower(trim((*body).get("remote_runtime_type", "").asString()));
-        const std::string remoteK8sExposure = toLower(trim((*body).get("remote_k8s_exposure", "").asString()));
-        const std::string runtimeScheme = toLower(trim((*body).get("runtime_scheme", "").asString()));
-        if ((!executionMode.empty() && !isSupportedExecutionMode(executionMode)) ||
-            (!remoteRuntimeType.empty() && !isSupportedRuntimeType(remoteRuntimeType)) ||
-            (!remoteK8sExposure.empty() && !isSupportedK8sExposure(remoteK8sExposure)) ||
-            (!runtimeScheme.empty() && !isSupportedRuntimeScheme(runtimeScheme)) ||
+        auto currentEnvRows = txn.exec_params(
+            "SELECT execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme "
+            "FROM project_environments WHERE id = $1 AND project_id = $2",
+            environmentId,
+            projectId
+        );
+        if (currentEnvRows.empty()) {
+            txn.commit();
+            Json::Value err; err["error"] = "Environment not found";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k404NotFound);
+            callback(resp); return;
+        }
+
+        std::string executionMode = (*body).isMember("execution_mode")
+            ? toLower(trim((*body).get("execution_mode", "").asString()))
+            : currentEnvRows[0]["execution_mode"].as<std::string>();
+        std::string remoteConnectionId = hasRemoteConnection
+            ? trim((*body).get("remote_connection_id", "").asString())
+            : (currentEnvRows[0]["remote_connection_id"].is_null() ? "" : currentEnvRows[0]["remote_connection_id"].as<std::string>());
+        std::string remoteRuntimeType = (*body).isMember("remote_runtime_type")
+            ? toLower(trim((*body).get("remote_runtime_type", "").asString()))
+            : currentEnvRows[0]["remote_runtime_type"].as<std::string>();
+        std::string remoteK8sExposure = (*body).isMember("remote_k8s_exposure")
+            ? toLower(trim((*body).get("remote_k8s_exposure", "").asString()))
+            : currentEnvRows[0]["remote_k8s_exposure"].as<std::string>();
+        std::string runtimeScheme = (*body).isMember("runtime_scheme")
+            ? toLower(trim((*body).get("runtime_scheme", "").asString()))
+            : currentEnvRows[0]["runtime_scheme"].as<std::string>();
+        normalizeRuntimePreferences(executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme);
+
+        if (!isSupportedExecutionMode(executionMode) ||
+            !isSupportedRuntimeType(remoteRuntimeType) ||
+            !isSupportedK8sExposure(remoteK8sExposure) ||
+            !isSupportedRuntimeScheme(runtimeScheme) ||
             !remoteConnectionBelongsToUser(txn, remoteConnectionId, userId)) {
             txn.commit();
             Json::Value err; err["error"] = "Invalid environment settings";
@@ -530,12 +591,12 @@ void ProjectEnvironmentController::updateEnvironment(
             "auto_deploy = CASE WHEN $3 THEN $4::boolean ELSE auto_deploy END, "
             "require_ci = CASE WHEN $5 THEN $6::boolean ELSE require_ci END, "
             "cleanup_previous_on_success = CASE WHEN $7 THEN $8::boolean ELSE cleanup_previous_on_success END, "
-            "execution_mode = COALESCE(NULLIF($9, ''), execution_mode), "
-            "remote_connection_id = CASE WHEN $10 THEN NULLIF($11, '')::uuid ELSE remote_connection_id END, "
-            "remote_runtime_type = COALESCE(NULLIF($12, ''), remote_runtime_type), "
-            "remote_k8s_exposure = COALESCE(NULLIF($13, ''), remote_k8s_exposure), "
-            "runtime_scheme = COALESCE(NULLIF($14, ''), runtime_scheme), updated_at = NOW() "
-            "WHERE id = $15 AND project_id = $16 "
+            "execution_mode = $9, "
+            "remote_connection_id = NULLIF($10, '')::uuid, "
+            "remote_runtime_type = $11, "
+            "remote_k8s_exposure = $12, "
+            "runtime_scheme = $13, updated_at = NOW() "
+            "WHERE id = $14 AND project_id = $15 "
             "RETURNING id, project_id, name, branch, auto_deploy, require_ci, cleanup_previous_on_success, execution_mode, remote_connection_id, remote_runtime_type, remote_k8s_exposure, runtime_scheme, current_deployment_id, NULL::text AS current_deployment_status, NULL::text AS current_deployment_version, NULL::text AS current_commit_sha, NULL::text AS current_runtime_url, updated_at",
             (*body).get("name", "").asString(),
             (*body).get("branch", "").asString(),
@@ -546,7 +607,6 @@ void ProjectEnvironmentController::updateEnvironment(
             hasCleanupPrevious,
             (*body).get("cleanup_previous_on_success", false).asBool(),
             executionMode,
-            hasRemoteConnection,
             remoteConnectionId,
             remoteRuntimeType,
             remoteK8sExposure,

@@ -543,13 +543,35 @@ void appendDeploymentLog(const std::string& deploymentId, const std::string& lin
     }
 }
 
+Json::Value extractPortAdjustments(const std::string& logs) {
+    Json::Value adjustments(Json::arrayValue);
+    const std::string marker = "__STACKPILOT_PORT_ADJUSTED__=";
+    std::size_t offset = 0;
+    while ((offset = logs.find(marker, offset)) != std::string::npos) {
+        const std::size_t payloadStart = offset + marker.size();
+        const std::size_t lineEnd = logs.find('\n', payloadStart);
+        const std::string payload = trim(logs.substr(payloadStart, lineEnd == std::string::npos ? std::string::npos : lineEnd - payloadStart));
+        const std::size_t firstColon = payload.find(':');
+        const std::size_t secondColon = firstColon == std::string::npos ? std::string::npos : payload.find(':', firstColon + 1);
+        if (firstColon != std::string::npos && secondColon != std::string::npos) {
+            Json::Value item;
+            item["key"] = payload.substr(0, firstColon);
+            item["from"] = payload.substr(firstColon + 1, secondColon - firstColon - 1);
+            item["to"] = payload.substr(secondColon + 1);
+            adjustments.append(item);
+        }
+        offset = lineEnd == std::string::npos ? logs.size() : lineEnd + 1;
+    }
+    return adjustments;
+}
+
 Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     auto conn = Database::getInstance().getConnection();
     pqxx::work txn(*conn);
     auto rows = txn.exec_params(
         "SELECT d.id, d.project_id, p.name AS project_name, p.repo_url, d.status, d.version, d.commit_hash, "
         "d.environment_id, e.name AS environment_name, d.branch, d.commit_sha, d.trigger_source, d.github_delivery_id, "
-        "d.ci_required, d.ci_status, d.image_name, "
+        "d.ci_required, d.ci_status, d.logs, d.image_name, "
         "d.k8s_namespace, d.k8s_deployment_name, d.k8s_service_name, d.k8s_ingress_name, "
         "d.desired_replicas, d.runtime_url, d.runtime_exposure, d.runtime_provider, d.remote_container_name, d.created_at "
         "FROM deployments d "
@@ -581,6 +603,7 @@ Json::Value loadDeploymentSummary(const std::string& deploymentId) {
     dep["github_delivery_id"] = row["github_delivery_id"].is_null() ? "" : row["github_delivery_id"].as<std::string>();
     dep["ci_required"] = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
     dep["ci_status"] = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
+    dep["port_adjustments"] = row["logs"].is_null() ? Json::Value(Json::arrayValue) : extractPortAdjustments(row["logs"].as<std::string>());
     dep["image_name"] = row["image_name"].is_null() ? "" : row["image_name"].as<std::string>();
     dep["k8s_namespace"] = row["k8s_namespace"].is_null() ? "" : row["k8s_namespace"].as<std::string>();
     dep["k8s_deployment_name"] = row["k8s_deployment_name"].is_null() ? "" : row["k8s_deployment_name"].as<std::string>();
@@ -1123,7 +1146,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         const std::string remoteK8sExposure = row["remote_k8s_exposure"].is_null() ? "nodeport" : row["remote_k8s_exposure"].as<std::string>();
         const std::string remoteConnectionId = row["remote_connection_id"].is_null() ? "" : row["remote_connection_id"].as<std::string>();
         const std::string runtimeScheme = normalizeRuntimeScheme(row["runtime_scheme"].is_null() ? "http" : row["runtime_scheme"].as<std::string>());
-        const bool localHttpsEnabled = row["local_https_enabled"].is_null() ? false : row["local_https_enabled"].as<bool>();
+        const bool localHttpsEnabled = false;
         const std::string repoUrl = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
         const std::string branch = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
         const std::string commitSha = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
@@ -1483,8 +1506,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             options.projectName = projectName;
             options.imageName = buildResult.imageName;
             options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
-            options.runtimeScheme = runtimeScheme;
-            options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
+            options.runtimeScheme = "http";
+            options.exposureMode = "nodeport";
             options.replicas = 1;
             options.containerPort = 3000;
             options.resourcePreset = "small";
@@ -1634,7 +1657,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     buildResult.imageName,
                     buildResult.runtimeUrl,
                     buildResult.composeProjectName.empty() ? buildResult.remoteContainerName : buildResult.composeProjectName,
-                    compactJson(composeRuntimeSnapshot(buildResult, "local_compose", localHttpsEnabled ? "https" : "http")),
+                    compactJson(composeRuntimeSnapshot(buildResult, "local_compose", "http")),
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, "running");
@@ -1650,7 +1673,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     buildResult.imageName,
                     buildResult.runtimeUrl,
                     buildResult.remoteContainerName,
-                    compactJson(runtimeSnapshot("local_docker", buildResult.imageName, buildResult.runtimeUrl, "local_docker", 1, containerPort, "small", "/", localHttpsEnabled ? "https" : "http")),
+                    compactJson(runtimeSnapshot("local_docker", buildResult.imageName, buildResult.runtimeUrl, "local_docker", 1, containerPort, "small", "/", "http")),
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, "running");
@@ -1662,7 +1685,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     "WHERE id = $4",
                     buildResult.logs,
                     buildResult.imageName,
-                    compactJson(runtimeSnapshot("local_docker", buildResult.imageName, "", "docker", 0, 3000, "small", "/", localHttpsEnabled ? "https" : "http")),
+                    compactJson(runtimeSnapshot("local_docker", buildResult.imageName, "", "docker", 0, 3000, "small", "/", "http")),
                     job.deploymentId
                 );
                 LogWebSocketController::broadcastStatus(job.deploymentId, "built");

@@ -291,6 +291,7 @@ Json::Value numericMetricValue(const std::string& raw) {
 bool nameLooksManagedByStackPilot(const std::string& name, const std::string& image = "") {
     return name.rfind("stackpilot-", 0) == 0 ||
            name.find("stackpilot-local-") != std::string::npos ||
+           image.rfind("stackpilot/", 0) == 0 ||
            image.rfind("StackPilot/", 0) == 0 ||
            image.rfind("stackpilot-", 0) == 0;
 }

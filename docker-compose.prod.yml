@@ -11,8 +11,9 @@ services:
     image: caddy:2.8-alpine
     restart: unless-stopped
     logging: *stackpilot-logging
-    env_file:
-      - .env
+    environment:
+      - ACME_EMAIL=${ACME_EMAIL:?Set ACME_EMAIL in .env}
+      - STACKPILOT_CADDY_SITE_ADDRESS=${STACKPILOT_CADDY_SITE_ADDRESS:-:80}
     ports:
       - "${STACKPILOT_HTTP_PORT:-8081}:80"
       - "${STACKPILOT_HTTPS_PORT:-9443}:443"

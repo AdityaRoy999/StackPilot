@@ -66,6 +66,8 @@ interface Deployment {
   runtime_paused?: boolean;
   remote_container_name?: string;
   can_delete_image?: boolean;
+  logs?: string;
+  port_adjustments?: Array<{ key?: string; from?: string; to?: string }>;
   runtime_snapshot?: {
     image_name?: string;
     provider?: string;
@@ -347,6 +349,31 @@ function normalizeRuntimeExposureMode(value: string | undefined): RuntimeExposur
   return value?.toLowerCase() === "ingress" ? "ingress" : "nodeport";
 }
 
+function portAdjustmentMessages(deployment: Deployment) {
+  const labels: Record<string, string> = {
+    APP_PUBLIC_PORT: "application port",
+    APP_PUBLIC_UI_PORT: "application UI port",
+    STACKPILOT_HTTP_PORT: "HTTP port",
+    STACKPILOT_HTTPS_PORT: "HTTPS port",
+  };
+  const structured = deployment.port_adjustments || [];
+  if (structured.length > 0) {
+    return structured
+      .filter((adjustment) => adjustment.key && adjustment.to)
+      .map((adjustment) => ({
+        id: `${adjustment.key}:${adjustment.from || ""}:${adjustment.to}`,
+        message: `${labels[adjustment.key || ""] || adjustment.key} ${adjustment.from || "default"} was occupied, so StackPilot moved it to ${adjustment.to}.`,
+      }));
+  }
+  if (!deployment.logs) return [];
+  return Array.from(deployment.logs.matchAll(/__STACKPILOT_PORT_ADJUSTED__=([A-Z0-9_]+):([^:\n]*):([^\s\n]+)/g)).map(
+    ([raw, key, oldPort, newPort]) => ({
+      id: raw,
+      message: `${labels[key] || key} ${oldPort || "default"} was occupied, so StackPilot moved it to ${newPort}.`,
+    })
+  );
+}
+
 function formatMetricNumber(value: number | null | undefined, suffix = "") {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "Unavailable";
@@ -498,6 +525,7 @@ export default function DeploymentsPage() {
   const [filters, setFilters] = useState<DeploymentFilters>({ statuses: [], runtimes: [] });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
+  const shownPortAdjustmentToasts = useRef<Set<string>>(new Set());
   const queryClient = useQueryClient();
 
   const { data, isLoading, refetch } = useQuery({
@@ -621,10 +649,18 @@ export default function DeploymentsPage() {
         const message = JSON.parse(event.data) as DeploymentSocketMessage;
 
         if (message.type === "deployment_update" && message.deployment) {
+          const deployment = message.deployment as Deployment;
+          for (const adjustment of portAdjustmentMessages(deployment)) {
+            const toastKey = `${deployment.id}:${adjustment.id}`;
+            if (!shownPortAdjustmentToasts.current.has(toastKey)) {
+              shownPortAdjustmentToasts.current.add(toastKey);
+              toast.info(adjustment.message);
+            }
+          }
           queryClient.setQueryData(
             ["deployments"],
             (current: { deployments?: Deployment[]; count?: number } | undefined) => {
-              const nextDeployments = upsertDeployment(current?.deployments || [], message.deployment as Deployment);
+              const nextDeployments = upsertDeployment(current?.deployments || [], deployment);
               return {
                 deployments: nextDeployments,
                 count: nextDeployments.length,
@@ -1489,8 +1525,12 @@ function RuntimeDialog({
   const [resourcePreset, setResourcePreset] = useState<RuntimeResourcePreset>("small");
   const [healthPath, setHealthPath] = useState("/");
   const [eventsOpen, setEventsOpen] = useState(false);
+  const canUseIngress =
+    deployment.runtime_provider === "remote_kubernetes" ||
+    deployment.runtime_snapshot?.provider === "remote_kubernetes" ||
+    Boolean(deployment.k8s_ingress_name);
   const [exposureMode, setExposureMode] = useState<RuntimeExposureMode>(
-    normalizeRuntimeExposureMode(deployment.runtime_exposure)
+    canUseIngress ? normalizeRuntimeExposureMode(deployment.runtime_exposure) : "nodeport"
   );
   const socketRef = useRef<WebSocket | null>(null);
   const queryClient = useQueryClient();
@@ -1531,13 +1571,14 @@ function RuntimeDialog({
   const deployMutation = useMutation({
     mutationFn: async () => {
       const containerPort = Number.parseInt(portInput, 10) || 3000;
+      const requestedExposureMode = canUseIngress ? exposureMode : "nodeport";
       const res = wantsLocalDocker
         ? await api.post(`/deployments/${deployment.id}/docker/deploy`, {
             container_port: containerPort,
           })
         : await api.post(`/deployments/${deployment.id}/kubernetes/deploy`, {
             namespace: namespaceInput.trim(),
-            exposure_mode: exposureMode,
+            exposure_mode: requestedExposureMode,
             replicas: requestedReplicas,
             container_port: containerPort,
             resource_preset: resourcePreset,
@@ -1726,7 +1767,7 @@ function RuntimeDialog({
 
   return (
     <Dialog open={!!deployment} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="!flex !w-[min(94vw,56rem)] !max-w-[56rem] !max-h-[90dvh] !flex-col overflow-hidden rounded-xl border-border bg-card p-0">
+      <DialogContent className="!flex !w-[min(96vw,64rem)] !max-w-[64rem] !max-h-[92dvh] !flex-col overflow-hidden rounded-xl border-border bg-card p-0">
         <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
           <div className="flex items-start justify-between gap-4 pr-10">
             <div className="min-w-0">
@@ -1752,7 +1793,7 @@ function RuntimeDialog({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-0">
           {!isRemoteDocker && !isLocalDocker && (
             <>
-              <div className="grid shrink-0 gap-3 pt-4 md:grid-cols-3">
+              <div className="grid shrink-0 gap-3 pt-3 md:grid-cols-3">
                 <div className="min-w-0 space-y-1.5">
                   <Label htmlFor="runtime-namespace">Namespace</Label>
                   <Input
@@ -1785,14 +1826,15 @@ function RuntimeDialog({
                 </div>
               </div>
 
-              <div className="mt-3 shrink-0 space-y-1.5">
+              <div className="mt-2 shrink-0 space-y-1.5">
                 <Label>Exposure Mode</Label>
                 <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/30 p-1">
                   <Button
                     type="button"
                     variant={exposureMode === "ingress" ? "default" : "ghost"}
                     className="justify-center rounded-lg"
-                    disabled={isDeployed}
+                    disabled={isDeployed || !canUseIngress}
+                    title={!canUseIngress ? "Ingress is available only for prepared remote Kubernetes runtimes" : undefined}
                     onClick={() => setExposureMode("ingress")}
                   >
                     <Globe className="mr-2 h-4 w-4" />
@@ -1812,6 +1854,8 @@ function RuntimeDialog({
                 <p className="text-xs text-muted-foreground">
                   {isDeployed
                     ? "This runtime is already live. To change exposure mode safely, remove the runtime and deploy again with a different mode."
+                    : !canUseIngress
+                      ? "Local Kubernetes uses NodePort by default. Use a prepared remote Kubernetes runtime for ingress and public TLS."
                     : exposureMode === "ingress"
                       ? "Ingress gives you hostname-based routing and is the production-friendly option."
                       : "NodePort exposes the runtime directly on a host port, which is handy for local testing."}
@@ -1819,7 +1863,7 @@ function RuntimeDialog({
               </div>
 
               {!isDeployed && (
-                <div className="mt-3 grid shrink-0 gap-3 md:grid-cols-[1fr_1.4fr]">
+                <div className="mt-2 grid shrink-0 gap-3 md:grid-cols-[1fr_1.4fr]">
                   <div className="space-y-1.5">
                     <Label>Resource Preset</Label>
                     <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-1">
@@ -1850,7 +1894,7 @@ function RuntimeDialog({
             </>
           )}
 
-          <div className="min-h-[340px] flex-1 overflow-y-auto py-4 pr-1">
+          <div className="min-h-[420px] flex-1 overflow-y-auto py-4 pr-1">
             <div className="grid gap-4">
               <div className="min-w-0 rounded-xl border border-border bg-muted/30 p-4 text-sm">
                 <div className="grid gap-3.5">

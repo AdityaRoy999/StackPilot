@@ -335,6 +335,16 @@ function conciseApplicationProjectName(template: ApplicationTemplate) {
   return template.name;
 }
 
+function isGeneratedApplicationProjectName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  const lower = trimmed.toLowerCase();
+  if (APPLICATION_TEMPLATES.some((template) => template.id === lower || conciseApplicationProjectName(template).toLowerCase() === lower)) {
+    return true;
+  }
+  return /^ai\s+.+\s+\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/i.test(trimmed);
+}
+
 function GuideSection({ heading, items }: { heading: string; items: string[] }) {
   return (
     <div className="rounded-xl border border-border bg-muted/20 p-4">
@@ -452,11 +462,11 @@ export function CreateProjectDialog() {
   );
   const runtimeHttpsAllowed =
     (executionMode === "remote_host" && remoteRuntimeType === "docker") ||
-    (remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress");
+    (executionMode === "remote_host" && remoteRuntimeType === "kubernetes" && remoteK8sExposure === "ingress");
   const effectiveRuntimeScheme: RuntimeScheme = runtimeHttpsAllowed ? runtimeScheme : "http";
   const effectiveRemoteK8sExposure: RemoteK8sExposure =
-    remoteRuntimeType === "kubernetes" ? remoteK8sExposure : "nodeport";
-  const effectiveLocalHttpsEnabled = executionMode === "local" && effectiveRuntimeScheme === "https";
+    remoteRuntimeType === "kubernetes" && executionMode === "remote_host" ? remoteK8sExposure : "nodeport";
+  const effectiveLocalHttpsEnabled = false;
   const selectedApplicationTemplate =
     APPLICATION_TEMPLATES.find((template) => template.id === applicationTemplateId) ?? APPLICATION_TEMPLATES[0];
   const filteredApplicationTemplates = useMemo(() => {
@@ -723,9 +733,10 @@ export function CreateProjectDialog() {
   };
 
   const handleApplicationTemplateSelect = (template: ApplicationTemplate) => {
+    const shouldReplaceName = isGeneratedApplicationProjectName(name);
     setApplicationTemplateId(template.id);
     setApplicationConfig(initialApplicationConfig(template));
-    if (!name.trim() || APPLICATION_TEMPLATES.some((item) => item.id === name.trim())) {
+    if (shouldReplaceName) {
       setName(conciseApplicationProjectName(template));
     }
     if (!description.trim()) setDescription(template.description);
@@ -733,7 +744,7 @@ export function CreateProjectDialog() {
 
   const handleApplicationSourceSelect = () => {
     setSourceType("application");
-    if (!name.trim()) setName(conciseApplicationProjectName(selectedApplicationTemplate));
+    if (isGeneratedApplicationProjectName(name)) setName(conciseApplicationProjectName(selectedApplicationTemplate));
     if (!description.trim()) setDescription(selectedApplicationTemplate.description);
   };
 
@@ -965,6 +976,8 @@ export function CreateProjectDialog() {
                   variant="ghost"
                   className={cn(segmentedButtonClass, remoteK8sExposure === "ingress" && segmentedButtonActiveClass)}
                   onClick={() => setRemoteK8sExposure("ingress")}
+                  disabled={executionMode !== "remote_host"}
+                  title={executionMode !== "remote_host" ? "Ingress requires a prepared remote Kubernetes host" : undefined}
                 >
                   Ingress
                 </Button>
@@ -1036,8 +1049,8 @@ export function CreateProjectDialog() {
           </div>
         ) : (
           <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            Local Docker publishes a container port directly and uses HTTP. Choose Kubernetes Ingress when you need
-            HTTPS.
+            Local Docker publishes a container port directly and uses HTTP. Remote Docker or a prepared remote
+            Kubernetes ingress should handle public HTTPS.
           </p>
         )}
       </div>

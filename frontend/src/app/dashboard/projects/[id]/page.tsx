@@ -210,7 +210,11 @@ export default function ProjectDeploymentsPage() {
         runtimeType === "kubernetes"
           ? `/deployments/${deployment.id}/kubernetes/deploy`
           : `/deployments/${deployment.id}/docker/deploy`;
-      const res = await api.post(endpoint, {});
+      const payload =
+        runtimeType === "kubernetes"
+          ? { exposure_mode: "nodeport", runtime_scheme: "http" }
+          : {};
+      const res = await api.post(endpoint, payload);
       return res.data as { message?: string; runtime?: { runtime_url?: string } };
     },
     onSuccess: (data, { deployment }) => {
