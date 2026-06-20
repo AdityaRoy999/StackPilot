@@ -22,7 +22,7 @@ secret() {
 }
 
 sed \
-  -e "s/StackPilot.example.com/$DOMAIN/g" \
+  -e "s/stackpilot.example.com/$DOMAIN/g" \
   -e "s/admin@example.com/$EMAIL/g" \
   -e "s#replace-with-a-long-random-database-password#$(secret)#" \
   -e "s#replace-with-a-long-random-webhook-secret#$(secret)#" \

@@ -20,7 +20,7 @@ if (Test-Path $envPath) {
 }
 
 $content = Get-Content $templatePath -Raw
-$content = $content.Replace("StackPilot.example.com", $Domain)
+$content = $content.Replace("stackpilot.example.com", $Domain)
 $content = $content.Replace("admin@example.com", $Email)
 $content = $content.Replace("replace-with-a-long-random-database-password", (New-Secret))
 $content = $content.Replace("replace-with-a-long-random-webhook-secret", (New-Secret))

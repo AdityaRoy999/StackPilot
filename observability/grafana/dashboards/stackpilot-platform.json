@@ -177,7 +177,7 @@
       },
       "targets": [
         {
-          "expr": "{compose_project=~\".*StackPilot.*\"}",
+          "expr": "{compose_project=~\".*[sS]tack[pP]ilot.*\"}",
           "refId": "A"
         }
       ],

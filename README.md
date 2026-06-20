@@ -15,6 +15,63 @@ Use it when you want one platform to create projects, build containers, deploy a
 - Use MCP tools from IDE agents such as Codex, Claude Code, VS Code, and other MCP-capable clients.
 - Observe services with Prometheus, Grafana, Loki, Promtail, and cAdvisor.
 
+## Architecture
+
+StackPilot is built as a self-hosted control plane: the dashboard and API stay in your infrastructure, while project sources, generated application templates, Docker builds, Kubernetes deployments, AI assistance, and observability all connect through one backend.
+
+```mermaid
+flowchart TB
+    User["Operator / Developer"] --> Browser["StackPilot Dashboard<br/>Next.js frontend"]
+    IDE["IDE Agents<br/>Codex / Claude / MCP clients"] --> MCP["StackPilot MCP Server"]
+
+    Browser --> API["StackPilot Backend<br/>C++ Drogon API + workers"]
+    MCP --> API
+    API --> DB[("PostgreSQL + pgvector<br/>users, projects, deployments, AI memory")]
+    API --> Redis[("Redis<br/>job queue and runtime coordination")]
+    API --> AI["AI Service<br/>FastAPI model gateway"]
+    AI --> Providers["AI Providers<br/>NVIDIA NIM or OpenAI-compatible APIs"]
+
+    subgraph Sources["Project Sources"]
+        GitHub["GitHub repositories"]
+        SSH["SSH / VPS folders"]
+        Local["Allowed local folders"]
+        Apps["Application templates<br/>PostgreSQL, MySQL, Redis, MinIO, Grafana, more"]
+    end
+
+    Sources --> API
+
+    subgraph BuildRun["Build and Runtime Layer"]
+        DockerSock["Docker Engine<br/>local or remote Docker"]
+        Compose["Docker Compose stacks"]
+        K8s["Kubernetes clusters<br/>local or remote"]
+    end
+
+    API --> DockerSock
+    DockerSock --> Compose
+    API --> K8s
+
+    subgraph Observability["Observability"]
+        Prometheus["Prometheus metrics"]
+        Loki["Loki logs"]
+        Promtail["Promtail collectors"]
+        Cadvisor["cAdvisor container metrics"]
+        Grafana["Grafana dashboards"]
+    end
+
+    Compose --> Promtail
+    Compose --> Cadvisor
+    Promtail --> Loki
+    Cadvisor --> Prometheus
+    Prometheus --> Grafana
+    Loki --> Grafana
+    User --> Grafana
+
+    Internet["Public or private users"] --> Caddy["Caddy reverse proxy<br/>HTTP/HTTPS entrypoint"]
+    Caddy --> Browser
+    Caddy --> API
+    Caddy --> Grafana
+```
+
 ## Required Tools
 
 Install these before running StackPilot locally:

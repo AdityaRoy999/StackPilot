@@ -34,10 +34,10 @@ This guide is for running StackPilot on a VPS with a real domain. The same code 
 
    ```bash
    chmod +x scripts/new-production-env.sh
-   ./scripts/new-production-env.sh StackPilot.example.com admin@example.com
+   ./scripts/new-production-env.sh stackpilot.example.com admin@example.com
    ```
 
-   Replace `StackPilot.example.com` with your real domain.
+   Replace `stackpilot.example.com` with your real domain.
 
 3. Fill OAuth values in `.env` if you want Google/GitHub sign-in.
 

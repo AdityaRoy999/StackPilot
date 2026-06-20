@@ -1,4 +1,3 @@
-version: "3.9"
 name: stackpilot
 
 x-stackpilot-logging: &stackpilot-logging
@@ -171,7 +170,7 @@ services:
       - OPENAI_COMPATIBLE_THINKING_MODEL=${OPENAI_COMPATIBLE_THINKING_MODEL:-}
       - OPENAI_COMPATIBLE_EMBEDDING_MODEL=${OPENAI_COMPATIBLE_EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -250,7 +249,7 @@ services:
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
       - NEXT_PUBLIC_GITHUB_CLIENT_ID=${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - backend
 
@@ -265,7 +264,7 @@ services:
       - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}"
       - "--web.enable-lifecycle"
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -279,7 +278,7 @@ services:
     logging: *stackpilot-logging
     command: ["-config.file=/etc/loki/config.yml"]
     ports:
-      - "${LOKI_PORT:-3100}:3100"
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
     volumes:
       - ./observability/loki/config.yml:/etc/loki/config.yml:ro
       - loki_data:/loki
@@ -303,7 +302,7 @@ services:
     logging: *stackpilot-logging
     privileged: true
     ports:
-      - "${CADVISOR_PORT:-8081}:8080"
+      - "127.0.0.1:${CADVISOR_PORT:-8081}:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -317,7 +316,7 @@ services:
     restart: unless-stopped
     logging: *stackpilot-logging
     ports:
-      - "${GRAFANA_PORT:-3001}:3000"
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
