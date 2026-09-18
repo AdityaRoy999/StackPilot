@@ -516,13 +516,14 @@ export function InteractiveBrowserCanvas({
               // Fallback path: Main-thread decoding
               let payloadOffset = 0;
               let seq = 0;
+              let serverTs = 0;
               let metadata: Record<string, any> = {};
               if (buffer.byteLength >= 16) {
                 const view = new DataView(buffer);
                 if (view.getUint8(0) === 0x53 && view.getUint8(1) === 0x50) {
                   // Magic 'SP'
                   seq = view.getUint32(2);
-                  const serverTs = Number(view.getBigUint64(6));
+                  serverTs = Number(view.getBigUint64(6));
                   const metaLen = view.getUint16(14);
                   payloadOffset = 16 + metaLen;
                   if (metaLen > 2) {
