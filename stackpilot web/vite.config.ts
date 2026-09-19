@@ -8,4 +8,7 @@ export default defineConfig({
     port: 3005,
     host: '127.0.0.1',
   },
+  optimizeDeps: {
+    include: ['gsap', 'gsap/ScrollTrigger'],
+  },
 });
