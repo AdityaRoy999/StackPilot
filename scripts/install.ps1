@@ -68,11 +68,31 @@ try {
     $dockerInstalled = $false
 }
 
+# Ensure StackPilot repository exists
+if (-not (Test-Path "docker-compose.yml")) {
+    Write-Color "[*] StackPilot repository not detected in current directory." "Cyan"
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Color "[*] Installing git via winget..." "Cyan"
+        winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
+    }
+    Write-Color "[*] Cloning StackPilot from GitHub..." "Cyan"
+    git clone https://github.com/AdityaRoy999/StackPilot.git stackpilot
+    Set-Location stackpilot
+}
+
 if (-not $dockerInstalled) {
-    Write-Color "[-] Docker is not installed or not in PATH." "Red"
-    Write-Host "    Please install Docker Desktop for Windows from: https://www.docker.com/products/docker-desktop/"
-    Write-Host "    Ensure WSL 2 integration is enabled."
-    exit 1
+    Write-Color "[-] Docker is not installed or not in PATH." "Yellow"
+    $installDocker = Read-Host "Would you like to install Docker Desktop via winget? (Y/n)"
+    if ($installDocker -ne "n" -and $installDocker -ne "N") {
+        Write-Color "[*] Installing Docker Desktop via winget..." "Cyan"
+        winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+        Write-Color "[+] Docker Desktop installed! Please launch Docker Desktop, ensure WSL 2 is enabled, and re-run this script." "Green"
+        exit 0
+    } else {
+        Write-Host "    Please install Docker Desktop for Windows from: https://www.docker.com/products/docker-desktop/"
+        Write-Host "    Ensure WSL 2 integration is enabled."
+        exit 1
+    }
 }
 
 # Check if Docker daemon is responsive

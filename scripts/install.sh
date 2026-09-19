@@ -26,16 +26,45 @@ CPU_COUNT=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "2")
 echo -e "  • Total System RAM : ${GREEN}${TOTAL_RAM_GB} GB${NC}"
 echo -e "  • CPU Cores        : ${GREEN}${CPU_COUNT} Cores${NC}\n"
 
-# Check Docker
+# Ensure Git is installed and clone repository if not present
+if [ ! -f "docker-compose.yml" ]; then
+    echo -e "${CYAN}[*] StackPilot repository not detected in current directory.${NC}"
+    if ! command -v git >/dev/null 2>&1; then
+        echo -e "${CYAN}[*] Installing git...${NC}"
+        if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq git
+        elif command -v yum >/dev/null 2>&1; then
+            sudo yum install -y git
+        fi
+    fi
+    echo -e "${CYAN}[*] Cloning StackPilot from GitHub...${NC}"
+    git clone https://github.com/AdityaRoy999/StackPilot.git stackpilot
+    cd stackpilot
+fi
+
+# Check and auto-install Docker
 if ! command -v docker >/dev/null 2>&1; then
-    echo -e "${RED}[-] Docker is not installed. Please install Docker Engine first:${NC}"
-    echo -e "    curl -fsSL https://get.docker.com | sh"
-    exit 1
+    echo -e "${YELLOW}[!] Docker is not installed on this system.${NC}"
+    read -rp "Would you like to install Docker Engine automatically? (Y/n): " INSTALL_DOCKER
+    if [[ "$INSTALL_DOCKER" != "n" && "$INSTALL_DOCKER" != "N" ]]; then
+        echo -e "${CYAN}[*] Installing Docker Engine via official get.docker.com...${NC}"
+        curl -fsSL https://get.docker.com | sh
+        sudo usermod -aG docker "$USER" 2>/dev/null || true
+        sudo systemctl enable --now docker 2>/dev/null || sudo service docker start 2>/dev/null || true
+    else
+        echo -e "${RED}[-] Docker is required to run StackPilot. Exiting.${NC}"
+        exit 1
+    fi
 fi
 
 if ! docker info >/dev/null 2>&1; then
-    echo -e "${RED}[-] Docker daemon is not running. Please start Docker service.${NC}"
-    exit 1
+    echo -e "${YELLOW}[!] Starting Docker daemon...${NC}"
+    sudo systemctl start docker 2>/dev/null || sudo service docker start 2>/dev/null || true
+    sleep 3
+    if ! docker info >/dev/null 2>&1; then
+        echo -e "${RED}[-] Docker daemon is not running. Please start Docker service and re-run.${NC}"
+        exit 1
+    fi
 fi
 
 # Profile Recommendation
