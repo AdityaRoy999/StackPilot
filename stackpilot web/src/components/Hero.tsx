@@ -1,25 +1,48 @@
 import React from 'react';
+import { StrokeText } from './reactbits/StrokeText';
 import { ScriptBox } from './ScriptBox';
-import { ArrowRight, ExternalLink, ShieldCheck, Zap, Bot } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 
 export const Hero: React.FC = () => {
   return (
     <section className="pt-20 pb-16 sm:pt-28 sm:pb-20 text-center">
-      {/* Release pill */}
-      <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/60 text-xs text-zinc-400 mb-8 font-mono">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-        <span>StackPilot v2.0 • Autonomous AI Browser Testing Engine</span>
+      {/* Main Title using React Bits StrokeText */}
+      <div className="w-full max-w-4xl mx-auto space-y-1 mb-4">
+        <StrokeText
+          text="Autonomous AI QA &"
+          strokeColor="#71717A"
+          fillColor="#FFFFFF"
+          strokeWidth={1.5}
+          drawDuration={1.4}
+          fillDelay={0.15}
+          stagger={0.04}
+          ease="power2.out"
+          trigger="mount"
+          fillMode="wipe"
+          fontSize={82}
+          fontWeight={800}
+          letterSpacing={-2}
+        />
+        <StrokeText
+          text="Delivery Cockpit"
+          strokeColor="#71717A"
+          fillColor="#FFFFFF"
+          strokeWidth={1.5}
+          drawDuration={1.4}
+          fillDelay={0.28}
+          stagger={0.04}
+          ease="power2.out"
+          trigger="mount"
+          fillMode="wipe"
+          fontSize={82}
+          fontWeight={800}
+          letterSpacing={-2}
+        />
       </div>
 
-      {/* Main Title */}
-      <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 max-w-4xl mx-auto leading-[1.1]">
-        Autonomous AI QA &<br />
-        Delivery Cockpit
-      </h1>
-
       {/* Subtitle */}
-      <p className="mt-6 text-base sm:text-lg text-zinc-400 max-w-2xl mx-auto leading-relaxed font-normal">
+      <p className="mt-4 text-base sm:text-lg text-zinc-400 max-w-2xl mx-auto leading-relaxed font-normal">
         Deploy any repository in seconds. An autonomous AI agent audits your
         application, conducts 60 FPS real-time browser test journeys, and
         self-heals broken deployments.
@@ -28,7 +51,7 @@ export const Hero: React.FC = () => {
       {/* Script Copy Box */}
       <ScriptBox />
 
-      {/* CTAs */}
+      {/* Action Buttons */}
       <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
         <a
           href="http://localhost:3000"

@@ -14,7 +14,8 @@
     "lucide-react": "^1.16.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "tailwind-merge": "^3.0.2"
+    "tailwind-merge": "^3.0.2",
+    "gsap": "^3.15.0"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
