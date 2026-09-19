@@ -6,7 +6,7 @@ import { GithubIcon } from './icons/GithubIcon';
 
 export const Hero: React.FC = () => {
   return (
-    <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
+    <section className="pt-28 pb-14 sm:pt-36 sm:pb-20 text-center relative z-10">
       {/* Main Title animated with BlurText */}
       <div className="w-full max-w-5xl mx-auto mb-6 flex justify-center">
         <BlurText
@@ -19,19 +19,21 @@ export const Hero: React.FC = () => {
         />
       </div>
 
-      {/* Subtitle - The problem solved in the AI era */}
+      {/* Subtitle - Rephrased and enhanced value proposition */}
       <p className="mt-4 text-base sm:text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto leading-relaxed font-normal">
-        In the era of AI coding agents, software is written 10x faster—yet QA testing
-        and production deployments remain fragile, manual bottlenecks. StackPilot
-        autonomously bridges the gap: instantly spinning up sandboxed environments,
-        auditing browser workflows at 60 FPS, and self-healing broken deployments.
+        Deploy any web application, repository, or full-stack project 100% free for
+        instant autonomous testing. Connect your codebase—our self-healing AI
+        platform auto-provisions isolated sandboxes, audits browser workflows at
+        60 FPS, and verifies live deployments within minutes.
       </p>
 
-      {/* Script Copy Box */}
-      <ScriptBox />
+      {/* Clean Single-line Command Box with Copy Button */}
+      <div id="install" className="scroll-mt-24">
+        <ScriptBox />
+      </div>
 
       {/* Big, Separate, Rounded Action Buttons */}
-      <div className="mt-12 flex flex-wrap items-center justify-center gap-4">
+      <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
         <a
           href="http://localhost:3000"
           target="_blank"
@@ -55,3 +57,5 @@ export const Hero: React.FC = () => {
     </section>
   );
 };
+
+export default Hero;
