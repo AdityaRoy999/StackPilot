@@ -36,9 +36,10 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
     Prioritizes in-viewport elements and omits pixel coordinates while keeping IDs and semantic labels."""
     if not elements:
         return []
-    in_viewport = [e for e in elements if e.get("is_in_viewport")]
+    in_viewport = [e for e in elements if e.get("is_in_viewport") and not e.get("is_occluded")]
+    occluded_in_viewport = [e for e in elements if e.get("is_in_viewport") and e.get("is_occluded")]
     out_viewport = [e for e in elements if not e.get("is_in_viewport")]
-    ordered = in_viewport + out_viewport
+    ordered = in_viewport + occluded_in_viewport + out_viewport
 
     compacted = []
     for el in ordered[:max_count]:
@@ -61,6 +62,8 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
             item["card"] = el.get("card_context")
         if el.get("form_id"):
             item["form"] = el.get("form_id")
+        if el.get("is_occluded"):
+            item["occluded"] = True
         if not el.get("is_in_viewport"):
             item["below_fold"] = True
         compacted.append(item)

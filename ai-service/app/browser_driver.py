@@ -577,6 +577,12 @@ class BrowserSession:
             "deviceScaleFactor": 1,
             "mobile": False,
         })
+        # Keep rAF/menus and CSS animations rendering smoothly even in background or headless tabs
+        try:
+            await self.send_command("Emulation.setFocusEmulationEnabled", {"enabled": True})
+        except Exception as e:
+            logger.debug(f"Focus emulation notice: {e}")
+
 
         # Force all links (target="_blank") and window.open calls to navigate the current tab
         # so CDP session tracking and live stream never detach into zombie background tabs
@@ -1619,18 +1625,35 @@ class BrowserSession:
             const elements = [];
             const seen = new Set();
             
+            // Ultra-fast persistent in-browser DOM node cache (preserves DOM identity across steps)
+            const cache = window.__spFast = window.__spFast || { ids: new WeakMap(), nodes: new Map(), next: 1 };
+            // Clean up disconnected nodes to prevent memory leaks
+            for (const [id, e] of cache.nodes) {
+                if (!e || !e.isConnected) cache.nodes.delete(id);
+            }
+
+            const isVisible = (e) => {
+                if (!e || !e.isConnected) return false;
+                if (e.closest && e.closest('[aria-hidden="true"],[inert]')) return false;
+                if (typeof e.checkVisibility === 'function') {
+                    return e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+                }
+                const s = window.getComputedStyle(e);
+                return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+            };
+
             function collectNodes(root) {
                 const list = [];
                 const selector = 'button, a, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="switch"], [role="checkbox"], [tabindex="0"], summary, details, [class*="btn"], [class*="button"], [class*="cursor-pointer"]';
                 try {
                     const matched = root.querySelectorAll(selector);
-                    for (const el of matched) {
-                        list.push(el);
+                    for (let i = 0; i < matched.length; i++) {
+                        list.push(matched[i]);
                     }
                     const allEls = root.querySelectorAll('*');
-                    for (const el of allEls) {
-                        if (el.shadowRoot) {
-                            list.push(...collectNodes(el.shadowRoot));
+                    for (let i = 0; i < allEls.length; i++) {
+                        if (allEls[i].shadowRoot) {
+                            list.push(...collectNodes(allEls[i].shadowRoot));
                         }
                     }
                 } catch(e) {}
@@ -1649,68 +1672,87 @@ class BrowserSession:
                 winH
             );
 
-            for (const el of nodes) {
+            for (let i = 0; i < nodes.length; i++) {
+                const el = nodes[i];
                 if (seen.has(el)) continue;
                 seen.add(el);
+
+                // Fast C++ visibility check avoids expensive getComputedStyle layout thrashing
+                if (!isVisible(el)) continue;
+
                 const rect = el.getBoundingClientRect();
-                const style = window.getComputedStyle(el);
-                if (
-                    rect.width >= 3 && rect.height >= 3 &&
-                    style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0'
-                ) {
-                    let text = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
-                    if (!text) {
-                        text = (el.innerText || el.placeholder || el.value || el.name || el.id || '').trim();
-                    }
-                    text = text.replace(/\s+/g, ' ').slice(0, 80);
-                    const href = el.getAttribute('href') || '';
-                    if (text.toLowerCase().includes('skip to content') || text.toLowerCase().includes('skip to main') || href === '#main-content') {
-                        continue;
-                    }
-                    const isInViewport = (rect.bottom > 0 && rect.top < winH && rect.right > 0 && rect.left < winW);
-                    const pageY = Math.round(rect.top + scrollY);
-                    const pageX = Math.round(rect.left + scrollX);
-                    const tagL = el.tagName.toLowerCase();
-                    const hasPop = el.getAttribute('aria-haspopup') === 'true' || el.hasAttribute('data-toggle') || (el.className && typeof el.className === 'string' && (el.className.includes('dropdown') || el.className.includes('has-sub')));
-                    const isHoverCand = hasPop || (el.closest('nav, header, [role="navigation"], [class*="menu"]') !== null && (tagL === 'a' || tagL === 'button' || el.getAttribute('role') === 'menuitem'));
-                    
-                    const parentForm = el.closest('form');
-                    const formId = parentForm ? (parentForm.id || parentForm.getAttribute('name') || ('form_' + Array.from(document.querySelectorAll('form')).indexOf(parentForm))) : '';
-                    const parentCard = el.parentElement ? el.parentElement.closest('[class*="card"], [class*="item"], [class*="box"], [class*="tile"], [class*="product"], [class*="service"], article, section, li') : null;
-                    let cardHeading = '';
-                    if (parentCard) {
-                        const h = parentCard.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="heading"], strong, b');
-                        if (h) cardHeading = (h.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 40);
-                    }
+                if (rect.width < 3 || rect.height < 3) continue;
 
-                    const elemId = counter++;
-                    try { el.setAttribute('data-sp-id', String(elemId)); } catch(e) {}
-
-                    elements.push({
-                        id: elemId,
-                        tag: tagL,
-                        role: el.getAttribute('role') || tagL,
-                        type: el.type || '',
-                        href: href,
-                        text: text,
-                        name: el.name || '',
-                        input_id: el.id || '',
-                        placeholder: el.placeholder || '',
-                        disabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
-                        is_in_viewport: isInViewport,
-                        is_hover_candidate: Boolean(isHoverCand),
-                        has_popup: Boolean(hasPop),
-                        form_id: formId,
-                        card_context: cardHeading,
-                        page_y: pageY,
-                        page_x: pageX,
-                        x: Math.round(rect.left + rect.width / 2),
-                        y: Math.round(rect.top + rect.height / 2),
-                        w: Math.round(rect.width),
-                        h: Math.round(rect.height)
-                    });
-                    if (elements.length >= 600) break;
+                let text = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+                if (!text) {
+                    text = (el.innerText || el.placeholder || el.value || el.name || el.id || '').trim();
                 }
+                text = text.replace(/\s+/g, ' ').slice(0, 80);
+                const href = el.getAttribute('href') || '';
+                if (text.toLowerCase().includes('skip to content') || text.toLowerCase().includes('skip to main') || href === '#main-content') {
+                    continue;
+                }
+                const isInViewport = (rect.bottom > 0 && rect.top < winH && rect.right > 0 && rect.left < winW);
+                const pageY = Math.round(rect.top + scrollY);
+                const pageX = Math.round(rect.left + scrollX);
+                const cx = Math.round(rect.left + rect.width / 2);
+                const cy = Math.round(rect.top + rect.height / 2);
+
+                // Hit-testing / point occlusion verification to detect overlays, modals, and sticky headers
+                let isOccluded = false;
+                if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH) {
+                    try {
+                        const topNode = document.elementFromPoint(cx, cy);
+                        if (topNode && topNode !== el && !el.contains(topNode) && !topNode.contains(el)) {
+                            isOccluded = true;
+                        }
+                    } catch(e) {}
+                }
+
+                const tagL = (el.tagName || '').toLowerCase();
+                const hasPop = el.getAttribute('aria-haspopup') === 'true' || el.hasAttribute('data-toggle') || (el.className && typeof el.className === 'string' && (el.className.includes('dropdown') || el.className.includes('has-sub')));
+                const isHoverCand = hasPop || (el.closest('nav, header, [role="navigation"], [class*="menu"]') !== null && (tagL === 'a' || tagL === 'button' || el.getAttribute('role') === 'menuitem'));
+                
+                const parentForm = el.closest('form');
+                const formId = parentForm ? (parentForm.id || parentForm.getAttribute('name') || ('form_' + Array.from(document.querySelectorAll('form')).indexOf(parentForm))) : '';
+                const parentCard = el.parentElement ? el.parentElement.closest('[class*="card"], [class*="item"], [class*="box"], [class*="tile"], [class*="product"], [class*="service"], article, section, li') : null;
+                let cardHeading = '';
+                if (parentCard) {
+                    const h = parentCard.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="heading"], strong, b');
+                    if (h) cardHeading = (h.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+                }
+
+                const elemId = counter++;
+                // Register in persistent in-browser map for 0ms direct pointer resolution
+                cache.nodes.set(elemId, el);
+                cache.ids.set(el, elemId);
+                try { el.setAttribute('data-sp-id', String(elemId)); } catch(e) {}
+
+                elements.push({
+                    id: elemId,
+                    tag: tagL,
+                    role: el.getAttribute('role') || tagL,
+                    type: el.type || '',
+                    href: href,
+                    text: text,
+                    name: el.name || '',
+                    input_id: el.id || '',
+                    placeholder: el.placeholder || '',
+                    disabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
+                    is_in_viewport: isInViewport,
+                    is_occluded: isOccluded,
+                    is_hover_candidate: Boolean(isHoverCand),
+                    has_popup: Boolean(hasPop),
+                    form_id: formId,
+                    card_context: cardHeading,
+                    page_y: pageY,
+                    page_x: pageX,
+                    x: cx,
+                    y: cy,
+                    w: Math.round(rect.width),
+                    h: Math.round(rect.height)
+                });
+                if (elements.length >= 600) break;
             }
 
             // Collect any text/buttons recorded by the Canvas 2D interception hook
@@ -2276,14 +2318,12 @@ class BrowserSession:
     async def toggle_checkbox(self, element_id: int) -> bool:
         """Toggles a checkbox or switch element."""
         el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
-        if not el:
-            return False
-        await self.click(el["x"], el["y"], label=f"Toggle {el.get('text') or 'checkbox'}")
+        if el and el.get("x") is not None and el.get("y") is not None:
+            await self.click(el["x"], el["y"], label=f"Toggle {el.get('text') or 'checkbox'}", fast_mode=True)
         toggle_js = f"""
         (() => {{
             try {{
-                const els = Array.from(document.querySelectorAll('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="switch"]'));
-                const target = els.find(e => Math.abs(e.getBoundingClientRect().left + e.getBoundingClientRect().width/2 - {el['x']}) < 20);
+                const target = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (target) {{
                     target.checked = !target.checked;
                     target.dispatchEvent(new Event('input', {{ bubbles: true }}));
@@ -2301,13 +2341,10 @@ class BrowserSession:
     async def select_option(self, element_id: int, value: str = "") -> bool:
         """Selects an option in a <select> element."""
         el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
-        if not el:
-            return False
         select_js = f"""
         (() => {{
             try {{
-                const selects = Array.from(document.querySelectorAll('select'));
-                const target = selects.find(s => Math.abs(s.getBoundingClientRect().left + s.getBoundingClientRect().width/2 - {el['x']}) < 25) || selects[0];
+                const target = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (target && target.options && target.options.length > 0) {{
                     let chosen = -1;
                     const valLow = "{value}".toLowerCase();
@@ -2363,7 +2400,7 @@ class BrowserSession:
         """Scrolls a specific element into viewport center using DOM scrollIntoView or coordinates and waits for standstill."""
         scrolled = await self.evaluate(f"""
         (() => {{
-            const el = document.querySelector('[data-sp-id="{element_id}"]');
+            const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
             if (el) {{
                 const r = el.getBoundingClientRect();
                 const inView = (r.top >= 20 && r.bottom <= (window.innerHeight || 720) - 20);
@@ -2459,7 +2496,7 @@ class BrowserSession:
             await self.scroll_to_element(element_id)
             coords = await self.evaluate(f"""
             (() => {{
-                const el = document.querySelector('[data-sp-id="{element_id}"]');
+                const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (!el) return null;
                 const r = el.getBoundingClientRect();
                 return {{

@@ -67,13 +67,19 @@ class ActionPerceptionVerification:
         scroll_y = getattr(session, "scroll_y", 0)
 
         js_probe = """(() => {
+            const isVisible = (e) => {
+                if (!e || !e.isConnected) return false;
+                if (e.closest && e.closest('[aria-hidden="true"],[inert]')) return false;
+                if (typeof e.checkVisibility === 'function') {
+                    return e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+                }
+                const s = window.getComputedStyle(e);
+                return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+            };
             const modals = Array.from(document.querySelectorAll('[role="dialog"], dialog[open], .modal.show, [aria-modal="true"]'))
-                .filter(m => window.getComputedStyle(m).display !== 'none');
+                .filter(m => isVisible(m));
             const alerts = Array.from(document.querySelectorAll('[role="alert"], .alert, .toast, .success, .error, [class*="toast"], [class*="alert"]'))
-                .filter(a => {
-                    const st = window.getComputedStyle(a);
-                    return st.display !== 'none' && st.visibility !== 'hidden' && st.opacity !== '0';
-                })
+                .filter(a => isVisible(a))
                 .map(a => (a.innerText || a.textContent || '').trim())
                 .filter(Boolean)
                 .slice(0, 5);
@@ -143,13 +149,18 @@ class ActionPerceptionVerification:
         # Retrieve exact bounding box and element text
         coords = await session.evaluate(f"""
         (() => {{
-            const el = document.querySelector('[data-sp-id="{element_id}"]');
+            const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
             if (!el) return null;
             const r = el.getBoundingClientRect();
+            const cx = Math.round(r.left + r.width / 2);
+            const cy = Math.round(r.top + r.height / 2);
+            const topEl = document.elementFromPoint(cx, cy);
+            const isOccluded = topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el);
             return {{
-                x: Math.round(r.left + r.width / 2),
-                y: Math.round(r.top + r.height / 2),
-                text: (el.innerText || el.getAttribute('aria-label') || '').trim()
+                x: cx,
+                y: cy,
+                text: (el.innerText || el.getAttribute('aria-label') || '').trim(),
+                is_occluded: Boolean(isOccluded)
             }};
         }})()
         """)
@@ -171,8 +182,14 @@ class ActionPerceptionVerification:
         display_label = f"Click: {clean_target}" if clean_target else "Click"
 
         clicked = False
-        # Tier 1: High-precision native CDP Hardware Mouse Event Sequence
-        if coords and coords.get("x") is not None and coords.get("y") is not None:
+        # Tier 1: High-precision native CDP Hardware Mouse Event Sequence (if unoccluded)
+        if coords and coords.get("x") is not None and coords.get("y") is not None and not coords.get("is_occluded"):
+            click_x = coords["x"]
+            click_y = coords["y"]
+            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode)
+            clicked = True
+        elif coords and coords.get("x") is not None and coords.get("y") is not None:
+            # If occluded by a small header or badge, try hardware click first then fall back to Tier 2
             click_x = coords["x"]
             click_y = coords["y"]
             await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode)
@@ -183,11 +200,11 @@ class ActionPerceptionVerification:
                 await session.click(el["x"], el["y"], label=display_label, fast_mode=fast_mode)
                 clicked = True
 
-        # Tier 2: Synthetic DOM Event Fallback (ONLY if hardware coordinates were unavailable)
-        if not clicked:
+        # Tier 2: Synthetic DOM Event Fallback (if hardware click failed or target was occluded)
+        if not clicked or (coords and coords.get("is_occluded")):
             await session.evaluate(f"""
             (() => {{
-                const el = document.querySelector('[data-sp-id="{element_id}"]');
+                const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (!el) return;
                 try {{
                     if (typeof el.click === 'function') {{
