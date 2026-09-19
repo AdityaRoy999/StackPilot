@@ -155,6 +155,7 @@ export function InteractiveBrowserCanvas({
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef<boolean>(false);
   const fallbackDecoderRef = useRef<any>(null);
+  const keyframeExpectedRef = useRef<boolean>(true);
   const lastFallbackChunkTsRef = useRef<number>(0);
   const lastFpsCalcRef = useRef(Date.now());
   const lastMoveSentRef = useRef(0);
@@ -166,7 +167,7 @@ export function InteractiveBrowserCanvas({
   const [isRefreshingElements, setIsRefreshingElements] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
 
-  // Independent 1-second telemetry timer to ensure FPS is always displayed accurately (when worker is inactive)
+  // Independent 1-second telemetry timer to ensure FPS is always displayed accurately
   useEffect(() => {
     if (!isOpen) return;
     const interval = setInterval(() => {
@@ -174,8 +175,10 @@ export function InteractiveBrowserCanvas({
       const deltaSec = (now - lastFpsCalcRef.current) / 1000;
       if (deltaSec >= 0.8) {
         const renderFps = Math.round(frameCountRef.current / deltaSec);
+        const netFps = Math.round(netFrameCountRef.current / deltaSec);
         if (connected) {
           setFps(renderFps);
+          setNetworkFps(netFps);
         } else {
           setFps(0);
           setNetworkFps(0);
@@ -293,60 +296,9 @@ export function InteractiveBrowserCanvas({
       }
     };
 
-    // Initialize High-Performance Browser Stream Web Worker (Hardware ImageBitmap Transfer)
-    if (
-      typeof window !== "undefined" &&
-      typeof Worker !== "undefined" &&
-      !workerRef.current
-    ) {
-      try {
-        const worker = new Worker(new URL("../workers/browser-stream.worker.ts", import.meta.url));
-
-        worker.onmessage = (e: MessageEvent) => {
-          if (isDisposed) return;
-          if (e.data?.type === "stats") {
-            if (typeof e.data.netFps === "number") {
-              setNetworkFps(e.data.netFps);
-            }
-          } else if (e.data?.type === "latency") {
-            const now = Date.now();
-            if (now - lastLatencyUpdateRef.current >= 800) {
-              lastLatencyUpdateRef.current = now;
-              setLatencyMs(e.data.latencyMs ?? 0);
-            }
-          } else if (e.data?.type === "record_blob" && e.data.blob) {
-            recordFrame(e.data.blob);
-          } else if (e.data?.type === "video_frame" && e.data.frame) {
-            const frame = e.data.frame as VideoFrame;
-            if (isPlaybackModeRef.current) {
-              frame.close();
-              return;
-            }
-            if (nextVideoFrameRef.current) {
-              nextVideoFrameRef.current.close();
-            }
-            nextVideoFrameRef.current = frame;
-          } else if (e.data?.type === "bitmap" && e.data.bitmap) {
-            const bitmap = e.data.bitmap as ImageBitmap;
-            if (isPlaybackModeRef.current) {
-              bitmap.close();
-              return;
-            }
-            if (nextBitmapRef.current) {
-              nextBitmapRef.current.close();
-            }
-            nextBitmapRef.current = bitmap;
-          }
-        };
-
-        workerRef.current = worker;
-        workerReadyRef.current = true;
-      } catch (err) {
-        console.warn("[BrowserCanvas] Web Worker initialization fallback:", err);
-        workerRef.current = null;
-        workerReadyRef.current = false;
-      }
-    }
+    // Direct main-thread WebCodecs and ImageBitmap decoding (bypasses worker thread-hop ping-pong)
+    workerRef.current = null;
+    workerReadyRef.current = false;
 
     const connect = () => {
       if (isDisposed) return;
@@ -477,13 +429,7 @@ export function InteractiveBrowserCanvas({
                 return;
               }
 
-              // High-performance path: OffscreenCanvas Web Worker with zero-copy buffer transfer
-              if (workerReadyRef.current && workerRef.current) {
-                workerRef.current.postMessage({ type: "frame", buffer }, [buffer]);
-                return;
-              }
-
-              // Fallback path: Main-thread decoding
+              // Direct main-thread decoding (zero-copy hardware acceleration, zero thread-hopping)
               let payloadOffset = 0;
               let seq = 0;
               let serverTs = 0;
@@ -512,6 +458,7 @@ export function InteractiveBrowserCanvas({
                   if (seq > 0 && seq < lastFrameSeqRef.current) {
                     lastFrameSeqRef.current = seq;
                     lastDrawnSeqRef.current = 0;
+                    keyframeExpectedRef.current = true;
                   } else if (seq > 0) {
                     lastFrameSeqRef.current = seq;
                   }
@@ -522,9 +469,14 @@ export function InteractiveBrowserCanvas({
                 }
               }
 
-              // H.264 WebCodecs Fallback on Main Thread
+              // H.264 WebCodecs Fast-Path (direct hardware decoding)
               if (metadata.codec === "h264" || metadata.codec === "avc1") {
                 if (typeof (window as any).VideoDecoder !== "undefined") {
+                  if (keyframeExpectedRef.current && !metadata.isKeyFrame) {
+                    return; // Await initial IDR keyframe to prevent decode corruption
+                  }
+                  keyframeExpectedRef.current = false;
+
                   if (!fallbackDecoderRef.current || fallbackDecoderRef.current.state === "closed") {
                     try {
                       fallbackDecoderRef.current = new (window as any).VideoDecoder({
@@ -540,12 +492,20 @@ export function InteractiveBrowserCanvas({
                               if (ctx2d) {
                                 ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
                                 frameCountRef.current += 1;
+                                const now = Date.now();
+                                if (now - lastRecordedTimeRef.current >= 200) {
+                                  canvas.toBlob((b) => {
+                                    if (b && !isPlaybackModeRef.current) recordFrame(b);
+                                  }, "image/jpeg", 0.7);
+                                }
                               }
                             } catch {}
                           }
                           frame.close();
                         },
-                        error: () => {
+                        error: (err: any) => {
+                          console.warn("[BrowserCanvas] VideoDecoder reset notice:", err);
+                          keyframeExpectedRef.current = true;
                           try {
                             fallbackDecoderRef.current?.close();
                           } catch {}
@@ -575,7 +535,9 @@ export function InteractiveBrowserCanvas({
                       });
                       fallbackDecoderRef.current.decode(chunk);
                       return;
-                    } catch {}
+                    } catch (e) {
+                      keyframeExpectedRef.current = true;
+                    }
                   }
                 }
                 return;

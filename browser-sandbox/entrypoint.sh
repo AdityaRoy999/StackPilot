@@ -10,6 +10,7 @@ rm -f /tmp/.X11-unix/X99 /tmp/.X99-lock 2>/dev/null || true
 rm -rf /tmp/chromium-data/Singleton* 2>/dev/null || true
 rm -rf /tmp/chromium-data/Default/Preferences* 2>/dev/null || true
 rm -rf /tmp/chromium-data/Crash* 2>/dev/null || true
+rm -rf /etc/chromium.d 2>/dev/null || true
 
 echo "[Entrypoint] Starting Xvfb virtual display on :99..."
 Xvfb :99 -screen 0 1280x720x24 -nocursor -nolisten tcp +extension MIT-SHM &
@@ -25,7 +26,7 @@ for i in $(seq 1 30); do
 done
 
 echo "[Entrypoint] Starting Chromium on DISPLAY=:99 (port 9223)..."
-chromium \
+/usr/lib/chromium/chromium \
   --no-sandbox \
   --disable-dev-shm-usage \
   --test-type \
@@ -43,14 +44,9 @@ chromium \
   --window-size=1280,720 \
   --window-position=0,0 \
   --start-maximized \
-  --ignore-gpu-blocklist \
-  --enable-webgl \
-  --use-gl=angle \
-  --use-angle=swiftshader \
-  --enable-unsafe-swiftshader \
-  --num-raster-threads=4 \
-  --default-tile-width=512 \
-  --default-tile-height=512 \
+  --disable-gpu \
+  --disable-gpu-rasterization \
+  --disable-software-rasterizer \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \

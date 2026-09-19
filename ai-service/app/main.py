@@ -5475,7 +5475,7 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
                 elif msg_type == "user_click":
                     x = int(msg.get("x", 0))
                     y = int(msg.get("y", 0))
-                    await active_session.click(x, y, label="User Click")
+                    await active_session.click(x, y, label="User Click", fast_mode=True)
                 elif msg_type == "user_move":
                     x = int(msg.get("x", 0))
                     y = int(msg.get("y", 0))
@@ -5488,8 +5488,14 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
                     text = str(msg.get("text", ""))
                     await active_session.type_text(text)
                 elif msg_type == "user_scroll":
-                    delta_y = int(msg.get("delta_y", 300))
-                    await active_session.scroll(delta_y=delta_y, extract_tree=False)
+                    delta_y = int(msg.get("delta_y", 150))
+                    active_session.send_command_nowait("Input.dispatchMouseEvent", {
+                        "type": "mouseWheel",
+                        "x": int(msg.get("x", active_session.cursor_x or 640)),
+                        "y": int(msg.get("y", active_session.cursor_y or 360)),
+                        "deltaX": 0,
+                        "deltaY": delta_y,
+                    })
                 elif msg_type == "user_key":
                     key = str(msg.get("key", "Enter"))
                     await active_session.press_key(key)
