@@ -9,6 +9,6 @@ export default defineConfig({
     host: '127.0.0.1',
   },
   optimizeDeps: {
-    include: ['gsap', 'gsap/ScrollTrigger', 'lenis'],
+    include: ['gsap', 'gsap/ScrollTrigger', 'lenis', 'ogl'],
   },
 });
