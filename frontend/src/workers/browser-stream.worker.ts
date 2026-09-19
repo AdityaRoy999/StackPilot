@@ -106,7 +106,7 @@ function getOrCreateVideoDecoder() {
         },
       });
       videoDecoder.configure({
-        codec: "avc1.42001f", // Canonical Baseline Level 3.1 profile
+        codec: "avc1.420029", // Canonical Baseline Level 4.1 profile (720p@60fps & 1080p@30fps)
         optimizeForLatency: true,
       });
     } catch (e) {

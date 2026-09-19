@@ -48,6 +48,7 @@ chromium \
   --enable-webgl2 \
   --use-gl=angle \
   --use-angle=swiftshader \
+  --enable-unsafe-swiftshader \
   --enable-gpu-rasterization \
   --enable-zero-copy \
   --num-raster-threads=4 \

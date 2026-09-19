@@ -561,7 +561,7 @@ export function InteractiveBrowserCanvas({
                         },
                       });
                       fallbackDecoderRef.current.configure({
-                        codec: "avc1.42001f",
+                        codec: "avc1.420029",
                         optimizeForLatency: true,
                       });
                     } catch {
