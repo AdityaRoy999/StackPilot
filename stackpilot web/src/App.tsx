@@ -11,30 +11,30 @@ export const App: React.FC = () => {
     <ScriptProvider>
       <SmoothScroll>
         <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-hidden">
-          {/* Full-screen Global WebThreads Background - Clearly Visible & Atmospheric */}
-          <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none opacity-80">
+          {/* Full-screen Global WebThreads Background - Very low brightness, subtle ambient dark texture */}
+          <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none opacity-20">
             <WebThreads
-              color1="#27272a"
-              color2="#71717a"
-              color3="#ffffff"
-              speed={0.18}
-              threadCount={6}
-              frequency={4.5}
-              spread={0.22}
+              color1="#000000"
+              color2="#18181b"
+              color3="#3f3f46"
+              speed={0.12}
+              threadCount={5}
+              frequency={3.8}
+              spread={0.2}
               taper={1.0}
               position={0.5}
               fanMode="center"
-              glow={0.06}
-              falloff={0.65}
-              thickness={1.4}
-              brightness={0.85}
-              opacity={0.85}
+              glow={0.005}
+              falloff={0.75}
+              thickness={0.85}
+              brightness={0.2}
+              opacity={0.3}
               mirror={true}
-              shimmer={true}
+              shimmer={false}
               grain={true}
-              grainIntensity={0.03}
+              grainIntensity={0.02}
               mouseInteraction={true}
-              mouseStrength={0.35}
+              mouseStrength={0.18}
             />
           </div>
 

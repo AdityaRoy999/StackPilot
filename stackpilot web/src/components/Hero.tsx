@@ -38,7 +38,7 @@ export const Hero: React.FC = () => {
           href="http://localhost:3000"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-zinc-50 text-zinc-950 hover:bg-zinc-200 text-sm sm:text-base font-semibold transition-all shadow-xl shadow-white/5 hover:scale-105 active:scale-95"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-zinc-50 text-zinc-950 hover:bg-zinc-200 text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95"
         >
           <span>Open Cockpit</span>
           <ArrowRight className="w-4 h-4" />
