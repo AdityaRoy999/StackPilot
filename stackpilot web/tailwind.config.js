@@ -27,6 +27,10 @@ export default {
           emerald: '#10b981',
           amber: '#f59e0b',
           rose: '#f43f5e',
+        },
+        zinc: {
+          850: '#1b1b1f',
+          750: '#2e2e36',
         }
       },
       fontFamily: {
