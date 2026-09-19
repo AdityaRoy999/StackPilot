@@ -20,6 +20,8 @@ let netFrameCount = 0;
 let lastFpsCalc = performance.now();
 let isPaused = false;
 let animId: number | null = null;
+let lastRecordTs = 0;
+let lastLatencyPostTs = 0;
 
 let canvasWidth = 1280;
 let canvasHeight = 720;
@@ -141,7 +143,8 @@ async function processBinaryFrame(buffer: ArrayBuffer) {
     }
 
     const now = Date.now();
-    if (serverTs > 0 && now >= serverTs) {
+    if (serverTs > 0 && now >= serverTs && now - lastLatencyPostTs >= 800) {
+      lastLatencyPostTs = now;
       ctx.postMessage({ type: "latency", latencyMs: now - serverTs });
     }
 
@@ -214,6 +217,17 @@ async function processBinaryFrame(buffer: ArrayBuffer) {
 
     if (capturedSeq > 0) {
       lastRenderedSeq = capturedSeq;
+    }
+
+    const now = Date.now();
+    if (now - lastRecordTs >= 1000) {
+      lastRecordTs = now;
+      ctx.postMessage({
+        type: "record_blob",
+        blob,
+        seq: capturedSeq,
+        ts: now,
+      });
     }
 
     if (canvas && !isPaused) {

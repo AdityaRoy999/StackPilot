@@ -43,11 +43,17 @@ chromium \
   --window-size=1280,720 \
   --window-position=0,0 \
   --start-maximized \
-  --hide-scrollbars \
-  --disable-gpu \
-  --disable-frame-rate-limit \
+  --ignore-gpu-blocklist \
+  --enable-webgl \
+  --enable-webgl2 \
+  --use-gl=angle \
+  --use-angle=swiftshader \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
   --num-raster-threads=4 \
-  --enable-features=UseSkiaRenderer \
+  --default-tile-width=512 \
+  --default-tile-height=512 \
+  --enable-features=UseSkiaRenderer,CanvasOopRasterization \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \

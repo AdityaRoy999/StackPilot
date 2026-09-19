@@ -2,11 +2,13 @@
 
 import { useSyncExternalStore } from "react";
 import api from "@/lib/api";
+import { injectCustomThemeStyles } from "@/lib/custom-themes";
 
 // The theme *family* is a separate axis from light/dark (which next-themes owns
 // via the `class` attribute). It lives on <html data-ui-theme="...">, and the
 // CSS in globals.css keys every design token off that attribute.
 export const UI_THEMES = [
+  "radix",
   "shadcn",
   "apple",
   "material",
@@ -25,9 +27,9 @@ export const UI_THEMES = [
   "ibm-carbon",
   "azure-fluent",
 ] as const;
-export type UiTheme = (typeof UI_THEMES)[number];
+export type UiTheme = (typeof UI_THEMES)[number] | (string & {});
 
-export const DEFAULT_UI_THEME: UiTheme = "shadcn";
+export const DEFAULT_UI_THEME: UiTheme = "radix";
 export const UI_THEME_STORAGE_KEY = "stackpilot.ui-theme";
 
 export interface UiThemeMeta {
@@ -39,6 +41,12 @@ export interface UiThemeMeta {
 }
 
 export const UI_THEME_META: UiThemeMeta[] = [
+  {
+    id: "radix",
+    name: "Radix UI",
+    description: "Official Radix UI specification — Indigo accent (#3e63dd), Slate neutrals, and precision component geometry.",
+    swatches: ["#fcfcfd", "#f0f0f3", "#3e63dd"],
+  },
   {
     id: "shadcn",
     name: "Default",
@@ -143,12 +151,20 @@ export const UI_THEME_META: UiThemeMeta[] = [
   },
 ];
 
-function isUiTheme(value: string | null): value is UiTheme {
-  return value !== null && (UI_THEMES as readonly string[]).includes(value);
+export function isCustomThemeId(value: string | null): boolean {
+  return typeof value === "string" && /^custom-[a-z0-9_-]+$/.test(value);
+}
+
+export function isUiTheme(value: string | null): value is UiTheme {
+  if (!value) return false;
+  return (UI_THEMES as readonly string[]).includes(value) || isCustomThemeId(value);
 }
 
 export function applyUiTheme(theme: UiTheme) {
   document.documentElement.setAttribute("data-ui-theme", theme);
+  if (typeof window !== "undefined" && typeof theme === "string" && theme.startsWith("custom-")) {
+    injectCustomThemeStyles();
+  }
 }
 
 const listeners = new Set<() => void>();

@@ -83,6 +83,7 @@ class AgentRequest(BaseModel):
     approval_token: Optional[str] = None
     images: List[str] = Field(default_factory=list)
     custom_url: Optional[str] = None
+    sandbox_mode: Literal["local", "remote"] = "local"
 
     @model_validator(mode="after")
     def normalize_legacy_fields(self) -> "AgentRequest":
@@ -2748,16 +2749,26 @@ async def stream_agent_reply(
 
         custom_target = getattr(request, "custom_url", None) or (request.runtime or {}).get("custom_url") or (request.runtime or {}).get("url")
         target_runtime_url = ""
-        if custom_target and custom_target not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
+        if custom_target and custom_target not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
             target_runtime_url = custom_target
         elif request.message and re.search(r"https?://[^\s<>\"']+", request.message):
-            target_runtime_url = resolve_target_project_runtime_url(user_message=request.message)
+            target_runtime_url = resolve_target_project_runtime_url(user_message=request.message, session_id=request.session_id)
         else:
-            target_runtime_url = (
-                (request.deployment or {}).get("runtime_url") or
-                (request.project or {}).get("runtime_url") or
-                ""
-            )
+            # 1. Prioritize active live browser canvas session if already navigated
+            try:
+                from .browser_driver import browser_manager
+                live_sess = (browser_manager.sessions.get(request.session_id) if request.session_id else None) or browser_manager.get_active_session()
+                if live_sess and live_sess.current_url and live_sess.current_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
+                    target_runtime_url = live_sess.current_url
+            except Exception:
+                pass
+
+            if not target_runtime_url:
+                target_runtime_url = (
+                    (request.deployment or {}).get("runtime_url") or
+                    (request.project or {}).get("runtime_url") or
+                    ""
+                )
 
         if not target_runtime_url or any(bad in target_runtime_url for bad in ["localhost:3000", "127.0.0.1:3000"]):
             resolved = resolve_target_project_runtime_url(
@@ -2765,6 +2776,7 @@ async def stream_agent_reply(
                 deployment_id=request.deployment_id or (request.deployment or {}).get("id"),
                 user_message=request.message,
                 custom_url=custom_target,
+                session_id=request.session_id,
             )
             if resolved and resolved != "about:blank":
                 target_runtime_url = resolved
@@ -2809,9 +2821,10 @@ async def stream_agent_reply(
             )
         elif is_browser_test:
             user_content += (
-                f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user requested to test the entire website/UI for target '{target_runtime_url}'. "
+                f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user requested to test the live application for target '{target_runtime_url}'. "
                 f"1. Open or navigate the live browser session using `browser_open_live_session(url='{target_runtime_url}')`. "
-                f"If the session is currently open at a different website or project, ensure you navigate to '{target_runtime_url}'. "
+                f"You MUST ONLY test target '{target_runtime_url}'. Do NOT test any URL from previous chat turns or previous sessions. "
+                f"If the session is currently open at a different website or project, ensure you navigate directly to '{target_runtime_url}'. "
                 f"2. Comprehensive testing workflow: "
                 f"   - Header & navigation controls (click key section buttons and tabs). "
                 f"   - Form inputs & textareas (fill ALL fields: name, email, phone, message, AND click Submit/Send/Test to verify submission). "
@@ -3654,6 +3667,7 @@ async def stream_agent_reply(
         m.get("role") == "tool" and ("interactive_elements" in str(m.get("content", "")) or "browser_open" in str(m.get("tool_call_id", "")))
         for m in messages
     )
+    from .browser_driver import browser_manager
     active_session = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
     session_exists = bool(active_session and active_session.is_connected)
 
@@ -3686,7 +3700,7 @@ async def stream_agent_reply(
                     "role": el.get("role") or "",
                     "href": el.get("href") or "",
                 }
-                for el in clean_open.get("interactive_elements", [])[:35]
+                for el in clean_open.get("interactive_elements", [])[:80]
             ]
         messages.append({
             "role": "tool",
@@ -3747,10 +3761,12 @@ async def stream_agent_reply(
         tested_signatures = set()
         curr_norm = (active_session.current_url or "").rstrip("/").strip()
         target_norm = (target_runtime_url or "").rstrip("/").strip()
-        if target_norm and target_norm not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and curr_norm != target_norm:
+        if target_norm and target_norm not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"} and curr_norm != target_norm:
             try:
                 logger.info(f"Active session URL '{curr_norm}' differs from target '{target_norm}'. Navigating...")
                 await active_session.navigate(target_runtime_url)
+                await asyncio.sleep(0.5)
+                await active_session.extract_interactive_tree()
             except Exception as e:
                 logger.warning(f"Error navigating active session: {e}")
 
@@ -3816,6 +3832,28 @@ async def stream_agent_reply(
             yield _sse({"type": "content", "delta": "\n\n*(Testing stopped by user)*"})
             yield _sse({"type": "done", "trace_id": trace_id, "stopped": True})
             return
+
+        # ─── SYNC LLM-PHASE CLICKS INTO TESTED_SIGNATURES (DEDUPLICATION) ───
+        # Prevent the autonomous frontier engine from re-clicking elements
+        # that the LLM already tested in its initial tool loop passes.
+        for tc in test_cases:
+            tc_label = (tc.get("label") or tc.get("target") or "").lower().strip()
+            tc_action = tc.get("action", "")
+            if tc_label:
+                tested_signatures.add(f"ctrl::{tc_label}:")
+                tested_signatures.add(f"tab:{tc_label}")
+                tested_signatures.add(f"accordion:{tc_label}")
+        # Also extract click targets from tool messages in the conversation
+        for m in messages:
+            if m.get("role") == "tool":
+                try:
+                    mc = json.loads(m.get("content", "{}")) if isinstance(m.get("content"), str) else m.get("content", {})
+                    if isinstance(mc, dict):
+                        t = (mc.get("target") or "").lower().strip()
+                        if t:
+                            tested_signatures.add(f"ctrl::{t}:")
+                except Exception:
+                    pass
 
         # ─── HIGH-SPEED DYNAMIC EXPLORATION FRONTIER ENGINE (100% SITE COVERAGE) ───
         from collections import deque
@@ -4248,12 +4286,64 @@ async def stream_agent_reply(
                         pass
 
                     if is_external:
-                        ext_thought = f"• 🌐 [Outbound Domain] Verified external navigation to `{post_url}`. Backtracking to application `{current_page_clean_url}`...\n"
+                        # ─── EXTERNAL LINK VERIFICATION ───
+                        # Verify the external page loaded correctly (not 404, not broken)
+                        # then immediately backtrack — do NOT explore the external site
+                        ext_status = "✅ reachable"
+                        ext_title = ""
+                        try:
+                            await active_session.wait_for_quiescence(network_idle_ms=100, dom_quiet_ms=50, max_timeout_s=2.0, fast_mode=True)
+                            ext_check = await active_session.send_command("Runtime.evaluate", {
+                                "expression": """(() => {
+                                    const title = document.title || '';
+                                    const bodyText = (document.body?.innerText || '').substring(0, 300).toLowerCase();
+                                    const is404 = bodyText.includes('404') || bodyText.includes('not found') || bodyText.includes('page not found') || bodyText.includes('does not exist');
+                                    const isError = bodyText.includes('error') && (bodyText.includes('500') || bodyText.includes('server error') || bodyText.includes('something went wrong'));
+                                    const isForbidden = bodyText.includes('403') || bodyText.includes('forbidden') || bodyText.includes('access denied');
+                                    return { title, is404, isError, isForbidden, url: window.location.href };
+                                })()""",
+                                "returnByValue": True
+                            })
+                            ext_data = ext_check.get("result", {}).get("value", {}) if isinstance(ext_check, dict) else {}
+                            ext_title = ext_data.get("title", "")
+                            actual_url = ext_data.get("url", post_url)
+
+                            if ext_data.get("is404"):
+                                ext_status = "❌ 404 Not Found"
+                            elif ext_data.get("isError"):
+                                ext_status = "❌ Server Error"
+                            elif ext_data.get("isForbidden"):
+                                ext_status = "⚠️ 403 Forbidden"
+                            elif ext_title:
+                                ext_status = f"✅ loaded ('{ext_title[:40]}')"
+                            else:
+                                ext_status = "✅ reachable"
+                        except Exception:
+                            ext_status = "⚠️ timeout/unreachable"
+
+                        ext_thought = (
+                            f"• 🔗 [External Link Check] {label_display} → `{post_url}` — {ext_status}\n"
+                            f"  ↳ Backtracking to `{current_page_clean_url}` (not exploring external site)\n"
+                        )
                         reasoning_parts.append(ext_thought)
                         yield _sse({"type": "reasoning", "delta": ext_thought})
+
+                        # Record the external link verification as a test case
+                        test_cases.append({
+                            "label": f"External Link: {label_display[:35]}",
+                            "tag": "external_link",
+                            "action": "verify_link",
+                            "status": "passed" if "✅" in ext_status else "failed",
+                            "target": post_url,
+                            "url": current_page_clean_url,
+                            "title": ext_title,
+                            "result": {"external_url": post_url, "verification": ext_status},
+                        })
+
+                        # Navigate back to target URL immediately
                         try:
                             await active_session.navigate(current_page_clean_url)
-                            await active_session.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=1.0, fast_mode=True)
+                            await active_session.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=1.5, fast_mode=True)
                             await active_session.extract_interactive_tree()
                             cur_elements = active_session.interactive_elements or []
                         except Exception:
@@ -4373,14 +4463,102 @@ async def stream_agent_reply(
             except Exception:
                 pass
 
-            # 7. Accelerated Progressive Scroll Walkthrough
+            # 7. Progressive Multi-Viewport Scroll Walkthrough
+            # Scroll in 600px increments to discover lazy-loaded elements at each viewport
             p_scroll_h = max(getattr(active_session, "scroll_height", 720), 720)
-            if p_scroll_h > 900:
-                mid_point = min(p_scroll_h - 200, 550)
+            SCROLL_STEP = 600
+            scroll_pos = 0
+            elements_before_scroll = len(cur_elements)
+            while scroll_pos < p_scroll_h - 200:
+                if await is_cancelled():
+                    return
+                scroll_pos = min(scroll_pos + SCROLL_STEP, p_scroll_h - 100)
                 async for sse_chunk in _exec_qa_step(
                     action_name="scroll_to",
-                    step_label=f"Vertical Viewport Walkthrough: {mid_point}px on '{page_label[:20]}'",
-                    step_args={"scroll_y": mid_point},
+                    step_label=f"Viewport Scroll: {scroll_pos}px / {p_scroll_h}px on '{page_label[:20]}'",
+                    step_args={"scroll_y": scroll_pos},
+                    tag_type="scroll"
+                ):
+                    yield sse_chunk
+
+                # Re-extract interactive tree to discover lazy-loaded elements
+                try:
+                    await active_session.extract_interactive_tree()
+                    new_elements = active_session.interactive_elements or []
+                    # Check if new elements appeared (lazy-loaded content)
+                    if len(new_elements) > elements_before_scroll:
+                        new_count = len(new_elements) - elements_before_scroll
+                        lazy_thought = f"  ↳ Discovered {new_count} new lazy-loaded elements at scroll position {scroll_pos}px\n"
+                        reasoning_parts.append(lazy_thought)
+                        yield _sse({"type": "reasoning", "delta": lazy_thought})
+                        elements_before_scroll = len(new_elements)
+                        cur_elements = new_elements
+
+                        # Enqueue any newly discovered subpage links to frontier
+                        for n_sp in (active_session.discovered_subpages or []):
+                            n_url = n_sp.get("url") or n_sp.get("path") or ""
+                            n_clean = n_url.rstrip("/").lower()
+                            if n_clean and n_clean not in visited_routes and not any(w in n_clean for w in ["logout", "signout", "delete", "destroy"]):
+                                visited_routes.add(n_clean)
+                                frontier.append((n_sp.get("url", n_url), n_sp.get("text") or n_sp.get("path") or "Lazy-Loaded Link", n_sp.get("is_hash", False)))
+
+                        # Test newly revealed interactive controls (cards, buttons, links)
+                        new_btns = [
+                            e for e in new_elements
+                            if (e.get("tag") in {"button", "a"} or e.get("role") in {"button", "link"} or e.get("card_context"))
+                            and e.get("role") != "tab"
+                            and not any(w in normalize_element_text(e.get("text") or "").lower() for w in ["skip", "close", "cancel", "sign out", "logout"])
+                        ]
+                        for nb in new_btns:
+                            if await is_cancelled():
+                                return
+                            nb_text = normalize_element_text(nb.get("text") or nb.get("aria_label") or "")
+                            nb_ctx = nb.get("card_context") or ""
+                            nb_sig = f"ctrl:{nb_ctx}:{nb_text}:{nb.get('href', '')}".lower().strip(":")
+                            if not nb_text or nb_sig in tested_signatures:
+                                continue
+                            tested_signatures.add(nb_sig)
+
+                            # Only click cards and internal links, not all buttons
+                            is_card = bool(nb_ctx)
+                            is_internal_link = nb.get("tag") == "a" and nb.get("href") and not nb.get("href", "").startswith("http")
+                            if is_card or is_internal_link:
+                                pre_url = (active_session.current_url or "").rstrip("/").lower()
+                                async for sse_chunk in _exec_qa_step(
+                                    action_name="click",
+                                    step_label=f"Explore Card/Link: '{nb_text[:30]}' on '{page_label[:20]}'",
+                                    step_args={"element_id": nb["id"]},
+                                    tag_type="card" if is_card else "link"
+                                ):
+                                    yield sse_chunk
+
+                                post_url = (active_session.current_url or "").rstrip("/").lower()
+                                if post_url and pre_url and post_url != pre_url and post_url not in {"about:blank"}:
+                                    # Navigated to a new page — add to visited and backtrack
+                                    if post_url not in visited_routes:
+                                        visited_routes.add(post_url)
+                                        frontier.append((active_session.current_url, nb_text[:30], False))
+                                    # Backtrack to continue scrolling
+                                    try:
+                                        await active_session.navigate(current_page_clean_url if current_page_clean_url else pre_url)
+                                        await asyncio.sleep(0.3)
+                                        await active_session.extract_interactive_tree()
+                                        cur_elements = active_session.interactive_elements or []
+                                    except Exception:
+                                        pass
+
+                except Exception:
+                    pass
+
+                # Update scroll height (page may have grown due to infinite scroll)
+                p_scroll_h = max(getattr(active_session, "scroll_height", p_scroll_h), p_scroll_h)
+
+            # Scroll back to top for next section
+            if scroll_pos > 0:
+                async for sse_chunk in _exec_qa_step(
+                    action_name="scroll_to",
+                    step_label=f"Reset to Top on '{page_label[:20]}'",
+                    step_args={"scroll_y": 0},
                     tag_type="scroll"
                 ):
                     yield sse_chunk
@@ -5096,7 +5274,7 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
 
     # Decoupled control queue and video frames to eliminate FIFO bottleneck
     control_queue: asyncio.Queue = asyncio.Queue()
-    frame_queue: asyncio.Queue = asyncio.Queue(maxsize=16)  # Buffer for smooth 60 FPS burst delivery
+    frame_queue: asyncio.Queue = asyncio.Queue(maxsize=3)  # Ultra-low latency queue: keeps stream locked to live frame
     ws_lock = asyncio.Lock()
     _last_cursor_send_time = [0.0]  # Throttle cursor_action move events to 30/sec
 

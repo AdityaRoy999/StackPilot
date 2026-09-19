@@ -151,12 +151,14 @@ export function InteractiveBrowserCanvas({
   const frameCountRef = useRef(0);
   const netFrameCountRef = useRef(0);
   const nextBitmapRef = useRef<ImageBitmap | null>(null);
+  const nextVideoFrameRef = useRef<VideoFrame | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const workerReadyRef = useRef<boolean>(false);
   const fallbackDecoderRef = useRef<any>(null);
   const lastFallbackChunkTsRef = useRef<number>(0);
   const lastFpsCalcRef = useRef(Date.now());
   const lastMoveSentRef = useRef(0);
+  const lastLatencyUpdateRef = useRef(0);
   const lastFrameSeqRef = useRef(0);
   const lastDrawnSeqRef = useRef(0);
   const lastFrameTimeRef = useRef(0);
@@ -315,71 +317,33 @@ export function InteractiveBrowserCanvas({
               setNetworkFps(e.data.netFps);
             }
           } else if (e.data?.type === "latency") {
-            setLatencyMs(e.data.latencyMs ?? 0);
+            const now = Date.now();
+            if (now - lastLatencyUpdateRef.current >= 800) {
+              lastLatencyUpdateRef.current = now;
+              setLatencyMs(e.data.latencyMs ?? 0);
+            }
+          } else if (e.data?.type === "record_blob" && e.data.blob) {
+            recordFrame(e.data.blob);
           } else if (e.data?.type === "video_frame" && e.data.frame) {
             const frame = e.data.frame as VideoFrame;
             if (isPlaybackModeRef.current) {
               frame.close();
               return;
             }
-            const canvas = canvasRef.current;
-            if (canvas) {
-              try {
-                if (!ctx2dRef.current || ctx2dRef.current.canvas !== canvas) {
-                  ctx2dRef.current = canvas.getContext("2d", { alpha: false, desynchronized: true });
-                }
-                const ctx2d = ctx2dRef.current;
-                if (ctx2d) {
-                  ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
-                  frameCountRef.current += 1;
-                  const now = Date.now();
-                  const hasAction = Boolean(cursorActionRef.current);
-                  if ((now - lastRecordedTimeRef.current >= 1200 || hasAction) && !isPlaybackModeRef.current) {
-                    lastRecordedTimeRef.current = now;
-                    setTimeout(() => {
-                      if (canvas && !isPlaybackModeRef.current) {
-                        canvas.toBlob((blob) => {
-                          if (blob) recordFrame(blob);
-                        }, "image/jpeg", 0.65);
-                      }
-                    }, 0);
-                  }
-                }
-              } catch {}
+            if (nextVideoFrameRef.current) {
+              nextVideoFrameRef.current.close();
             }
-            frame.close();
+            nextVideoFrameRef.current = frame;
           } else if (e.data?.type === "bitmap" && e.data.bitmap) {
             const bitmap = e.data.bitmap as ImageBitmap;
             if (isPlaybackModeRef.current) {
               bitmap.close();
               return;
             }
-            const canvas = canvasRef.current;
-            if (canvas) {
-              try {
-                if (!ctx2dRef.current || ctx2dRef.current.canvas !== canvas) {
-                  ctx2dRef.current = canvas.getContext("2d", { alpha: false, desynchronized: true });
-                }
-                const ctx2d = ctx2dRef.current;
-                if (ctx2d) {
-                  ctx2d.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-                  frameCountRef.current += 1;
-                  const now = Date.now();
-                  const hasAction = Boolean(cursorActionRef.current);
-                  if ((now - lastRecordedTimeRef.current >= 1200 || hasAction) && !isPlaybackModeRef.current) {
-                    lastRecordedTimeRef.current = now;
-                    setTimeout(() => {
-                      if (canvas && !isPlaybackModeRef.current) {
-                        canvas.toBlob((blob) => {
-                          if (blob) recordFrame(blob);
-                        }, "image/jpeg", 0.65);
-                      }
-                    }, 0);
-                  }
-                }
-              } catch {}
+            if (nextBitmapRef.current) {
+              nextBitmapRef.current.close();
             }
-            bitmap.close();
+            nextBitmapRef.current = bitmap;
           }
         };
 
@@ -412,10 +376,15 @@ export function InteractiveBrowserCanvas({
           lastFrameTimeRef.current = 0;
           lastFallbackChunkTsRef.current = 0;
           setConnected(true);
+          const openUrl = (initialUrl && initialUrl !== "about:blank" && !initialUrl.includes("localhost:3000") && !initialUrl.includes("127.0.0.1:3000"))
+            ? initialUrl
+            : (currentUrl && currentUrl !== "about:blank" && !currentUrl.includes("localhost:3000") && !currentUrl.includes("127.0.0.1:3000"))
+            ? currentUrl
+            : initialUrl || currentUrl || "http://localhost:3000";
           ws.send(
             JSON.stringify({
               type: "open",
-              url: currentUrl || initialUrl || "http://localhost:3000",
+              url: openUrl,
             })
           );
         };
@@ -443,7 +412,11 @@ export function InteractiveBrowserCanvas({
         const renderLoop = (now: number) => {
           if (isDisposed) return;
           if (isPlaybackModeRef.current) {
-            // In playback mode, discard any live bitmap to let playback effect control canvas exclusively
+            // In playback mode, discard any live frames to let playback effect control canvas exclusively
+            if (nextVideoFrameRef.current) {
+              nextVideoFrameRef.current.close();
+              nextVideoFrameRef.current = null;
+            }
             if (nextBitmapRef.current) {
               nextBitmapRef.current.close();
               nextBitmapRef.current = null;
@@ -451,11 +424,31 @@ export function InteractiveBrowserCanvas({
             animId = requestAnimationFrame(renderLoop);
             return;
           }
-          if (nextBitmapRef.current) {
-            const bitmap = nextBitmapRef.current;
-            nextBitmapRef.current = null;
-            const canvas = canvasRef.current;
-            if (canvas) {
+
+          const canvas = canvasRef.current;
+          if (canvas) {
+            if (nextVideoFrameRef.current) {
+              const frame = nextVideoFrameRef.current;
+              nextVideoFrameRef.current = null;
+              try {
+                if (!ctx2dRef.current || ctx2dRef.current.canvas !== canvas) {
+                  ctx2dRef.current = canvas.getContext("2d", {
+                    alpha: false,
+                    desynchronized: true,
+                  });
+                }
+                const ctx = ctx2dRef.current;
+                if (ctx) {
+                  ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+                  frameCountRef.current += 1;
+                }
+              } catch {
+              } finally {
+                frame.close();
+              }
+            } else if (nextBitmapRef.current) {
+              const bitmap = nextBitmapRef.current;
+              nextBitmapRef.current = null;
               try {
                 if (!ctx2dRef.current || ctx2dRef.current.canvas !== canvas) {
                   ctx2dRef.current = canvas.getContext("2d", {
@@ -467,33 +460,18 @@ export function InteractiveBrowserCanvas({
                 if (ctx) {
                   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
                   frameCountRef.current += 1;
-                  const nowTs = Date.now();
-                  const hasAction = Boolean(cursorActionRef.current);
-                  if ((nowTs - lastRecordedTimeRef.current >= 1200 || hasAction) && !isPlaybackModeRef.current) {
-                    lastRecordedTimeRef.current = nowTs;
-                    setTimeout(() => {
-                      if (canvas && !isPlaybackModeRef.current) {
-                        canvas.toBlob((blob) => {
-                          if (blob) recordFrame(blob);
-                        }, "image/jpeg", 0.65);
-                      }
-                    }, 0);
-                  }
                 }
               } catch {
               } finally {
                 bitmap.close();
               }
-            } else {
-              bitmap.close();
             }
           }
 
           animId = requestAnimationFrame(renderLoop);
         };
-        if (!workerReadyRef.current) {
-          animId = requestAnimationFrame(renderLoop);
-        }
+        // Always run the vsync-locked renderLoop for buttery-smooth 60 FPS presentation
+        animId = requestAnimationFrame(renderLoop);
 
         ws.onmessage = (evt) => {
           if (isDisposed) return;
@@ -533,7 +511,8 @@ export function InteractiveBrowserCanvas({
                     } catch {}
                   }
                   const now = Date.now();
-                  if (serverTs > 0 && now >= serverTs) {
+                  if (serverTs > 0 && now >= serverTs && now - lastLatencyUpdateRef.current >= 800) {
+                    lastLatencyUpdateRef.current = now;
                     setLatencyMs(now - serverTs);
                   }
                   // Accept sequence resets: if server restarts seq (e.g. re-arm screencast or new session),
@@ -569,13 +548,6 @@ export function InteractiveBrowserCanvas({
                               if (ctx2d) {
                                 ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
                                 frameCountRef.current += 1;
-                                const now = Date.now();
-                                if (now - lastRecordedTimeRef.current >= 250 && !isPlaybackModeRef.current) {
-                                  lastRecordedTimeRef.current = now;
-                                  canvas.toBlob((blob) => {
-                                    if (blob) recordFrame(blob);
-                                  }, "image/jpeg", 0.7);
-                                }
                               }
                             } catch {}
                           }
@@ -619,6 +591,7 @@ export function InteractiveBrowserCanvas({
 
               // JPEG Fallback on Main Thread
               const jpegBlob = new Blob([new Uint8Array(buffer, payloadOffset)], { type: "image/jpeg" });
+              recordFrame(jpegBlob);
               const capturedSeq = seq;
               createImageBitmap(jpegBlob, {
                 premultiplyAlpha: "none",
@@ -831,6 +804,10 @@ export function InteractiveBrowserCanvas({
           fallbackDecoderRef.current.close();
         } catch {}
         fallbackDecoderRef.current = null;
+      }
+      if (nextVideoFrameRef.current) {
+        nextVideoFrameRef.current.close();
+        nextVideoFrameRef.current = null;
       }
       if (nextBitmapRef.current) {
         nextBitmapRef.current.close();

@@ -2,9 +2,10 @@
 // Safe to import in Server Components like layout.tsx
 
 export const UI_THEME_STORAGE_KEY = "stackpilot.ui-theme";
-export const DEFAULT_UI_THEME = "shadcn";
+export const DEFAULT_UI_THEME = "radix";
 
 export const UI_THEMES = [
+  "radix",
   "shadcn",
   "apple",
   "material",
@@ -34,9 +35,11 @@ export const ICON_STORAGE_KEY = "stackpilot.icon-settings";
  */
 export const UI_THEME_INIT_SCRIPT = `(function(){try{var m=localStorage.getItem("theme");if(m==="dark"||((!m||m==="system")&&window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add("dark");}else{document.documentElement.classList.remove("dark");}}catch(e){}try{var t=localStorage.getItem(${JSON.stringify(
   UI_THEME_STORAGE_KEY
-)});var allowed=${JSON.stringify(UI_THEMES)};document.documentElement.setAttribute('data-ui-theme',allowed.indexOf(t)>-1?t:${JSON.stringify(
+)});var allowed=${JSON.stringify(UI_THEMES)};if(allowed.indexOf(t)>-1){document.documentElement.setAttribute('data-ui-theme',t);}else if(t&&/^custom-[a-z0-9_-]+$/.test(t)){document.documentElement.setAttribute('data-ui-theme',t);}else{document.documentElement.setAttribute('data-ui-theme',${JSON.stringify(
   DEFAULT_UI_THEME
-)});}catch(e){}})();`;
+)});} }catch(e){try{document.documentElement.setAttribute('data-ui-theme',${JSON.stringify(
+  DEFAULT_UI_THEME
+)});}catch(err){}}})();`;
 
 /**
  * Script injected into <head> to prevent icon layout shifts before hydration

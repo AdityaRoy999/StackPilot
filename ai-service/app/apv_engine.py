@@ -155,36 +155,50 @@ class ActionPerceptionVerification:
         """)
 
         target_label = label or (coords.get("text") if coords else f"Element #{element_id}")
+        clean_target = str(target_label).strip()
+        while True:
+            lower = clean_target.lower()
+            if lower.startswith("click:"):
+                clean_target = clean_target[6:].strip()
+            elif lower.startswith("clicking:"):
+                clean_target = clean_target[9:].strip()
+            elif lower.startswith("clicking"):
+                clean_target = clean_target[8:].strip()
+            elif lower.startswith("click "):
+                clean_target = clean_target[6:].strip()
+            else:
+                break
+        display_label = f"Click: {clean_target}" if clean_target else "Click"
 
-        # Tier 1: CDP Input Events
+        clicked = False
+        # Tier 1: High-precision native CDP Hardware Mouse Event Sequence
         if coords and coords.get("x") is not None and coords.get("y") is not None:
             click_x = coords["x"]
             click_y = coords["y"]
-            await session.click(click_x, click_y, label=f"Click: {target_label}", fast_mode=fast_mode)
+            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode)
+            clicked = True
         else:
-            el = next((e for e in session.interactive_elements if e["id"] == element_id), None)
-            if el:
-                await session.click(el["x"], el["y"], label=f"Click: {target_label}", fast_mode=fast_mode)
+            el = next((e for e in session.interactive_elements if str(e.get("id")) == str(element_id)), None)
+            if el and el.get("x") is not None and el.get("y") is not None:
+                await session.click(el["x"], el["y"], label=display_label, fast_mode=fast_mode)
+                clicked = True
 
-        # Tier 2: Native Blink Synthetic Event Sequence
-        await session.evaluate(f"""
-        (() => {{
-            const el = document.querySelector('[data-sp-id="{element_id}"]');
-            if (!el) return;
-            try {{
-                const opts = {{ bubbles: true, cancelable: true, composed: true, view: window }};
-                el.dispatchEvent(new PointerEvent('pointerdown', opts));
-                el.dispatchEvent(new MouseEvent('mousedown', opts));
-                if (typeof el.focus === 'function') el.focus();
-                el.dispatchEvent(new PointerEvent('pointerup', opts));
-                el.dispatchEvent(new MouseEvent('mouseup', opts));
-                el.dispatchEvent(new MouseEvent('click', opts));
-                if (typeof el.click === 'function') {{
-                    try {{ el.click(); }} catch(e) {{}}
-                }}
-            }} catch(e) {{}}
-        }})()
-        """)
+        # Tier 2: Synthetic DOM Event Fallback (ONLY if hardware coordinates were unavailable)
+        if not clicked:
+            await session.evaluate(f"""
+            (() => {{
+                const el = document.querySelector('[data-sp-id="{element_id}"]');
+                if (!el) return;
+                try {{
+                    if (typeof el.click === 'function') {{
+                        el.click();
+                    }} else {{
+                        const opts = {{ bubbles: true, cancelable: true, composed: true, view: window }};
+                        el.dispatchEvent(new MouseEvent('click', opts));
+                    }}
+                }} catch(e) {{}}
+            }})()
+            """)
 
         return True
 

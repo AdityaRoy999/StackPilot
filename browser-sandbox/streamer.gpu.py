@@ -1,7 +1,6 @@
 import asyncio
 import os
 import signal
-import socket
 import struct
 import subprocess
 import sys
@@ -9,10 +8,12 @@ import time
 
 PORT = int(os.getenv("STREAM_PORT", "8099"))
 DISPLAY = os.getenv("DISPLAY", ":99")
-FPS = int(os.getenv("STREAM_FPS", "30"))
-WIDTH = int(os.getenv("STREAM_WIDTH", "1280"))
-HEIGHT = int(os.getenv("STREAM_HEIGHT", "720"))
-BITRATE = os.getenv("STREAM_BITRATE", "2000k")
+FPS = int(os.getenv("STREAM_FPS", "60"))
+WIDTH = int(os.getenv("STREAM_WIDTH", "1920"))
+HEIGHT = int(os.getenv("STREAM_HEIGHT", "1080"))
+BITRATE = os.getenv("STREAM_BITRATE", "4000k")
+# Auto-detect: prefer NVENC, fallback to libx264
+USE_NVENC = os.getenv("USE_NVENC", "auto")
 
 active_clients = set()
 cached_sps = None
@@ -69,15 +70,7 @@ async def broadcast_packet(packet_bytes: bytes):
 async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     global cached_keyframe_bundle
     addr = writer.get_extra_info("peername")
-    print(f"[Streamer] Client connected from {addr}", flush=True)
-
-    sock = writer.get_extra_info("socket")
-    if sock:
-        try:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 256 * 1024)
-        except Exception:
-            pass
+    print(f"[Streamer-GPU] Client connected from {addr}", flush=True)
 
     if cached_keyframe_bundle:
         try:
@@ -85,7 +78,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             writer.write(pkt)
             await writer.drain()
         except Exception as e:
-            print(f"[Streamer] Error sending initial keyframe: {e}", flush=True)
+            print(f"[Streamer-GPU] Error sending initial keyframe: {e}", flush=True)
             writer.close()
             return
 
@@ -104,49 +97,111 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             await writer.wait_closed()
         except Exception:
             pass
-        print(f"[Streamer] Client {addr} disconnected", flush=True)
+        print(f"[Streamer-GPU] Client {addr} disconnected", flush=True)
+
+
+def detect_nvenc() -> bool:
+    """Check if NVENC hardware encoding is available."""
+    if USE_NVENC == "false":
+        return False
+    if USE_NVENC == "true":
+        return True
+    # Auto-detect
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=5
+        )
+        if "h264_nvenc" in result.stdout:
+            # Verify NVENC actually works
+            test = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error",
+                 "-f", "lavfi", "-i", "testsrc=duration=0.1:size=64x64:rate=1",
+                 "-c:v", "h264_nvenc", "-f", "null", "-"],
+                capture_output=True, timeout=10
+            )
+            if test.returncode == 0:
+                print("[Streamer-GPU] ✅ NVENC hardware encoder detected and working", flush=True)
+                return True
+            else:
+                print(f"[Streamer-GPU] ⚠️ NVENC listed but test failed: {test.stderr.decode()}", flush=True)
+    except Exception as e:
+        print(f"[Streamer-GPU] NVENC detection error: {e}", flush=True)
+    return False
+
 
 async def ffmpeg_capture_loop():
     global cached_sps, cached_pps, cached_keyframe_bundle, running
 
     display_num = DISPLAY.lstrip(":")
     x11_socket = f"/tmp/.X11-unix/X{display_num}"
-    print(f"[Streamer] Waiting for Xvfb socket {x11_socket}...", flush=True)
+    print(f"[Streamer-GPU] Waiting for Xvfb socket {x11_socket}...", flush=True)
     for _ in range(60):
         if os.path.exists(x11_socket):
             break
         await asyncio.sleep(0.5)
 
     await asyncio.sleep(1.0)
-    print(f"[Streamer] Display {DISPLAY} confirmed ready. Launching FFmpeg...", flush=True)
+    print(f"[Streamer-GPU] Display {DISPLAY} confirmed ready. Detecting encoder...", flush=True)
 
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-f", "x11grab",
-        "-draw_mouse", "0",
-        "-framerate", str(FPS),
-        "-video_size", f"{WIDTH}x{HEIGHT}",
-        "-i", f"{DISPLAY}.0",
-        "-fps_mode", "cfr",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-x264-params", "sliced-threads=1:sync-lookahead=0:rc-lookahead=0:no-mbtree=1",
-        "-threads", "4",
-        "-profile:v", "baseline",
-        "-level:v", "3.1",
-        "-pix_fmt", "yuv420p",
-        "-g", str(FPS // 2),
-        "-keyint_min", str(FPS // 2),
-        "-sc_threshold", "0",
-        "-crf", "28",
-        "-maxrate", "5000k",
-        "-bufsize", "5000k",
-        "-f", "h264",
-        "pipe:1"
-    ]
+    has_nvenc = detect_nvenc()
+
+    if has_nvenc:
+        print(f"[Streamer-GPU] 🚀 Using NVENC hardware encoding @ {FPS}fps {WIDTH}x{HEIGHT}", flush=True)
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-f", "x11grab",
+            "-draw_mouse", "0",
+            "-framerate", str(FPS),
+            "-video_size", f"{WIDTH}x{HEIGHT}",
+            "-i", f"{DISPLAY}.0",
+            "-fps_mode", "cfr",
+            "-c:v", "h264_nvenc",
+            "-preset", "p1",         # Fastest NVENC preset
+            "-tune", "ull",          # Ultra-low latency
+            "-zerolatency", "1",
+            "-rc", "cbr",            # Constant bitrate for consistent streaming
+            "-b:v", BITRATE,
+            "-maxrate", "6000k",
+            "-bufsize", "2000k",     # Small buffer = low latency
+            "-profile:v", "baseline",
+            "-level:v", "4.0",
+            "-g", str(FPS // 2),     # Keyframe every 0.5s
+            "-keyint_min", str(FPS // 2),
+            "-f", "h264",
+            "pipe:1"
+        ]
+    else:
+        print(f"[Streamer-GPU] Using libx264 software encoding @ {FPS}fps {WIDTH}x{HEIGHT}", flush=True)
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-f", "x11grab",
+            "-draw_mouse", "0",
+            "-framerate", str(FPS),
+            "-video_size", f"{WIDTH}x{HEIGHT}",
+            "-i", f"{DISPLAY}.0",
+            "-fps_mode", "cfr",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-x264-params", "sliced-threads=0:sync-lookahead=0:rc-lookahead=0:no-mbtree=1",
+            "-threads", "4",
+            "-profile:v", "baseline",
+            "-level:v", "3.1",
+            "-pix_fmt", "yuv420p",
+            "-g", str(FPS // 2),
+            "-keyint_min", str(FPS // 2),
+            "-sc_threshold", "0",
+            "-crf", "28",
+            "-maxrate", "5000k",
+            "-bufsize", "5000k",
+            "-f", "h264",
+            "pipe:1"
+        ]
 
     while running:
         try:
@@ -155,7 +210,8 @@ async def ffmpeg_capture_loop():
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            print("[Streamer] FFmpeg pipeline started", flush=True)
+            encoder_name = "NVENC" if has_nvenc else "libx264"
+            print(f"[Streamer-GPU] FFmpeg {encoder_name} pipeline started", flush=True)
 
             buffer = bytearray()
             while running and proc.returncode is None:
@@ -187,13 +243,13 @@ async def ffmpeg_capture_loop():
 
             stderr = await proc.stderr.read()
             if stderr:
-                print(f"[Streamer] FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}", flush=True)
+                print(f"[Streamer-GPU] FFmpeg stderr: {stderr.decode('utf-8', errors='ignore')}", flush=True)
 
             await proc.wait()
-            print(f"[Streamer] FFmpeg exited with code {proc.returncode}. Restarting in 1s...", flush=True)
+            print(f"[Streamer-GPU] FFmpeg exited with code {proc.returncode}. Restarting in 1s...", flush=True)
             await asyncio.sleep(1.0)
         except Exception as e:
-            print(f"[Streamer] FFmpeg loop error: {e}", flush=True)
+            print(f"[Streamer-GPU] FFmpeg loop error: {e}", flush=True)
             await asyncio.sleep(1.0)
 
 async def cdp_proxy_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -254,14 +310,14 @@ async def cdp_proxy_handler(reader: asyncio.StreamReader, writer: asyncio.Stream
 
 async def cdp_proxy_loop():
     proxy_server = await asyncio.start_server(cdp_proxy_handler, "0.0.0.0", 9222)
-    print("[Streamer] CDP Proxy listening on 0.0.0.0:9222 -> 127.0.0.1:9223", flush=True)
+    print("[Streamer-GPU] CDP Proxy listening on 0.0.0.0:9222 -> 127.0.0.1:9223", flush=True)
     async with proxy_server:
         await proxy_server.serve_forever()
 
 async def main():
     server = await asyncio.start_server(handle_client, "0.0.0.0", PORT)
     addrs = ", ".join(str(sock.getsockname()) for sock in server.sockets)
-    print(f"[Streamer] TCP Video Server listening on {addrs}", flush=True)
+    print(f"[Streamer-GPU] TCP Video Server listening on {addrs}", flush=True)
 
     capture_task = asyncio.create_task(ffmpeg_capture_loop())
     proxy_task = asyncio.create_task(cdp_proxy_loop())
@@ -272,4 +328,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("[Streamer] Shutting down", flush=True)
+        print("[Streamer-GPU] Shutting down", flush=True)

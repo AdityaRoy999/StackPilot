@@ -65,9 +65,16 @@ import { StatusVerb } from "@/components/ui/status-verb";
 import { ThinkingPanel } from "@/components/ui/thinking-panel";
 import { ToolCallCard, ToolCall, ToolsPanel } from "@/components/ui/tool-call-card";
 import { AnimatedMarkdown } from "@/components/ui/animated-markdown";
+import dynamic from "next/dynamic";
 import { SubagentBlock, SubagentTask, SubagentsPanel } from "@/components/ui/subagent-block";
-import { FloatingPowerShellTerminal } from "@/components/FloatingPowerShellTerminal";
-import { InteractiveBrowserCanvas } from "@/components/InteractiveBrowserCanvas";
+const FloatingPowerShellTerminal = dynamic(
+  () => import("@/components/FloatingPowerShellTerminal").then((mod) => mod.FloatingPowerShellTerminal),
+  { ssr: false }
+);
+const InteractiveBrowserCanvas = dynamic(
+  () => import("@/components/InteractiveBrowserCanvas").then((mod) => mod.InteractiveBrowserCanvas),
+  { ssr: false }
+);
 import { streamAgentReply } from "@/lib/stream-agent";
 import { ModelPickerModal } from "@/components/ModelPickerModal";
 import { isVisionModel, getModelMetadata, getModelCategory } from "@/lib/model-capabilities";
@@ -2594,6 +2601,7 @@ export default function AiAgentPage() {
   // On by default: watching the answer form is the whole point. Off is for
   // when someone wants the single atomic reply the blocking path gives.
   const [streamingEnabled, setStreamingEnabled] = useState(true);
+  const [browserSandboxMode, setBrowserSandboxMode] = useState<"local" | "remote">("local");
   const [streamReasoning, setStreamReasoning] = useState("");
   const [streamContent, setStreamContent] = useState("");
   const [streamToolCalls, setStreamToolCalls] = useState<ToolCall[]>([]);
@@ -2653,12 +2661,17 @@ export default function AiAgentPage() {
       window.dispatchEvent(new CustomEvent("stackpilot:browser:stream_start"));
     }
 
-    // Check if prompt contains an explicit URL
+    // Check if prompt contains an explicit URL or fallback to current canvas URL
+    let effectiveTargetUrl = customTargetUrl || canvasTargetUrl || undefined;
+    if (effectiveTargetUrl === "about:blank" || effectiveTargetUrl?.includes("localhost:3000") || effectiveTargetUrl?.includes("127.0.0.1:3000")) {
+      effectiveTargetUrl = undefined;
+    }
     const urlMatch = prompt.match(/https?:\/\/[^\s<>"']+/);
     if (urlMatch) {
       const explicitUrl = urlMatch[0];
       if (!explicitUrl.includes("localhost:3000") && !explicitUrl.includes("127.0.0.1:3000")) {
         setCustomTargetUrl(explicitUrl);
+        effectiveTargetUrl = explicitUrl;
       }
     }
 
@@ -2792,7 +2805,7 @@ export default function AiAgentPage() {
         command: parsedCommand || undefined,
         deploymentId: targetDeploymentId,
         projectId: targetProjectId,
-        customUrl: customTargetUrl || undefined,
+        customUrl: effectiveTargetUrl,
         workflowType,
         sessionId: activeSessionId || undefined,
         modelMode: mode === "thinking" ? "thinking" : "fast",
@@ -2801,6 +2814,7 @@ export default function AiAgentPage() {
         agentAccessMode,
         remoteTerminal: remoteTerminalPermission,
         images,
+        sandboxMode: browserSandboxMode,
         signal: controller.signal,
         onEvent: (event) => {
           if (event.type === "start" && event.session_id) {
@@ -4228,7 +4242,11 @@ export default function AiAgentPage() {
                 isOpen={browserOpen}
                 onClose={() => setBrowserOpen(false)}
                 embedded={true}
-                onUrlChange={(url) => setCustomTargetUrl(url)}
+                onUrlChange={(url) => {
+                  if (url && !url.includes("localhost:3000") && !url.includes("127.0.0.1:3000") && url !== "about:blank") {
+                    setCustomTargetUrl(url);
+                  }
+                }}
               />
             </div>
           </>
@@ -4244,7 +4262,11 @@ export default function AiAgentPage() {
             isOpen={browserOpen}
             onClose={() => setBrowserOpen(false)}
             embedded={false}
-            onUrlChange={(url) => setCustomTargetUrl(url)}
+            onUrlChange={(url) => {
+              if (url && !url.includes("localhost:3000") && !url.includes("127.0.0.1:3000") && url !== "about:blank") {
+                setCustomTargetUrl(url);
+              }
+            }}
           />
         </div>
       )}
@@ -4336,6 +4358,53 @@ export default function AiAgentPage() {
                     )}
                   />
                 </button>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Label>Browser sandbox</Label>
+                  <div className="relative group">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-3.5 w-3.5 text-muted-foreground cursor-help">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM8.94 6.94a.75.75 0 1 1-1.061-1.061 .75.75 0 0 1 1.06 1.06ZM10 16.25a.75.75 0 0 1-.75-.75v-5a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-.75.75Z" clipRule="evenodd" />
+                    </svg>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">
+                      <p className="font-medium mb-1">Local vs Remote</p>
+                      <p><span className="font-semibold">Local:</span> Runs in Docker on your machine. No extra setup, but lower FPS (~30-45fps) due to CPU encoding.</p>
+                      <p className="mt-1"><span className="font-semibold">Remote:</span> Runs on a GPU-accelerated cloud VM. Smooth 60fps streaming with hardware encoding. Requires AWS setup.</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-muted/30 p-1">
+                  <Button
+                    type="button"
+                    variant={browserSandboxMode === "local" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setBrowserSandboxMode("local")}
+                    className="gap-1.5"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                      <path fillRule="evenodd" d="M2 4.25A2.25 2.25 0 0 1 4.25 2h11.5A2.25 2.25 0 0 1 18 4.25v8.5A2.25 2.25 0 0 1 15.75 15h-3.105a3.501 3.501 0 0 0 1.1 1.677A.75.75 0 0 1 13.26 18H6.74a.75.75 0 0 1-.484-1.323A3.501 3.501 0 0 0 7.355 15H4.25A2.25 2.25 0 0 1 2 12.75v-8.5Zm1.5 0a.75.75 0 0 1 .75-.75h11.5a.75.75 0 0 1 .75.75v7.5a.75.75 0 0 1-.75.75H4.25a.75.75 0 0 1-.75-.75v-7.5Z" clipRule="evenodd" />
+                    </svg>
+                    Local
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={browserSandboxMode === "remote" ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setBrowserSandboxMode("remote")}
+                    className="gap-1.5"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                      <path d="M5.127 3.502 5.25 3.5h9.5c.041 0 .082 0 .123.002A2.251 2.251 0 0 0 12.75 2h-5.5a2.25 2.25 0 0 0-2.123 1.502ZM1 10.25A2.25 2.25 0 0 1 3.25 8h13.5A2.25 2.25 0 0 1 19 10.25v5.5A2.25 2.25 0 0 1 16.75 18H3.25A2.25 2.25 0 0 1 1 15.75v-5.5Zm15.5.25a.75.75 0 0 0-1.5 0v.5a.75.75 0 0 0 1.5 0v-.5ZM4.25 5a.75.75 0 0 0-.75.75v.5c0 .414.336.75.75.75h11.5a.75.75 0 0 0 .75-.75v-.5a.75.75 0 0 0-.75-.75H4.25Z" />
+                    </svg>
+                    Remote
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {browserSandboxMode === "local"
+                    ? "Browser testing runs locally in Docker. Good for development with no extra setup needed."
+                    : "Browser testing runs on a remote GPU VM for smooth 60fps. Configure BROWSER_SANDBOX_URL in .env."}
+                </p>
               </div>
 
               <div className="space-y-2">

@@ -262,6 +262,144 @@
    typeface — with no component changes.
    ============================================================ */
 
+/* ---------- Radix UI ----------
+   Official Radix UI specification from radix-ui.com:
+   Radix Colors Indigo (#3e63dd), Slate neutrals, Red (#e5484d), Green (#30a46c),
+   and exact Radix Themes component geometry. */
+[data-ui-theme="radix"] {
+  --app-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --radius: 0.5rem;
+
+  --background: #fcfcfd;
+  --foreground: #1c2024;
+  --card: #ffffff;
+  --card-foreground: #1c2024;
+  --popover: #ffffff;
+  --popover-foreground: #1c2024;
+  --primary: #3e63dd;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f0f3;
+  --secondary-foreground: #1c2024;
+  --muted: #f0f0f3;
+  --muted-foreground: #60646c;
+  --accent: #edf2fe;
+  --accent-foreground: #3a5bc7;
+  --destructive: #e5484d;
+  --border: #d9d9e0;
+  --input: #cdced6;
+  --ring: #3e63dd;
+  --sidebar: #f9f9fb;
+  --sidebar-foreground: #1c2024;
+  --sidebar-primary: #3e63dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #edf2fe;
+  --sidebar-accent-foreground: #3a5bc7;
+  --sidebar-border: #d9d9e0;
+  --sidebar-ring: #3e63dd;
+
+  /* Beautiful UI tokens (Light Mode) */
+  --ink: #1c2024;
+  --ink-2: #60646c;
+  --ink-3: #8b8d98;
+  --line: #d9d9e0;
+  --line-strong: #b9bbc6;
+  --surface: #ffffff;
+  --field: #f0f0f3;
+  --inset: #e8e8ec;
+  --hover: #e8e8ec;
+  --hover-2: #e0e1e6;
+  --green: #30a46c;
+  --green-tint: #e6f6eb;
+  --red: #e5484d;
+  --red-tint: #feebec;
+}
+
+[data-ui-theme="radix"].dark {
+  --app-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --radius: 0.5rem;
+
+  --background: #111113;
+  --foreground: #edeef0;
+  --card: #18191b;
+  --card-foreground: #edeef0;
+  --popover: #18191b;
+  --popover-foreground: #edeef0;
+  --primary: #3e63dd;
+  --primary-foreground: #ffffff;
+  --secondary: #212225;
+  --secondary-foreground: #edeef0;
+  --muted: #212225;
+  --muted-foreground: #8b8d98;
+  --accent: #182449;
+  --accent-foreground: #9eb1ff;
+  --destructive: #e5484d;
+  --border: #313235;
+  --input: #3e3f43;
+  --ring: #3e63dd;
+  --sidebar: #141517;
+  --sidebar-foreground: #edeef0;
+  --sidebar-primary: #3e63dd;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #182449;
+  --sidebar-accent-foreground: #9eb1ff;
+  --sidebar-border: #313235;
+  --sidebar-ring: #3e63dd;
+
+  /* Beautiful UI tokens (Dark Mode) */
+  --ink: #edeef0;
+  --ink-2: #8b8d98;
+  --ink-3: #60646c;
+  --line: #313235;
+  --line-strong: #484848;
+  --surface: #18191b;
+  --field: #212225;
+  --inset: #141517;
+  --hover: #2a2b2f;
+  --hover-2: #333438;
+  --green: #30a46c;
+  --green-tint: #132d21;
+  --red: #e5484d;
+  --red-tint: #3b1219;
+}
+
+/* Radix UI component specifications */
+[data-ui-theme="radix"] [data-slot="card"] {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
+}
+
+[data-ui-theme="radix"].dark [data-slot="card"] {
+  box-shadow: 0 0 0 1px var(--border), 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+[data-ui-theme="radix"] [data-slot="button"] {
+  font-weight: 500;
+  letter-spacing: -0.006em;
+}
+
+[data-ui-theme="radix"] [data-slot="button"].bg-primary:hover {
+  background-color: #3358d4;
+}
+
+[data-ui-theme="radix"].dark [data-slot="button"].bg-primary:hover {
+  background-color: #5472e4;
+}
+
+[data-ui-theme="radix"] [data-slot="button"]:not(:disabled):active {
+  transform: scale(0.99);
+}
+
+[data-ui-theme="radix"] [data-slot="input"]:focus-visible,
+[data-ui-theme="radix"] [data-slot="textarea"]:focus-visible {
+  border-color: #3e63dd;
+  box-shadow: 0 0 0 1px #3e63dd;
+}
+
+[data-ui-theme="radix"] [data-slot="select-content"],
+[data-ui-theme="radix"] [data-slot="dropdown-menu-content"] {
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.1), 0 12px 32px -4px rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(16px);
+}
+
 /* ---------- Apple ----------
    Tokens follow the Apple design reference: near-black/white surfaces,
    generous radii, system typeface, systemBlue accent. */

@@ -65,6 +65,7 @@ export interface StreamAgentOptions {
   remoteTerminal?: "ask" | "allow";
   images?: string[];
   customUrl?: string;
+  sandboxMode?: "local" | "remote";
   signal?: AbortSignal;
   onEvent: (event: AgentStreamEvent) => void;
 }
@@ -84,6 +85,7 @@ export async function streamAgentReply({
   remoteTerminal,
   images,
   customUrl,
+  sandboxMode,
   signal,
   onEvent,
 }: StreamAgentOptions): Promise<void> {
@@ -101,6 +103,7 @@ export async function streamAgentReply({
       ...(projectId ? { project_id: projectId } : {}),
       ...(deploymentId ? { deployment_id: deploymentId } : {}),
       ...(customUrl ? { custom_url: customUrl } : {}),
+      sandbox_mode: sandboxMode || "local",
       ...(command ? { command } : {}),
       ...(workflowType ? { workflow_type: workflowType } : {}),
       ...(model ? { model } : {}),

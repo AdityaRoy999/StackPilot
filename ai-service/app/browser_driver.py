@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import random
+import socket
 import struct
 import time
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -31,6 +32,17 @@ logger = logging.getLogger("stackpilot.browser_driver")
 CHROME_HOST = os.getenv("BROWSER_SANDBOX_URL", "http://browser-sandbox:9222").rstrip("/")
 BROWSER_STREAM_HOST = os.getenv("BROWSER_STREAM_HOST", "browser-sandbox")
 BROWSER_STREAM_PORT = int(os.getenv("BROWSER_STREAM_PORT", "8099"))
+
+# Remote GPU sandbox (used when sandbox_mode == "remote")
+REMOTE_CHROME_HOST = os.getenv("REMOTE_BROWSER_SANDBOX_URL", "").rstrip("/")
+REMOTE_BROWSER_STREAM_HOST = os.getenv("REMOTE_BROWSER_STREAM_HOST", "")
+REMOTE_BROWSER_STREAM_PORT = int(os.getenv("REMOTE_BROWSER_STREAM_PORT", "8099"))
+
+def get_sandbox_config(mode: str = "local") -> tuple:
+    """Returns (chrome_host, stream_host, stream_port) based on sandbox mode."""
+    if mode == "remote" and REMOTE_CHROME_HOST:
+        return REMOTE_CHROME_HOST, REMOTE_BROWSER_STREAM_HOST, REMOTE_BROWSER_STREAM_PORT
+    return CHROME_HOST, BROWSER_STREAM_HOST, BROWSER_STREAM_PORT
 
 
 def to_container_accessible_url(raw_url: str) -> str:
@@ -155,6 +167,13 @@ class BrowserSession:
             try:
                 reader, writer = await asyncio.open_connection(stream_host, stream_port)
                 self.h264_active = True
+                sock = writer.get_extra_info("socket")
+                if sock:
+                    try:
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 256 * 1024)
+                    except Exception:
+                        pass
                 logger.info(f"Connected to decoupled H.264 60 FPS video stream at {stream_host}:{stream_port}")
 
                 while self.is_connected:
@@ -365,7 +384,7 @@ class BrowserSession:
                             ts_ms = int(now_ts * 1000)
                             # 16-byte header: 'SP' (2B) + seq (4B) + ts_ms (8B) + metaLen (2B)
                             header = struct.pack(">2sIQH", b"SP", self._frame_seq, ts_ms, len(meta_bytes))
-                            raw_bytes = header + meta_bytes + raw_jpeg
+                            raw_bytes = b"".join([header, meta_bytes, raw_jpeg])
                         except Exception:
                             pass
 
@@ -618,24 +637,6 @@ class BrowserSession:
         injection_js = """
         (() => {
           try {
-            // 0. Continuous Compositor Damage Pulse for Smooth 25-30+ FPS Screencast
-            try {
-              let pDot = document.getElementById('__sp_pulse_dot');
-              if (!pDot) {
-                pDot = document.createElement('div');
-                pDot.id = '__sp_pulse_dot';
-                pDot.style.cssText = 'position:fixed;bottom:0;right:0;width:2px;height:2px;background:rgba(0,0,0,0.005);pointer-events:none;z-index:2147483647;';
-                (document.body || document.documentElement).appendChild(pDot);
-              }
-              let __sp_toggle = false;
-              function __sp_pulse_loop() {
-                __sp_toggle = !__sp_toggle;
-                pDot.style.transform = __sp_toggle ? 'translateZ(0.1px)' : 'translateZ(0px)';
-                requestAnimationFrame(__sp_pulse_loop);
-              }
-              requestAnimationFrame(__sp_pulse_loop);
-            } catch(e) {}
-
             // 1. Headless Chrome Stealth Fingerprint Normalization
             try {
               Object.defineProperty(navigator, 'webdriver', {
@@ -857,74 +858,6 @@ class BrowserSession:
               }
             } catch(e) {}
 
-            function installStyle() {
-              if (document.getElementById('__sp_ripple_style')) return;
-              const target = document.head || document.documentElement || document.body;
-              if (!target) {
-                if (document.readyState === 'loading') {
-                  document.addEventListener('DOMContentLoaded', installStyle, { once: true });
-                }
-                return;
-              }
-              const s = document.createElement('style');
-              s.id = '__sp_ripple_style';
-              s.textContent = `
-                @keyframes __sp_rip {
-                  0% { transform: scale(0.2); opacity: 0.95; }
-                  50% { transform: scale(1.1); opacity: 0.7; }
-                  100% { transform: scale(1.8); opacity: 0; }
-                }
-                @keyframes __sp_hover_pulse {
-                  0% { transform: scale(0.6); opacity: 0.9; box-shadow: 0 0 8px rgba(6, 182, 212, 0.8); }
-                  50% { transform: scale(1.15); opacity: 0.7; box-shadow: 0 0 16px rgba(6, 182, 212, 0.9); }
-                  100% { transform: scale(1.0); opacity: 0.8; box-shadow: 0 0 12px rgba(6, 182, 212, 0.8); }
-                }
-                .__sp_click_ripple {
-                  position: fixed !important;
-                  width: 26px !important;
-                  height: 26px !important;
-                  margin-left: -13px !important;
-                  margin-top: -13px !important;
-                  border-radius: 50% !important;
-                  border: 2.5px solid #06b6d4 !important;
-                  background: rgba(6, 182, 212, 0.35) !important;
-                  box-shadow: 0 0 10px rgba(6, 182, 212, 0.6) !important;
-                  pointer-events: none !important;
-                  z-index: 2147483647 !important;
-                  animation: __sp_rip 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
-                }
-                .__sp_hover_halo {
-                  position: fixed !important;
-                  width: 32px !important;
-                  height: 32px !important;
-                  margin-left: -16px !important;
-                  margin-top: -16px !important;
-                  border-radius: 50% !important;
-                  border: 2px dashed #06b6d4 !important;
-                  background: rgba(6, 182, 212, 0.22) !important;
-                  box-shadow: 0 0 12px rgba(6, 182, 212, 0.7) !important;
-                  pointer-events: none !important;
-                  z-index: 2147483647 !important;
-                  animation: __sp_hover_pulse 0.4s ease-out forwards !important;
-                }
-                .__sp_right_ripple {
-                  position: fixed !important;
-                  width: 26px !important;
-                  height: 26px !important;
-                  margin-left: -13px !important;
-                  margin-top: -13px !important;
-                  border-radius: 50% !important;
-                  border: 2.5px solid #a855f7 !important;
-                  background: rgba(168, 85, 247, 0.35) !important;
-                  box-shadow: 0 0 10px rgba(168, 85, 247, 0.6) !important;
-                  pointer-events: none !important;
-                  z-index: 2147483647 !important;
-                  animation: __sp_rip 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) forwards !important;
-                }
-              `;
-              target.appendChild(s);
-            }
-            installStyle();
 
             // Continuous High-Performance Compositor Pulse (15-20 FPS)
             // Ensures smooth live screencast frames flow continuously without Python CDP polling overhead
@@ -958,6 +891,41 @@ class BrowserSession:
               requestAnimationFrame(tick);
             }
             installTicker();
+
+            // WebGL Resilience Guard: prevents 3D framework crashes if context fails
+            try {
+              if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype && !window.__sp_gl_guarded) {
+                window.__sp_gl_guarded = true;
+                const _origGetContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+                  const ctx = _origGetContext.call(this, type, ...args);
+                  if (ctx) return ctx;
+                  if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {
+                    const dummy = new Proxy({
+                      canvas: this,
+                      drawingBufferWidth: this.width || 300,
+                      drawingBufferHeight: this.height || 150,
+                      isDummyContext: true,
+                    }, {
+                      get(target, prop) {
+                        if (prop in target) return target[prop];
+                        if (prop === 'getExtension') return () => null;
+                        if (prop === 'getParameter') return () => 0;
+                        if (prop === 'getShaderPrecisionFormat') return () => ({ precision: 1, rangeMin: 1, rangeMax: 1 });
+                        if (typeof prop === 'string' && prop.toUpperCase() === prop) return 0;
+                        return () => {};
+                      },
+                      set(target, prop, val) {
+                        target[prop] = val;
+                        return true;
+                      }
+                    });
+                    return dummy;
+                  }
+                  return ctx;
+                };
+              }
+            } catch (e) {}
           } catch (e) {}
         })()
         """
@@ -2073,24 +2041,7 @@ class BrowserSession:
         self.cursor_x = x
         self.cursor_y = y
 
-        # 2. In-DOM ripple for live screencast visual fidelity (fire and forget)
-        ripple_js = f"""
-        (() => {{
-            try {{
-                const target = document.body || document.documentElement;
-                if (!target) return;
-                const dot = document.createElement('div');
-                dot.className = '__sp_click_ripple';
-                dot.style.left = '{x}px';
-                dot.style.top = '{y}px';
-                target.appendChild(dot);
-                setTimeout(() => {{ try {{ dot.remove(); }} catch(e) {{}} }}, 450);
-            }} catch (e) {{}}
-        }})()
-        """
-        self.send_command_nowait("Runtime.evaluate", {"expression": ripple_js})
-
-        # 3. Notify click ripple and action to frontend
+        # 2. Notify click ripple and action to frontend
         self._notify_listeners({
             "type": "cursor_action",
             "action": "click",
@@ -2148,22 +2099,6 @@ class BrowserSession:
         self.cursor_x = x
         self.cursor_y = y
 
-        # Visual hover indicator (cyan halo) for screencast fidelity
-        hover_js = f"""
-        (() => {{
-            try {{
-                const target = document.body || document.documentElement;
-                if (!target) return;
-                const dot = document.createElement('div');
-                dot.className = '__sp_hover_halo';
-                dot.style.left = '{x}px';
-                dot.style.top = '{y}px';
-                target.appendChild(dot);
-                setTimeout(() => {{ try {{ dot.remove(); }} catch(e) {{}} }}, {int(duration * 1000) + 200});
-            }} catch(e) {{}}
-        }})()
-        """
-        self.send_command_nowait("Runtime.evaluate", {"expression": hover_js})
 
         self._notify_listeners({
             "type": "cursor_action",
@@ -2276,21 +2211,6 @@ class BrowserSession:
         self.cursor_x = x
         self.cursor_y = y
 
-        right_ripple_js = f"""
-        (() => {{
-            try {{
-                const target = document.body || document.documentElement;
-                if (!target) return;
-                const dot = document.createElement('div');
-                dot.className = '__sp_right_ripple';
-                dot.style.left = '{x}px';
-                dot.style.top = '{y}px';
-                target.appendChild(dot);
-                setTimeout(() => {{ try {{ dot.remove(); }} catch(e) {{}} }}, 450);
-            }} catch(e) {{}}
-        }})()
-        """
-        self.send_command_nowait("Runtime.evaluate", {"expression": right_ripple_js})
 
         self._notify_listeners({
             "type": "cursor_action",

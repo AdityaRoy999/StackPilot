@@ -31,6 +31,42 @@ def normalize_element_text(raw_text: str) -> str:
     return cleaned.strip()
 
 
+def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int = 60) -> List[Dict[str, Any]]:
+    """Generates a token-optimized, compact representation of interactive elements for the LLM.
+    Prioritizes in-viewport elements and omits pixel coordinates while keeping IDs and semantic labels."""
+    if not elements:
+        return []
+    in_viewport = [e for e in elements if e.get("is_in_viewport")]
+    out_viewport = [e for e in elements if not e.get("is_in_viewport")]
+    ordered = in_viewport + out_viewport
+
+    compacted = []
+    for el in ordered[:max_count]:
+        item: Dict[str, Any] = {
+            "id": el.get("id"),
+            "tag": el.get("tag"),
+            "text": el.get("text", "")[:60],
+        }
+        role = el.get("role")
+        tag = el.get("tag")
+        if role and role != tag:
+            item["role"] = role
+        if el.get("type"):
+            item["type"] = el.get("type")
+        if el.get("placeholder"):
+            item["placeholder"] = el.get("placeholder")[:40]
+        if el.get("href"):
+            item["href"] = el.get("href")[:60]
+        if el.get("card_context"):
+            item["card"] = el.get("card_context")
+        if el.get("form_id"):
+            item["form"] = el.get("form_id")
+        if not el.get("is_in_viewport"):
+            item["below_fold"] = True
+        compacted.append(item)
+    return compacted
+
+
 AGENT_TOOLS = [
     {
         "type": "function",
@@ -615,17 +651,19 @@ def resolve_target_project_runtime_url(
     deployment_id: Optional[str] = None,
     user_message: str = "",
     custom_url: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """
     Finds the active, live project runtime URL for browser testing.
-    Prioritizes real user project deployments and custom URLs, and never returns the StackPilot frontend URL (localhost:3000).
+    Prioritizes real user project deployments, active browser canvas session, and custom URLs, and never returns the StackPilot frontend URL (localhost:3000).
     """
     # 0. Explicit custom_url takes absolute priority
     if custom_url and custom_url.strip():
         u = custom_url.strip()
-        if not u.startswith("http://") and not u.startswith("https://"):
-            u = f"http://{u}"
-        return u
+        if u not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
+            if not u.startswith("http://") and not u.startswith("https://"):
+                u = f"http://{u}"
+            return u
 
     # 1. Regex check for explicit URL in user_message (e.g. "test https://example.com", "http://localhost:52249")
     if user_message:
@@ -634,6 +672,17 @@ def resolve_target_project_runtime_url(
             found_url = url_match.group(0).rstrip(".,;)")
             if "localhost:3000" not in found_url and "127.0.0.1:3000" not in found_url:
                 return found_url
+
+    # 2. Check active browser canvas session in browser_manager
+    try:
+        from .browser_driver import browser_manager
+        active = (browser_manager.sessions.get(session_id) if session_id else None) or browser_manager.get_active_session()
+        if active and active.current_url:
+            cur_u = active.current_url.strip()
+            if cur_u and cur_u not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
+                return cur_u
+    except Exception:
+        pass
 
     try:
         conn = get_db_connection()
@@ -751,6 +800,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 project_id=arguments.get("project_id"),
                 deployment_id=arguments.get("deployment_id"),
                 custom_url=arguments.get("custom_url"),
+                session_id=session_id,
             )
             if resolved_url and resolved_url != "about:blank":
                 url = resolved_url
@@ -761,6 +811,12 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
 
         try:
             from .browser_driver import browser_manager
+            _existing = browser_manager.sessions.get(session_id)
+            _active = browser_manager.get_active_session()
+            already_open = bool(
+                (_existing and _existing.is_connected) or
+                (_active and _active.is_connected)
+            )
             session = await browser_manager.get_or_create_session(session_id=session_id, url=url)
             if url and url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
                 curr = (session.current_url or "").rstrip("/").strip()
@@ -809,7 +865,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "pda_depth": pda_depth_val,
                 "site_graph_summary": skg_summary_val,
                 "interactive_elements_count": len(page_state.get("elements", [])),
-                "interactive_elements": page_state.get("elements", []),
+                "interactive_elements": _compact_interactive_elements(page_state.get("elements", [])),
                 "subpages": page_state.get("subpages", []),
                 "console_errors_count": len([l for l in session.console_logs if l.get("type") == "error"]),
                 "frame": frame_url,
@@ -1137,7 +1193,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "pda_depth": pda_depth_val,
                 "verification": getattr(session, "last_action_verification", None),
                 "elements_count": len(tree.get("elements", [])),
-                "interactive_elements": tree.get("elements", []),
+                "interactive_elements": _compact_interactive_elements(tree.get("elements", [])),
                 "subpages": tree.get("subpages", []),
                 "spawned_portals": hover_portals,
                 "console_errors_count": len([l for l in session.console_logs if l.get("type") == "error"]),
@@ -1299,7 +1355,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "pda_depth": pda_depth_val,
                 "site_graph_summary": skg_summary_val,
                 "elements_count": len(state.get("elements", [])),
-                "interactive_elements": state.get("elements", []),
+                "interactive_elements": _compact_interactive_elements(state.get("elements", [])),
                 "frame": f"data:image/jpeg;base64,{frame_data}" if frame_data else "",
                 "som_frame": f"data:image/jpeg;base64,{som_data}" if som_data else "",
             }

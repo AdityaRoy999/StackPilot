@@ -169,4 +169,11 @@ describe("UI_THEME_INIT_SCRIPT", () => {
     runInitScript();
     expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
+
+  it("applies a custom theme stored in localStorage", () => {
+    window.localStorage.setItem(UI_THEME_STORAGE_KEY, "custom-neon-matrix");
+    runInitScript();
+    expect(document.documentElement.getAttribute("data-ui-theme")).toBe("custom-neon-matrix");
+  });
 });
+

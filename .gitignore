@@ -99,3 +99,8 @@ uploads/
 
 # Scratch scripts and verification tools
 scratch/
+scratch_*
+kubectl
+video/
+*.mp4
+shrink_docker_disk.bat

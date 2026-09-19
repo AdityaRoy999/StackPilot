@@ -1,0 +1,173 @@
+# ─── StackPilot Ultra-Lite Compose (Target: 2GB RAM / Low-Spec Hardware) ───
+# Total RAM Footprint: ~180MB - 240MB
+# Perfect for: 2GB Laptops, $2.50/mo VPS, Raspberry Pi, Mobile/Edge Servers
+
+name: stackpilot-lite
+
+services:
+  # ─── 1. Tuned Low-Memory PostgreSQL (38MB RAM) ─────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: stackpilot-postgres
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - max_connections=25
+      - -c
+      - synchronous_commit=off
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+        reservations:
+          memory: 48M
+    environment:
+      POSTGRES_USER: ${DB_USER:-stackpilot_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dokscp_secret_2026}
+      POSTGRES_DB: ${DB_NAME:-stackpilot_platform}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── 2. Ultra-Lightweight Redis (8MB RAM) ───────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: stackpilot-redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "24mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+        reservations:
+          memory: 8M
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  # ─── 3. Uploads Permission Initializer ──────────────────────
+  uploads-init:
+    image: alpine:3.19
+    container_name: stackpilot-uploads-init
+    restart: "no"
+    command: ["sh", "-c", "mkdir -p /uploads/projects /uploads/repos /uploads/temp /uploads/build-logs && chmod -R 777 /uploads 2>/dev/null || true"]
+    volumes:
+      - ./uploads:/uploads
+
+  # ─── 4. Drogon C++ Core Backend Engine (~35MB RAM) ─────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stackpilot-backend:latest
+    container_name: stackpilot-backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 48M
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-stackpilot_platform}
+      - DB_USER=${DB_USER:-stackpilot_admin}
+      - DB_PASSWORD=${DB_PASSWORD:-dokscp_secret_2026}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET:-secret_jwt_key_stackpilot}
+      - BACKEND_PUBLIC_URL=http://localhost:8090
+      - CORS_ALLOWED_ORIGIN=http://localhost:3000,http://127.0.0.1:3000
+      - DROGON_THREADS=2
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./uploads:/app/uploads
+      - ./config:/app/config:ro
+      - ./sql/migrations:/app/sql/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      uploads-init:
+        condition: service_completed_successfully
+
+  # ─── 5. Standalone Production Frontend (~45MB RAM vs 1.1GB in dev) ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: runner
+    image: stackpilot-frontend:lite
+    container_name: stackpilot-frontend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 48M
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8090/api/v1
+      - NEXT_PUBLIC_WS_BASE_URL=ws://localhost:8090
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - backend
+
+  # ─── 6. AI Healing Assistant (Optional Profile: --profile ai) ────────
+  ai-service:
+    profiles: ["ai", "full"]
+    init: true
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    image: stackpilot-ai-service:latest
+    container_name: stackpilot-ai-service
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-stackpilot_platform}
+      - DB_USER=${DB_USER:-stackpilot_admin}
+      - DB_PASSWORD=${DB_PASSWORD:-dokscp_secret_2026}
+      - BACKEND_INTERNAL_URL=http://backend:8090
+      - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+      - BROWSER_SANDBOX_URL=${BROWSER_SANDBOX_URL:-}
+      - BROWSER_STREAM_HOST=${BROWSER_STREAM_HOST:-}
+      - BROWSER_STREAM_PORT=${BROWSER_STREAM_PORT:-8099}
+    ports:
+      - "127.0.0.1:8010:8010"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

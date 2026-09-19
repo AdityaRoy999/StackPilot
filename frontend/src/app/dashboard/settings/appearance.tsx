@@ -3,7 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
-import { Check, Laptop, Moon, Palette, Sparkles, Sun } from "lucide-react";
+import { Check, ChevronRight, Code, Laptop, Moon, Palette, Sparkles, Sun } from "lucide-react";
 import api from "@/lib/api";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils";
 import { UI_THEME_META, useUiTheme, type UiTheme } from "@/lib/ui-theme";
 import { AppIcon, useIconSettings } from "@/lib/custom-icons";
+import { useCustomThemes } from "@/lib/custom-themes";
 
 const MODES = [
   { value: "light", label: "Light", icon: Sun },
@@ -25,6 +26,7 @@ const subscribeNever = () => () => {};
 export function AppearanceSettings() {
   const [uiTheme, setUiTheme] = useUiTheme();
   const [iconSettings, iconActions] = useIconSettings();
+  const [customThemes] = useCustomThemes();
   const { theme, setTheme } = useTheme();
 
   // next-themes resolves the active mode only on the client, so the selected
@@ -61,9 +63,17 @@ export function AppearanceSettings() {
 
       <CardContent className="space-y-6">
         <div className="space-y-3">
-          <div>
-            <h4 className="text-sm font-medium text-foreground">Theme</h4>
-            <p className="text-xs text-muted-foreground">Applies instantly and is saved to your account across all devices.</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-medium text-foreground">Theme</h4>
+              <p className="text-xs text-muted-foreground">Applies instantly and is saved to your account across all devices.</p>
+            </div>
+            <Link href="/theme-builder">
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+                <AppIcon name="code" fallback={Code} className="h-3.5 w-3.5 text-primary" />
+                <span>Theme Builder</span>
+              </Button>
+            </Link>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -123,6 +133,89 @@ export function AppearanceSettings() {
               );
             })}
           </div>
+
+          {/* Custom User Themes */}
+          {customThemes.length > 0 && (
+            <div className="space-y-3 pt-3 border-t border-border/60">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-medium text-foreground flex items-center gap-2">
+                    <span>Custom & User Themes</span>
+                    <Badge variant="outline" className="text-[10px] font-mono">JSON</Badge>
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    Themes configured and imported via the Theme Builder studio.
+                  </p>
+                </div>
+                <Link href="/theme-builder">
+                  <Button variant="ghost" size="sm" className="gap-1 text-xs text-primary h-7">
+                    <span>Studio</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                </Link>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {customThemes.map((theme) => {
+                  const isActive = mounted && uiTheme === theme.id;
+                  const bg = activeMode === "dark" ? theme.dark.background : theme.light.background;
+                  const surface = activeMode === "dark" ? theme.dark.card : theme.light.card;
+                  const accent = activeMode === "dark" ? theme.dark.primary : theme.light.primary;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => setUiTheme(theme.id as any)}
+                      aria-pressed={isActive}
+                      className={cn(
+                        "group relative flex flex-col gap-3 rounded-xl border p-3 text-left transition-colors cursor-pointer",
+                        isActive
+                          ? "border-primary bg-accent/40 ring-2 ring-primary/30"
+                          : "border-border hover:border-primary/40 hover:bg-accent/20"
+                      )}
+                    >
+                      {isActive && (
+                        <span className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-primary-foreground ring-2 ring-background">
+                          <AppIcon name="check" fallback={Check} className="h-3 w-3" />
+                        </span>
+                      )}
+
+                      <div
+                        className="flex h-16 w-full overflow-hidden rounded-lg border border-border"
+                        aria-hidden="true"
+                      >
+                        <span className="w-1/4" style={{ backgroundColor: surface }} />
+                        <span className="relative flex-1" style={{ backgroundColor: bg }}>
+                          <span
+                            className="absolute left-2 top-3 h-2 w-10 rounded-full"
+                            style={{ backgroundColor: accent }}
+                          />
+                          <span
+                            className="absolute left-2 top-7 h-1.5 w-14 rounded-full opacity-30"
+                            style={{ backgroundColor: accent }}
+                          />
+                          <span
+                            className="absolute left-2 top-10 h-1.5 w-8 rounded-full opacity-20"
+                            style={{ backgroundColor: accent }}
+                          />
+                        </span>
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-sm font-medium text-foreground truncate">{theme.name}</span>
+                          <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4">Custom</Badge>
+                        </div>
+                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground line-clamp-2">
+                          {theme.description}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">
