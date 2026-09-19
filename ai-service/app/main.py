@@ -2795,7 +2795,8 @@ async def stream_agent_reply(
                 f"5. Test deep vertical scroll walkthrough: scroll through viewports to trigger IntersectionObservers and below-the-fold content.\n"
                 f"6. HIERARCHICAL SUBPAGE & CARD EXPLORATION: Click card buttons or sub-page links to explore depth-first. On each subpage, audit controls, then call `browser_interact(action='navigate_back')` to return to the parent page and continue testing subsequent cards.\n"
                 f"7. Audit runtime health: inspect console for uncaught exceptions, 404s, or hydration mismatches.\n"
-                f"8. Present an exhaustive Markdown Test Report covering all tested routes and components."
+                f"8. STRICT TARGET DOMAIN CONFINEMENT: You must ONLY test internal routes belonging to the application domain ({target_runtime_url}). NEVER click or navigate to external third-party links (such as GitHub, Twitter/X, Discord, LinkedIn, documentation on external domains, or sponsors). All autonomous testing and sub-page exploration must be strictly confined to the application under test.\n"
+                f"9. Present an exhaustive Markdown Test Report covering all tested routes and components."
             )
 
         context = {
@@ -2830,7 +2831,8 @@ async def stream_agent_reply(
                 f"   - Form inputs & textareas (fill ALL fields: name, email, phone, message, AND click Submit/Send/Test to verify submission). "
                 f"   - Vertical scrolling (scroll viewports down to explore all content). "
                 f"   - Hierarchical sub-page & card exploration: Click card action buttons / sub-page links, explore their content, and call `browser_interact(action='navigate_back')` to return and test remaining cards! "
-                f"3. Do NOT close the browser session or call DevOps/terminal tools. Focus 100% on verifying the live application UI.]"
+                f"3. STRICT DOMAIN CONSTRAINT: Strictly confine all testing to '{target_runtime_url}' and its same-origin pages. DO NOT click external links (such as GitHub, Twitter/X, social media, external documentation) or explore third-party websites. "
+                f"4. Do NOT close the browser session or call DevOps/terminal tools. Focus 100% on verifying the live application UI.]"
             )
 
         if request.images:
@@ -3586,6 +3588,7 @@ async def stream_agent_reply(
                         "text": str(el.get("text") or el.get("aria_label") or el.get("placeholder") or "")[:50],
                         "role": el.get("role") or "",
                         "href": el.get("href") or "",
+                        "is_external": bool(el.get("is_external")),
                     }
                     for el in clean_result.get("interactive_elements", [])[:35]
                 ]
@@ -3603,6 +3606,7 @@ async def stream_agent_reply(
                             "tag": el.get("tag"),
                             "text": str(el.get("text") or el.get("aria_label") or "")[:35],
                             "href": el.get("href") or "",
+                            "is_external": bool(el.get("is_external")),
                         }
                         for el in clean_tool_content["interactive_elements"][:35]
                     ]
@@ -3880,8 +3884,9 @@ async def stream_agent_reply(
             sp_url = sp.get("url") or sp.get("path") or ""
             sp_clean = sp_url.rstrip("/").lower()
             if sp_clean and sp_clean not in visited_routes and not any(w in sp_clean for w in ["logout", "signout", "delete", "destroy"]):
-                visited_routes.add(sp_clean)
-                frontier.append((sp.get("url", sp_url), sp.get("text") or sp.get("path") or "Sub-Page", sp.get("is_hash", False)))
+                if active_session.is_url_in_target_domain(sp_url):
+                    visited_routes.add(sp_clean)
+                    frontier.append((sp.get("url", sp_url), sp.get("text") or sp.get("path") or "Sub-Page", sp.get("is_hash", False)))
 
         site_analysis_thought = (
             f"• 🌐 [High-Speed Site Crawler] Grounded `{cur_url}` ('{cur_title}').\n"
@@ -3898,6 +3903,15 @@ async def stream_agent_reply(
         # Dedicated helper to audit all interactive surfaces on the active page:
         async def _audit_current_page_surfaces(page_label: str, is_home: bool = False):
             if await is_cancelled():
+                return
+            # Emergency Domain Boundary Fence
+            current_audit_url = active_session.current_url or ""
+            if current_audit_url and not active_session.is_url_in_target_domain(current_audit_url):
+                logger.warning(f"🚫 [Domain Fence] Attempted to audit out-of-bounds URL '{current_audit_url}'. Snapping back to '{target_runtime_url}'.")
+                try:
+                    await active_session.navigate(target_runtime_url)
+                except Exception:
+                    pass
                 return
             if not active_session.interactive_elements:
                 try:
@@ -4215,8 +4229,9 @@ async def stream_agent_reply(
                     sub_url = sub.get("url") or sub.get("path") or ""
                     sub_clean = sub_url.rstrip("/").lower()
                     if sub_clean and sub_clean not in visited_routes and not any(w in sub_clean for w in ["logout", "signout", "delete", "destroy"]):
-                        visited_routes.add(sub_clean)
-                        frontier.append((sub.get("url", sub_url), sub.get("text") or sub.get("path") or "Discovered Menu Link", sub.get("is_hash", False)))
+                        if active_session.is_url_in_target_domain(sub_url):
+                            visited_routes.add(sub_clean)
+                            frontier.append((sub.get("url", sub_url), sub.get("text") or sub.get("path") or "Discovered Menu Link", sub.get("is_hash", False)))
 
             if tested_hovers > 0:
                 async for sse_chunk in _exec_qa_step(
@@ -4233,6 +4248,8 @@ async def stream_agent_reply(
                 e for e in cur_elements
                 if (e.get("tag") in {"button", "a"} or e.get("role") in {"button", "switch", "link"} or e.get("card_context") or "onClick" in e.get("attributes", {}))
                 and e.get("role") != "tab"
+                and not e.get("is_external")
+                and not (e.get("href") and not active_session.is_url_in_target_domain(e.get("href")))
                 and not any(w in normalize_element_text(e.get("text") or "").lower() for w in ["skip", "close", "cancel", "sign out", "logout", "delete account"])
             ]
             for btn in interactive_btns:
@@ -4275,15 +4292,7 @@ async def stream_agent_reply(
                 post_url = (active_session.current_url or "").rstrip("/").lower()
                 if post_url and pre_url and post_url != pre_url and post_url not in {"about:blank"}:
                     # Check if navigation led to an external third-party domain (e.g. GitHub, LinkedIn, external demo)
-                    from urllib.parse import urlparse
-                    is_external = False
-                    try:
-                        pre_netloc = urlparse(pre_url).netloc.lower()
-                        post_netloc = urlparse(post_url).netloc.lower()
-                        if pre_netloc and post_netloc and pre_netloc != post_netloc:
-                            is_external = True
-                    except Exception:
-                        pass
+                    is_external = not active_session.is_url_in_target_domain(post_url)
 
                     if is_external:
                         # ─── EXTERNAL LINK VERIFICATION ───
@@ -4499,14 +4508,17 @@ async def stream_agent_reply(
                             n_url = n_sp.get("url") or n_sp.get("path") or ""
                             n_clean = n_url.rstrip("/").lower()
                             if n_clean and n_clean not in visited_routes and not any(w in n_clean for w in ["logout", "signout", "delete", "destroy"]):
-                                visited_routes.add(n_clean)
-                                frontier.append((n_sp.get("url", n_url), n_sp.get("text") or n_sp.get("path") or "Lazy-Loaded Link", n_sp.get("is_hash", False)))
+                                if active_session.is_url_in_target_domain(n_url):
+                                    visited_routes.add(n_clean)
+                                    frontier.append((n_sp.get("url", n_url), n_sp.get("text") or n_sp.get("path") or "Lazy-Loaded Link", n_sp.get("is_hash", False)))
 
                         # Test newly revealed interactive controls (cards, buttons, links)
                         new_btns = [
                             e for e in new_elements
                             if (e.get("tag") in {"button", "a"} or e.get("role") in {"button", "link"} or e.get("card_context"))
                             and e.get("role") != "tab"
+                            and not e.get("is_external")
+                            and not (e.get("href") and not active_session.is_url_in_target_domain(e.get("href")))
                             and not any(w in normalize_element_text(e.get("text") or "").lower() for w in ["skip", "close", "cancel", "sign out", "logout"])
                         ]
                         for nb in new_btns:
@@ -4521,7 +4533,7 @@ async def stream_agent_reply(
 
                             # Only click cards and internal links, not all buttons
                             is_card = bool(nb_ctx)
-                            is_internal_link = nb.get("tag") == "a" and nb.get("href") and not nb.get("href", "").startswith("http")
+                            is_internal_link = nb.get("tag") == "a" and nb.get("href") and active_session.is_url_in_target_domain(nb.get("href"))
                             if is_card or is_internal_link:
                                 pre_url = (active_session.current_url or "").rstrip("/").lower()
                                 async for sse_chunk in _exec_qa_step(
@@ -4535,7 +4547,7 @@ async def stream_agent_reply(
                                 post_url = (active_session.current_url or "").rstrip("/").lower()
                                 if post_url and pre_url and post_url != pre_url and post_url not in {"about:blank"}:
                                     # Navigated to a new page — add to visited and backtrack
-                                    if post_url not in visited_routes:
+                                    if post_url not in visited_routes and active_session.is_url_in_target_domain(post_url):
                                         visited_routes.add(post_url)
                                         frontier.append((active_session.current_url, nb_text[:30], False))
                                     # Backtrack to continue scrolling
@@ -4586,6 +4598,8 @@ async def stream_agent_reply(
                 return
 
             target_route_url, target_route_label, is_hash = frontier.popleft()
+            if not active_session.is_url_in_target_domain(target_route_url):
+                continue
             pages_crawled += 1
 
             # Direct route navigation
@@ -4603,8 +4617,9 @@ async def stream_agent_reply(
                 n_url = n_sp.get("url") or n_sp.get("path") or ""
                 n_clean = n_url.rstrip("/").lower()
                 if n_clean and n_clean not in visited_routes and not any(w in n_clean for w in ["logout", "signout", "delete", "destroy"]):
-                    visited_routes.add(n_clean)
-                    frontier.append((n_sp.get("url", n_url), n_sp.get("text") or n_sp.get("path") or "Sub-Page", n_sp.get("is_hash", False)))
+                    if active_session.is_url_in_target_domain(n_url):
+                        visited_routes.add(n_clean)
+                        frontier.append((n_sp.get("url", n_url), n_sp.get("text") or n_sp.get("path") or "Sub-Page", n_sp.get("is_hash", False)))
 
             # Audit interactive surfaces on this new route
             async for sse_chunk in _audit_current_page_surfaces(target_route_label, is_home=False):

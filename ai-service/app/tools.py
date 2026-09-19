@@ -58,6 +58,8 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
             item["placeholder"] = el.get("placeholder")[:40]
         if el.get("href"):
             item["href"] = el.get("href")[:60]
+        if el.get("is_external"):
+            item["is_external"] = True
         if el.get("card_context"):
             item["card"] = el.get("card_context")
         if el.get("form_id"):
@@ -913,6 +915,13 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
 
                 if element_id is not None or target_text:
                     if el:
+                        if el.get("is_external") or (el.get("href") and not session.is_url_in_target_domain(el.get("href"))):
+                            return {
+                                "status": "blocked",
+                                "action": "click",
+                                "target": el.get("text", "") or el.get("href", ""),
+                                "error": f"Target element #{el.get('id')} links to external website '{el.get('href', '')}'. External navigation is blocked; testing is strictly restricted to the target application domain.",
+                            }
                         norm_text = normalize_element_text(el.get("text") or el.get("aria_label") or el.get("placeholder") or "")
                         target_name = norm_text if norm_text else f"Element #{el['id']}"
                         label = f"Click: {target_name}"
@@ -1101,6 +1110,13 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 url = str(arguments.get("url", ""))
                 if not url:
                     return {"error": "Must provide url to navigate."}
+                if not session.is_url_in_target_domain(url):
+                    return {
+                        "status": "blocked",
+                        "action": "navigate",
+                        "target": url,
+                        "error": f"Navigation to external URL '{url}' is forbidden. Autonomous testing is strictly restricted to the target application domain.",
+                    }
                 target_name = url
                 label = f"Navigate to {url}"
                 await session.navigate(url)

@@ -156,6 +156,31 @@ class BrowserSession:
         self._msg_id += 1
         return self._msg_id
 
+    def is_url_in_target_domain(self, url: str) -> bool:
+        """Determines whether a candidate URL belongs to the target application's allowed domain."""
+        if not url or url.startswith("javascript:") or url.startswith("mailto:") or url.startswith("tel:"):
+            return False
+        if url.startswith("#") or url.startswith("/"):
+            return True
+        from urllib.parse import urlparse
+        try:
+            base_url = self.target_url or self.current_url or ""
+            target_host = urlparse(base_url).hostname
+            link_host = urlparse(url).hostname
+            if not target_host or not link_host:
+                return True
+            target_h = target_host.lower().lstrip("www.")
+            link_h = link_host.lower().lstrip("www.")
+            if link_h == target_h or link_h.endswith("." + target_h):
+                return True
+            # Cross-match local docker / localhost addresses
+            local_hosts = {"localhost", "127.0.0.1", "host.docker.internal", "0.0.0.0"}
+            if target_h in local_hosts and link_h in local_hosts:
+                return True
+            return False
+        except Exception:
+            return False
+
     async def _h264_stream_loop(self):
         """Reads length-prefixed H.264 NALUs from the container video streamer on port 8099.
         Dispatches pre-packed binary packets to frontend WebCodecs VideoDecoder with zero JSON/Base64 overhead."""
@@ -1737,8 +1762,21 @@ class BrowserSession:
                 const elemId = counter++;
                 // Register in persistent in-browser map for 0ms direct pointer resolution
                 cache.nodes.set(elemId, el);
-                cache.ids.set(el, elemId);
-                try { el.setAttribute('data-sp-id', String(elemId)); } catch(e) {}
+                let isExternalLink = false;
+                if (href && !href.startsWith('#') && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('/')) {
+                    try {
+                        const targetU = new URL(href, window.location.href);
+                        const curH = window.location.hostname.toLowerCase().replace(/^www\./, '');
+                        const linkH = targetU.hostname.toLowerCase().replace(/^www\./, '');
+                        if (linkH && curH && linkH !== curH && !linkH.endsWith('.' + curH)) {
+                            const isLocal = (curH === 'localhost' || curH === '127.0.0.1' || curH.includes('docker')) && 
+                                            (linkH === 'localhost' || linkH === '127.0.0.1' || linkH.includes('docker'));
+                            if (!isLocal) {
+                                isExternalLink = true;
+                            }
+                        }
+                    } catch(e) {}
+                }
 
                 elements.push({
                     id: elemId,
@@ -1746,6 +1784,7 @@ class BrowserSession:
                     role: el.getAttribute('role') || tagL,
                     type: el.type || '',
                     href: href,
+                    is_external: isExternalLink,
                     text: text,
                     name: el.name || '',
                     input_id: el.id || '',
@@ -1981,6 +2020,7 @@ class BrowserSession:
                 "is_hash": sp.get("is_hash", False),
             }
             for sp in raw_subpages
+            if self.is_url_in_target_domain(sp.get("url", "") or sp.get("path", ""))
         ]
 
         # Phase 2: Update Site Knowledge Graph & Dynamic Page Archetype
@@ -2466,6 +2506,36 @@ class BrowserSession:
         verification = ActionPerceptionVerification.verify_action_outcome(pre_snap, post_snap, action="click", target=target_name)
         self.last_action_verification = verification.to_dict()
 
+        # Domain Boundary Guard: If the click navigated outside the target application's allowed domain,
+        # immediately block exploration, log the event, navigate back to pre_snap.url, and abort further SKG/PNA updates.
+        current_post_url = post_snap.url or self.current_url or ""
+        is_breach = False
+        target_breach_url = ""
+        if current_post_url and not self.is_url_in_target_domain(current_post_url):
+            is_breach = True
+            target_breach_url = current_post_url
+        elif verification.effect_type == "route_change" and verification.delta_url and not self.is_url_in_target_domain(verification.delta_url):
+            is_breach = True
+            target_breach_url = verification.delta_url
+
+        if is_breach:
+            snap_back_url = pre_snap.url if (pre_snap.url and pre_snap.url != "about:blank") else (self.target_url or "about:blank")
+            logger.warning(f"🚫 [Domain Boundary Breach] Action navigated outside target domain to {target_breach_url}. Snapping back to {snap_back_url}.")
+            if self._event_listener:
+                try:
+                    await self._event_listener({
+                        "type": "external_link_blocked",
+                        "url": target_breach_url,
+                        "original_url": snap_back_url,
+                        "target_name": target_name
+                    })
+                except Exception:
+                    pass
+            await self.navigate(snap_back_url)
+            verification.effect_type = "external_link_verified"
+            self.last_action_verification = verification.to_dict()
+            return True
+
         # 7. Update SKG transition & PNA stack if route changed or modal opened
         if verification.effect_type == "route_change" and verification.delta_url:
             if hasattr(self, "skg") and self.skg:
@@ -2926,8 +2996,13 @@ class BrowserManager:
 
     async def get_or_create_session(self, session_id: str = "default", url: str = "about:blank") -> BrowserSession:
         norm_url = url.rstrip("/").strip() if url else ""
+        container_url = to_container_accessible_url(url) if url else ""
         if session_id in self.sessions and self.sessions[session_id].is_connected:
             session = self.sessions[session_id]
+            if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
+                session.target_url = container_url or url
+                if hasattr(session, "skg") and session.skg:
+                    session.skg.origin_url = session.target_url
             curr = (session.current_url or "").rstrip("/").strip()
             if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and (norm_url != curr or curr in {"about:blank", ""}):
                 await session.navigate(url)
@@ -2937,6 +3012,10 @@ class BrowserManager:
         active = self.get_active_session()
         if active:
             self.sessions[session_id] = active
+            if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
+                active.target_url = container_url or url
+                if hasattr(active, "skg") and active.skg:
+                    active.skg.origin_url = active.target_url
             curr = (active.current_url or "").rstrip("/").strip()
             if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and (norm_url != curr or curr in {"about:blank", ""}):
                 await active.navigate(url)

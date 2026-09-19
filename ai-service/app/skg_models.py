@@ -181,6 +181,25 @@ class SiteKnowledgeGraph:
         frag = f"#{parsed.fragment}" if parsed.fragment and (parsed.fragment.startswith("/") or parsed.fragment.startswith("!/")) else ""
         return f"{parsed.scheme}://{parsed.netloc}{norm_path}{frag}".lower()
 
+    def is_same_domain(self, url: str) -> bool:
+        """Verifies candidate route URL belongs to the target site domain."""
+        if not self.origin_url or not url:
+            return True
+        try:
+            orig_host = urlparse(self.origin_url).hostname
+            url_host = urlparse(url).hostname
+            if not orig_host or not url_host:
+                return True
+            orig_h = orig_host.lower().lstrip("www.")
+            url_h = url_host.lower().lstrip("www.")
+            if url_h == orig_h or url_h.endswith("." + orig_h):
+                return True
+            if orig_h in {"localhost", "127.0.0.1", "host.docker.internal"} and url_h in {"localhost", "127.0.0.1", "host.docker.internal"}:
+                return True
+            return False
+        except Exception:
+            return False
+
     def get_or_create_node(
         self,
         url: str,
@@ -189,6 +208,10 @@ class SiteKnowledgeGraph:
         depth: int = 0
     ) -> RouteNode:
         canonical = self.canonicalize_url(url)
+        if not self.is_same_domain(canonical):
+            # Do not register external URLs in site knowledge graph
+            return self.nodes.get(self.canonicalize_url(self.origin_url)) or RouteNode(url=canonical, path="/", title=title)
+
         if canonical not in self.nodes:
             path = urlparse(canonical).path or "/"
             self.nodes[canonical] = RouteNode(
