@@ -140,6 +140,7 @@ class BrowserSession:
         self._last_chromium_frame_time: float = time.time()
         self._last_pump_time: float = 0.0
         self._last_raw_jpeg: Optional[bytes] = None
+        self._last_keyframe_packet: Optional[bytes] = None
         self._navigating: bool = False  # True during page navigation to suppress stale keepalive
         self._keepalive_task: Optional[asyncio.Task] = None
         self.h264_active: bool = False
@@ -193,6 +194,9 @@ class BrowserSession:
                     meta_bytes = json.dumps(metadata).encode("utf-8")
                     sp_header = struct.pack(">2sIQH", b"SP", self._frame_seq, ts_ms, len(meta_bytes))
                     raw_bytes = sp_header + meta_bytes + nalu
+
+                    if is_kf:
+                        self._last_keyframe_packet = raw_bytes
 
                     self._notify_listeners({
                         "type": "frame",
@@ -2694,7 +2698,7 @@ class BrowserSession:
                 return await self.extract_interactive_tree()
             return {"error": str(e)}
 
-    async def scroll(self, delta_y: int = 300, extract_tree: bool = True):
+    async def scroll(self, delta_y: int = 300, extract_tree: bool = True, fast_mode: bool = True):
         """Scrolls the page up or down and awaits scroll rest."""
         self._notify_listeners({
             "type": "cursor_action",
@@ -2709,8 +2713,12 @@ class BrowserSession:
             "deltaX": 0,
             "deltaY": delta_y,
         })
-        await self.wait_for_scroll_settled(min_quiet_ms=180, max_timeout_s=2.5)
-        await self.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, scroll_quiet_ms=80, max_timeout_s=2.0, fast_mode=False)
+        if fast_mode:
+            await self.wait_for_scroll_settled(min_quiet_ms=50, max_timeout_s=0.6)
+            await self.wait_for_quiescence(network_idle_ms=40, dom_quiet_ms=20, scroll_quiet_ms=40, max_timeout_s=0.6, fast_mode=True)
+        else:
+            await self.wait_for_scroll_settled(min_quiet_ms=180, max_timeout_s=2.5)
+            await self.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, scroll_quiet_ms=80, max_timeout_s=2.0, fast_mode=False)
         await self.force_fresh_frame()
         if extract_tree:
             try:

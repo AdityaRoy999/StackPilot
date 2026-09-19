@@ -325,10 +325,10 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - DISPLAY=:99
-      - STREAM_FPS=30
+      - STREAM_FPS=60
       - STREAM_WIDTH=1280
       - STREAM_HEIGHT=720
-      - STREAM_BITRATE=2000k
+      - STREAM_BITRATE=2500k
     deploy:
       resources:
         limits:

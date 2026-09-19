@@ -5274,9 +5274,10 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
 
     # Decoupled control queue and video frames to eliminate FIFO bottleneck
     control_queue: asyncio.Queue = asyncio.Queue()
-    frame_queue: asyncio.Queue = asyncio.Queue(maxsize=3)  # Ultra-low latency queue: keeps stream locked to live frame
+    frame_queue: asyncio.Queue = asyncio.Queue(maxsize=60)  # 60-frame headroom prevents delta packet loss
+    _dropping_until_kf = [False]  # GOP-aware drop protection: never feed orphaned delta frames to decoder
     ws_lock = asyncio.Lock()
-    _last_cursor_send_time = [0.0]  # Throttle cursor_action move events to 30/sec
+    _last_cursor_send_time = [0.0]  # Throttle cursor_action move events to 60/sec
 
     async def safe_send_json(data: Any):
         if websocket.client_state.name != "CONNECTED":
@@ -5290,12 +5291,12 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
     async def safe_send_bytes(data: bytes):
         if websocket.client_state.name != "CONNECTED":
             return
-        # Backpressure check: avoid buffer bloat on congested network connections
+        # Backpressure check: avoid buffer bloat on severely stalled connections (>1MB)
         try:
             transport = getattr(websocket, "_transport", None) or getattr(websocket, "transport", None)
             if transport and hasattr(transport, "get_write_buffer_size"):
-                if transport.get_write_buffer_size() > 192 * 1024:
-                    return  # Drop frame to maintain zero latency
+                if transport.get_write_buffer_size() > 1024 * 1024:
+                    return  # Drop only under extreme congestion
         except Exception:
             pass
         try:
@@ -5307,14 +5308,27 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
     def on_browser_event(ev: Dict[str, Any]):
         try:
             if ev.get("type") == "frame":
+                metadata = ev.get("metadata") or {}
+                is_kf = bool(metadata.get("isKeyFrame", False))
+
                 if frame_queue.full():
-                    try:
-                        frame_queue.get_nowait()  # Drop oldest undelivered frame
-                    except asyncio.QueueEmpty:
-                        pass
-                frame_queue.put_nowait(ev)
+                    # Severe network congestion: clear stale GOP and await next clean keyframe
+                    while not frame_queue.empty():
+                        try:
+                            frame_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    _dropping_until_kf[0] = True
+
+                if _dropping_until_kf[0]:
+                    if is_kf:
+                        _dropping_until_kf[0] = False
+                        frame_queue.put_nowait(ev)
+                    # Suppress orphaned delta frames until next IDR keyframe arrives
+                else:
+                    frame_queue.put_nowait(ev)
             elif ev.get("type") == "cursor_action" and ev.get("action") == "move":
-                # Smooth 60 FPS cursor positioning with backpressure protection
+                # Smooth 60 FPS cursor positioning
                 now = time.time()
                 if now - _last_cursor_send_time[0] < 0.016:
                     return
@@ -5335,7 +5349,10 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
                 "title": session.page_title,
                 "elements": session.interactive_elements,
             })
-            if getattr(session, "_last_raw_jpeg", None):
+            # Instant-On Stream: Deliver cached H.264 IDR keyframe immediately upon connect
+            if getattr(session, "_last_keyframe_packet", None):
+                await safe_send_bytes(session._last_keyframe_packet)
+            elif getattr(session, "_last_raw_jpeg", None):
                 ts_ms = int(time.time() * 1000)
                 header = struct.pack(">2sIQH", b"SP", session._frame_seq, ts_ms, 2)
                 packet = header + b"{}" + session._last_raw_jpeg

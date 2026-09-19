@@ -1258,7 +1258,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "url": session.current_url,
                 "title": tree.get("title", ""),
                 "elements_count": len(tree.get("elements", [])),
-                "interactive_elements": tree.get("elements", []),
+                "interactive_elements": _compact_interactive_elements(tree.get("elements", [])),
                 "subpages": tree.get("subpages", []),
                 "console_errors_count": len([l for l in session.console_logs if l.get("type") == "error"]),
                 "frame": frame_url,

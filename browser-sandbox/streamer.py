@@ -9,7 +9,7 @@ import time
 
 PORT = int(os.getenv("STREAM_PORT", "8099"))
 DISPLAY = os.getenv("DISPLAY", ":99")
-FPS = int(os.getenv("STREAM_FPS", "30"))
+FPS = int(os.getenv("STREAM_FPS", "60"))
 WIDTH = int(os.getenv("STREAM_WIDTH", "1280"))
 HEIGHT = int(os.getenv("STREAM_HEIGHT", "720"))
 BITRATE = os.getenv("STREAM_BITRATE", "2000k")

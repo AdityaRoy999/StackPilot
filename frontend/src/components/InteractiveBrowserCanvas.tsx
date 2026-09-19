@@ -492,12 +492,6 @@ export function InteractiveBrowserCanvas({
                               if (ctx2d) {
                                 ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
                                 frameCountRef.current += 1;
-                                const now = Date.now();
-                                if (now - lastRecordedTimeRef.current >= 200) {
-                                  canvas.toBlob((b) => {
-                                    if (b && !isPlaybackModeRef.current) recordFrame(b);
-                                  }, "image/jpeg", 0.7);
-                                }
                               }
                             } catch {}
                           }

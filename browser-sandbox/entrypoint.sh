@@ -47,6 +47,10 @@ echo "[Entrypoint] Starting Chromium on DISPLAY=:99 (port 9223)..."
   --disable-gpu \
   --disable-gpu-rasterization \
   --disable-software-rasterizer \
+  --run-all-compositor-stages-before-draw \
+  --enable-surface-synchronization \
+  --disable-threaded-scrolling \
+  --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \
   --disable-renderer-backgrounding \
