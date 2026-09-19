@@ -6,7 +6,7 @@ import { GithubIcon } from './icons/GithubIcon';
 
 export const Hero: React.FC = () => {
   return (
-    <section className="pt-20 pb-16 sm:pt-28 sm:pb-20 text-center">
+    <section className="pt-24 pb-16 sm:pt-32 sm:pb-20 text-center">
       {/* Main Title using React Bits StrokeText */}
       <div className="w-full max-w-4xl mx-auto space-y-1 mb-4">
         <StrokeText
