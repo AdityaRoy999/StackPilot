@@ -1,63 +1,42 @@
 import React from 'react';
-import { StrokeText } from './reactbits/StrokeText';
+import { BlurText } from './reactbits/BlurText';
 import { ScriptBox } from './ScriptBox';
 import { ArrowRight } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 
 export const Hero: React.FC = () => {
   return (
-    <section className="pt-24 pb-16 sm:pt-32 sm:pb-20 text-center relative z-10">
-      {/* Main Title using React Bits StrokeText */}
-      <div className="w-full max-w-4xl mx-auto space-y-1 mb-4">
-        <StrokeText
-          text="Autonomous AI QA &"
-          strokeColor="#71717A"
-          fillColor="#FFFFFF"
-          strokeWidth={1.5}
-          drawDuration={1.4}
-          fillDelay={0.15}
-          stagger={0.04}
-          ease="power2.out"
-          trigger="mount"
-          fillMode="wipe"
-          fontSize={82}
-          fontWeight={800}
-          letterSpacing={-2}
-        />
-        <StrokeText
-          text="Delivery Cockpit"
-          strokeColor="#71717A"
-          fillColor="#FFFFFF"
-          strokeWidth={1.5}
-          drawDuration={1.4}
-          fillDelay={0.28}
-          stagger={0.04}
-          ease="power2.out"
-          trigger="mount"
-          fillMode="wipe"
-          fontSize={82}
-          fontWeight={800}
-          letterSpacing={-2}
+    <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
+      {/* Main Title animated with BlurText */}
+      <div className="w-full max-w-5xl mx-auto mb-6 flex justify-center">
+        <BlurText
+          text="Autonomous AI Deployment & Testing Platform"
+          delay={70}
+          animateBy="words"
+          direction="top"
+          stepDuration={0.35}
+          className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.12] justify-center text-center"
         />
       </div>
 
-      {/* Subtitle */}
-      <p className="mt-4 text-base sm:text-lg text-zinc-400 max-w-2xl mx-auto leading-relaxed font-normal">
-        Deploy any repository in seconds. An autonomous AI agent audits your
-        application, conducts 60 FPS real-time browser test journeys, and
-        self-heals broken deployments.
+      {/* Subtitle - The problem solved in the AI era */}
+      <p className="mt-4 text-base sm:text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto leading-relaxed font-normal">
+        In the era of AI coding agents, software is written 10x faster—yet QA testing
+        and production deployments remain fragile, manual bottlenecks. StackPilot
+        autonomously bridges the gap: instantly spinning up sandboxed environments,
+        auditing browser workflows at 60 FPS, and self-healing broken deployments.
       </p>
 
       {/* Script Copy Box */}
       <ScriptBox />
 
-      {/* Action Buttons */}
-      <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+      {/* Big, Separate, Rounded Action Buttons */}
+      <div className="mt-12 flex flex-wrap items-center justify-center gap-4">
         <a
           href="http://localhost:3000"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-md bg-zinc-50 text-zinc-950 hover:bg-zinc-200 text-sm font-medium transition-colors shadow-sm"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-zinc-50 text-zinc-950 hover:bg-zinc-200 text-sm sm:text-base font-semibold transition-all shadow-xl shadow-white/5 hover:scale-105 active:scale-95"
         >
           <span>Open Cockpit</span>
           <ArrowRight className="w-4 h-4" />
@@ -67,7 +46,7 @@ export const Hero: React.FC = () => {
           href="https://github.com/AdityaRoy999/StackPilot"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-md border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100 text-sm font-medium transition-colors"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full border border-zinc-800 bg-zinc-900/70 hover:bg-zinc-850 hover:border-zinc-700 text-zinc-200 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95"
         >
           <GithubIcon className="w-4 h-4 text-zinc-400" />
           <span>Star on GitHub</span>

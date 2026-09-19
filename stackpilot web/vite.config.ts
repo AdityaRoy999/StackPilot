@@ -8,7 +8,13 @@ export default defineConfig({
     port: 3005,
     host: '127.0.0.1',
   },
+  resolve: {
+    alias: {
+      'motion/react': 'framer-motion',
+      'motion': 'framer-motion',
+    },
+  },
   optimizeDeps: {
-    include: ['gsap', 'gsap/ScrollTrigger', 'lenis', 'ogl'],
+    include: ['gsap', 'gsap/ScrollTrigger', 'lenis', 'ogl', 'framer-motion'],
   },
 });

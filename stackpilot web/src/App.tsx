@@ -9,30 +9,30 @@ export const App: React.FC = () => {
   return (
     <SmoothScroll>
       <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-hidden">
-        {/* Full-screen Global WebThreads Background Across the Entire Page */}
-        <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none opacity-45">
+        {/* Full-screen Global WebThreads Background - Subtle & Low Visibility */}
+        <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none opacity-20">
           <WebThreads
             color1="#000000"
-            color2="#27272a"
-            color3="#FFFFFF"
-            speed={0.18}
-            threadCount={6}
-            frequency={4.5}
+            color2="#18181b"
+            color3="#a1a1aa"
+            speed={0.14}
+            threadCount={5}
+            frequency={4.0}
             spread={0.2}
             taper={1.0}
             position={0.5}
             fanMode="center"
-            glow={0.02}
-            falloff={0.6}
-            thickness={1.1}
-            brightness={0.6}
-            opacity={0.8}
+            glow={0.01}
+            falloff={0.7}
+            thickness={1.0}
+            brightness={0.3}
+            opacity={0.4}
             mirror={true}
             shimmer={false}
             grain={true}
-            grainIntensity={0.05}
+            grainIntensity={0.03}
             mouseInteraction={true}
-            mouseStrength={0.3}
+            mouseStrength={0.25}
           />
         </div>
 
