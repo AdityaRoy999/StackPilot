@@ -958,11 +958,17 @@ class BrowserSession:
             res = await self.send_command("Page.captureScreenshot", {
                 "format": "jpeg",
                 "quality": quality,
-            }, timeout=1.2)
+            }, timeout=2.5)
             data = res.get("data") if isinstance(res, dict) else None
             if data:
                 self.latest_frame = data
-            return data or self.latest_frame
+                try:
+                    self._last_raw_jpeg = base64.b64decode(data)
+                except Exception:
+                    pass
+                self._last_frame_time = time.time()
+                return data
+            return self.latest_frame
         except Exception as e:
             logger.debug(f"capture_screenshot notice: {e}")
             return self.latest_frame or None
@@ -1285,7 +1291,7 @@ class BrowserSession:
             res = await self.send_command("Page.captureScreenshot", {
                 "format": "jpeg",
                 "quality": 60,
-            }, timeout=0.8)
+            }, timeout=2.0)
             frame_data = res.get("data") if isinstance(res, dict) else None
             if frame_data:
                 now_ts = time.time()
@@ -1569,6 +1575,7 @@ class BrowserSession:
         self._navigating = True
         self._last_navigation_time = time.time()
         self._last_raw_jpeg = None  # Clear stale screenshot to prevent ghost page
+        self.latest_frame = None  # Clear stale frame cache to prevent old project snapshot leak
         self._notify_listeners({"type": "action", "action": "navigate", "url": display_url})
         res = await self.send_command("Page.navigate", {"url": internal_url})
         await self.wait_for_quiescence(network_idle_ms=100, dom_quiet_ms=50, max_timeout_s=3.0)
@@ -1614,6 +1621,7 @@ class BrowserSession:
             self._navigating = False
             try:
                 await self.force_fresh_frame()
+                await self.capture_screenshot(quality=65, use_cache=False)
             except Exception:
                 pass
         return res

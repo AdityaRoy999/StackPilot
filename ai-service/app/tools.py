@@ -827,9 +827,10 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 if curr != norm or curr in {"about:blank", ""}:
                     await session.navigate(url)
             page_state = await session.extract_interactive_tree()
-            frame_data = await session.capture_screenshot()
-            if not frame_data and session.latest_frame:
-                frame_data = session.latest_frame
+            try:
+                frame_data = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
+            except Exception:
+                frame_data = session.latest_frame or ""
             frame_url = f"data:image/jpeg;base64,{frame_data}" if frame_data else ""
             som_data = await session.capture_som_screenshot()
             som_url = f"data:image/jpeg;base64,{som_data}" if som_data else frame_url
@@ -1140,7 +1141,10 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                     "elements": session.interactive_elements,
                     "subpages": session.discovered_subpages,
                 }
-            frame_data = session.latest_frame or ""
+            try:
+                frame_data = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
+            except Exception:
+                frame_data = session.latest_frame or ""
             frame_url = f"data:image/jpeg;base64,{frame_data}" if frame_data else ""
             # Default to skipping expensive SOM overlay injection (saves 300-400ms per step)
             # Only compute SOM if explicitly requested by vision caller
@@ -1239,7 +1243,11 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "elements": session.interactive_elements,
                 "subpages": session.discovered_subpages,
             }
-            frame_url = f"data:image/jpeg;base64,{session.latest_frame}" if session.latest_frame else ""
+            try:
+                fresh_frame = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
+            except Exception:
+                fresh_frame = session.latest_frame or ""
+            frame_url = f"data:image/jpeg;base64,{fresh_frame}" if fresh_frame else ""
 
             return {
                 "status": "passed",
@@ -1320,7 +1328,11 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 await session.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=1.0, fast_mode=True)
 
             tree = await session.extract_interactive_tree()
-            frame_url = f"data:image/jpeg;base64,{session.latest_frame}" if session.latest_frame else ""
+            try:
+                fresh_frame = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
+            except Exception:
+                fresh_frame = session.latest_frame or ""
+            frame_url = f"data:image/jpeg;base64,{fresh_frame}" if fresh_frame else ""
 
             return {
                 "status": "passed",
@@ -1344,7 +1356,10 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             session = browser_manager.sessions[session_id]
             state = await session.extract_interactive_tree()
             som_data = await session.capture_som_screenshot()
-            frame_data = session.latest_frame or await session.capture_screenshot()
+            try:
+                frame_data = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
+            except Exception:
+                frame_data = session.latest_frame or ""
             arch_val = getattr(session, "current_archetype", "unknown")
             arch_str = arch_val.value if hasattr(arch_val, "value") else str(arch_val)
             pda_depth_val = getattr(session.pda, "depth", 1) if hasattr(session, "pda") else 1

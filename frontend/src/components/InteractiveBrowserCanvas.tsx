@@ -170,17 +170,12 @@ export function InteractiveBrowserCanvas({
   useEffect(() => {
     if (!isOpen) return;
     const interval = setInterval(() => {
-      if (workerReadyRef.current) return;
       const now = performance.now();
       const deltaSec = (now - lastFpsCalcRef.current) / 1000;
       if (deltaSec >= 0.8) {
         const renderFps = Math.round(frameCountRef.current / deltaSec);
-        const netFps = Math.round(netFrameCountRef.current / deltaSec);
         if (connected) {
-          if (renderFps > 0 || netFps > 0) {
-            setFps(renderFps > 0 ? renderFps : netFps);
-            setNetworkFps(netFps > 0 ? netFps : renderFps);
-          }
+          setFps(renderFps);
         } else {
           setFps(0);
           setNetworkFps(0);
@@ -310,9 +305,6 @@ export function InteractiveBrowserCanvas({
         worker.onmessage = (e: MessageEvent) => {
           if (isDisposed) return;
           if (e.data?.type === "stats") {
-            if (typeof e.data.fps === "number") {
-              setFps(e.data.fps);
-            }
             if (typeof e.data.netFps === "number") {
               setNetworkFps(e.data.netFps);
             }
