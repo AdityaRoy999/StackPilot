@@ -15,15 +15,15 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
       />
 
       {/* Giant Very Stylish Display Wordmark: Hollow Letters Filled from Below Fading Upwards */}
-      <div className="w-full overflow-hidden flex items-center justify-center my-6 sm:my-10 px-3 sm:px-6 relative">
+      <div className="w-full overflow-visible flex items-center justify-center my-6 sm:my-10 px-4 sm:px-8 relative">
         <div className="relative inline-block select-none pointer-events-none">
           {/* Base Layer: Crisp Hollow Outline */}
           <h2
-            className="font-headline text-[13.5vw] sm:text-[15.5vw] md:text-[16.5vw] font-black tracking-[-0.045em] leading-[0.85] text-center whitespace-nowrap select-none"
+            className="font-headline text-[11.5vw] sm:text-[13vw] md:text-[14vw] font-black tracking-[-0.035em] leading-[1.2] text-center whitespace-nowrap select-none"
             style={{
-              WebkitTextStroke: '1.2px rgba(255, 255, 255, 0.4)',
+              WebkitTextStroke: '1.2px rgba(255, 255, 255, 0.45)',
               color: 'transparent',
-              textShadow: '0 0 30px rgba(255, 255, 255, 0.08)',
+              textShadow: '0 0 35px rgba(255, 255, 255, 0.08)',
             }}
           >
             StackPilot
@@ -31,10 +31,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
 
           {/* Foreground Layer: Filled from below, smoothly fading to transparent upwards */}
           <h2
-            className="font-headline text-[13.5vw] sm:text-[15.5vw] md:text-[16.5vw] font-black tracking-[-0.045em] leading-[0.85] text-center whitespace-nowrap absolute inset-0 select-none text-transparent bg-clip-text"
+            aria-hidden="true"
+            className="font-headline text-[11.5vw] sm:text-[13vw] md:text-[14vw] font-black tracking-[-0.035em] leading-[1.2] text-center whitespace-nowrap absolute inset-0 select-none text-transparent bg-clip-text"
             style={{
               backgroundImage:
-                'linear-gradient(to top, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.8) 22%, rgba(255, 255, 255, 0.3) 50%, rgba(255, 255, 255, 0.05) 72%, transparent 85%)',
+                'linear-gradient(to top, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.85) 20%, rgba(255, 255, 255, 0.35) 48%, rgba(255, 255, 255, 0.06) 72%, transparent 88%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
             }}

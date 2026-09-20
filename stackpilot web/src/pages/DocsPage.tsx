@@ -134,7 +134,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
             }}
             className="flex items-center gap-2 text-sm font-semibold tracking-tight text-white hover:text-zinc-300 transition-colors cursor-pointer select-none"
           >
-            <span className="font-mono text-zinc-400 font-bold">&gt;_</span>
+            <span className="font-mono text-white font-bold">&gt;_</span>
             <span>StackPilot Docs</span>
           </a>
         </div>
@@ -161,7 +161,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 />
               )}
               <span className="relative z-10 flex items-center gap-2.5">
-                <Search className="w-3.5 h-3.5 text-zinc-400 group-hover:text-white transition-colors" />
+                <Search className="w-3.5 h-3.5 text-white shrink-0 transition-colors" />
                 <span className="hidden sm:inline">Search docs...</span>
                 <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 bg-[#161618] rounded border border-zinc-700/60">
                   ⌘K
@@ -207,7 +207,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <MailIcon className="w-3.5 h-3.5 text-white shrink-0" />
                 <span className="hidden sm:inline">Contact</span>
               </span>
             </a>
@@ -233,12 +233,12 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               <span className="relative z-10 flex items-center gap-1.5">
                 {fontMode === 'stylish' ? (
                   <>
-                    <span className="text-xs">✍️</span>
+                    <span className="text-xs text-white">✍️</span>
                     <span className="hidden sm:inline text-[11px] text-zinc-300">Stylish</span>
                   </>
                 ) : (
                   <>
-                    <span className="text-[11px] font-bold text-emerald-400">Aa</span>
+                    <span className="text-[11px] font-bold text-white">Aa</span>
                     <span className="hidden sm:inline text-[11px] text-zinc-300">Normal</span>
                   </>
                 )}
@@ -265,10 +265,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 />
               )}
               <span className="relative z-10 flex items-center gap-2">
-                <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
+                <GithubIcon className="w-3.5 h-3.5 text-white shrink-0 transition-colors" />
                 <span className="hidden sm:inline">Repo</span>
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
-                  <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                  <StarIcon className="w-2.5 h-2.5 text-white shrink-0" />
                   <span>Star</span>
                 </span>
               </span>
