@@ -50,7 +50,7 @@ export const Navbar: React.FC = () => {
       <div className="pointer-events-auto">
         <a
           href="#"
-          className="group inline-flex items-center h-10 px-3.5 rounded-full border border-zinc-800/90 bg-zinc-950/85 backdrop-blur-xl hover:border-zinc-700 hover:bg-zinc-900/90 transition-all duration-300 ease-out cursor-pointer select-none"
+          className="group inline-flex items-center h-10 px-3.5 rounded-full border border-zinc-800 bg-[#121212] backdrop-blur-xl hover:border-zinc-700 hover:bg-[#1a1a1a] transition-all duration-300 ease-out cursor-pointer select-none"
           title="StackPilot"
         >
           {/* Terminal prompt icon */}
@@ -74,7 +74,7 @@ export const Navbar: React.FC = () => {
       <div className="pointer-events-auto flex items-center gap-2 sm:gap-2.5">
         {/* Visitors Bubble */}
         <div
-          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border border-zinc-800/90 bg-zinc-950/85 backdrop-blur-xl text-xs font-mono text-zinc-300 hover:border-zinc-700 transition-colors"
+          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border border-zinc-800 bg-[#121212] backdrop-blur-xl text-xs font-mono text-zinc-300 hover:border-zinc-700 transition-colors"
           title="Unique site visitors"
         >
           <UsersIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -86,7 +86,7 @@ export const Navbar: React.FC = () => {
           href="https://github.com/AdityaRoy999/StackPilot"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 h-10 px-3 sm:px-3.5 rounded-full border border-zinc-800/90 bg-zinc-950/85 backdrop-blur-xl text-xs text-zinc-300 hover:text-white hover:border-zinc-700 transition-all group"
+          className="inline-flex items-center gap-2 h-10 px-3 sm:px-3.5 rounded-full border border-zinc-800 bg-[#121212] backdrop-blur-xl text-xs text-zinc-300 hover:text-white hover:border-zinc-700 transition-all group"
           title="View StackPilot on GitHub"
         >
           <GithubIcon className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-100 transition-colors shrink-0" />

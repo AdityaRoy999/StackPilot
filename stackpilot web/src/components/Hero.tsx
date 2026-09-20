@@ -7,14 +7,14 @@ import { GithubIcon } from './icons/GithubIcon';
 export const Hero: React.FC = () => {
   return (
     <section className="pt-28 pb-14 sm:pt-36 sm:pb-20 text-center relative z-10">
-      {/* Main Title animated with BlurText */}
+      {/* Main Title animated with BlurText letter-by-letter */}
       <div className="w-full max-w-5xl mx-auto mb-6 flex justify-center">
         <BlurText
           text="Autonomous AI Deployment & Testing Platform"
-          delay={70}
-          animateBy="words"
+          delay={25}
+          animateBy="letters"
           direction="top"
-          stepDuration={0.35}
+          stepDuration={0.25}
           className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.12] justify-center text-center"
         />
       </div>
@@ -32,23 +32,23 @@ export const Hero: React.FC = () => {
         <ScriptBox />
       </div>
 
-      {/* Big, Separate, Rounded Action Buttons */}
+      {/* Action Buttons styled with the exact requested #121212 color */}
       <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
         <a
           href="http://localhost:3000"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-zinc-50 text-zinc-950 hover:bg-zinc-200 text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-[#121212] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1a1a1a] text-zinc-100 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
         >
           <span>Open Cockpit</span>
-          <ArrowRight className="w-4 h-4" />
+          <ArrowRight className="w-4 h-4 text-zinc-400" />
         </a>
 
         <a
           href="https://github.com/AdityaRoy999/StackPilot"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full border border-zinc-800 bg-zinc-900/70 hover:bg-zinc-850 hover:border-zinc-700 text-zinc-200 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-[#121212] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1a1a1a] text-zinc-100 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
         >
           <GithubIcon className="w-4 h-4 text-zinc-400" />
           <span>Star on GitHub</span>

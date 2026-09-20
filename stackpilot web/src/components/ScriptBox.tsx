@@ -31,8 +31,8 @@ export const ScriptBox: React.FC = () => {
                   onClick={() => setActiveTab(script.id)}
                   className={`px-3 sm:px-3.5 py-1.5 rounded-full transition-all duration-200 cursor-pointer whitespace-nowrap text-xs font-medium shrink-0 ${
                     isActive
-                      ? 'bg-zinc-100 text-zinc-950 font-bold'
-                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/80 active:scale-95'
+                      ? 'bg-[#121212] border border-zinc-700 text-white font-bold'
+                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-[#121212]/70 active:scale-95'
                   }`}
                   title={`Switch to ${script.label}`}
                 >
@@ -53,20 +53,20 @@ export const ScriptBox: React.FC = () => {
             </code>
           </div>
 
-          {/* Copy Button */}
+          {/* Copy Button styled with #121212 */}
           <button
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-semibold font-sans shrink-0 transition-all active:scale-95 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#121212] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1a1a1a] text-zinc-200 hover:text-white text-xs font-semibold font-sans shrink-0 transition-all active:scale-95 cursor-pointer"
             title="Copy command to clipboard"
           >
             {copied ? (
               <>
-                <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                <span className="text-emerald-700 font-bold">Copied!</span>
+                <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span className="text-emerald-400 font-bold">Copied!</span>
               </>
             ) : (
               <>
-                <Copy className="w-3.5 h-3.5 text-zinc-700 shrink-0" />
+                <Copy className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
                 <span>Copy</span>
               </>
             )}
