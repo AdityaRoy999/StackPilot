@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { highlightCode } from '../../utils/syntaxHighlight';
@@ -147,24 +148,41 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
           </span>
         </div>
 
-        {/* Copy Button */}
+        {/* Circular Copy Button with Spring-pop & Emerald transition matching Hero ScriptBox */}
         <button
           type="button"
           onClick={handleCopy}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800/90 hover:bg-zinc-700 text-xs text-zinc-300 hover:text-white transition-all cursor-pointer border border-zinc-700/50 shadow-sm"
-          title="Copy code to clipboard"
+          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border-0 flex items-center justify-center shrink-0 transition-all duration-300 active:scale-90 cursor-pointer ${
+            copied
+              ? 'bg-emerald-500/20 text-emerald-400'
+              : 'bg-[#222226] hover:bg-[#2e2e34] text-zinc-300 hover:text-white'
+          }`}
+          title="Copy code snippet to clipboard"
+          aria-label="Copy code snippet"
         >
-          {copied ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-[11px] text-emerald-400 font-mono font-medium">Copied!</span>
-            </>
-          ) : (
-            <>
-              <Copy className="w-3.5 h-3.5 text-white" />
-              <span className="text-[11px] font-mono font-medium">Copy</span>
-            </>
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            {copied ? (
+              <motion.div
+                key="check"
+                initial={{ scale: 0.4, opacity: 0, rotate: -20 }}
+                animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                exit={{ scale: 0.4, opacity: 0, rotate: 20 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+              >
+                <Check className="w-3.5 h-3.5" />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="copy"
+                initial={{ scale: 0.4, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.4, opacity: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </button>
       </div>
 

@@ -3,7 +3,7 @@ import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { Footer } from './components/Footer';
 import { SmoothScroll } from './components/SmoothScroll';
-import { WebThreads } from './components/reactbits/WebThreads';
+import { Lightfall } from './components/reactbits/Lightfall';
 import { ScriptProvider } from './context/ScriptContext';
 import { FontProvider } from './context/FontContext';
 import { DocsPage } from './pages/DocsPage';
@@ -71,30 +71,24 @@ export const App: React.FC = () => {
         <ScriptProvider>
           <SmoothScroll>
             <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-hidden">
-              {/* Full-screen Global WebThreads Background - Very low brightness, subtle ambient dark texture */}
-              <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none opacity-20">
-                <WebThreads
-                  color1="#000000"
-                  color2="#18181b"
-                  color3="#3f3f46"
-                  speed={0.12}
-                  threadCount={5}
-                  frequency={3.8}
-                  spread={0.2}
-                  taper={1.0}
-                  position={0.5}
-                  fanMode="center"
-                  glow={0.005}
-                  falloff={0.75}
-                  thickness={0.85}
-                  brightness={0.2}
-                  opacity={0.3}
-                  mirror={true}
-                  shimmer={false}
-                  grain={true}
-                  grainIntensity={0.02}
+              {/* Full-screen Global React Bits Lightfall Background */}
+              <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none">
+                <Lightfall
+                  colors={['#A6C8FF', '#5227FF', '#FF9FFC']}
+                  backgroundColor="#000000"
+                  speed={0.8}
+                  streakCount={8}
+                  streakWidth={1.2}
+                  streakLength={1.2}
+                  glow={1}
+                  density={1}
+                  twinkle={0.8}
+                  zoom={1.8}
+                  backgroundGlow={0.4}
+                  opacity={0.7}
                   mouseInteraction={true}
-                  mouseStrength={0.18}
+                  mouseStrength={0.8}
+                  mouseRadius={0.5}
                 />
               </div>
 

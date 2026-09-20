@@ -150,13 +150,14 @@ export const ObservabilityFlowDiagram: React.FC = () => {
         </div>
       </div>
 
-      {/* 3-Column Pipeline Architecture */}
+      {/* 3-Column Pipeline Architecture - Clean flat layout without nested card boxes */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Column 1: Monitored Targets */}
-        <div className="p-4 rounded-xl bg-black/40 border border-zinc-800/80 space-y-3">
-          <div className="flex items-center justify-between pb-1">
-            <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold">
-              1. Monitored Targets
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between pb-1 px-1">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+              <span>1. Monitored Targets</span>
             </span>
             <span className="text-[10px] font-mono text-zinc-500">Sources</span>
           </div>
@@ -169,10 +170,10 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                 <div
                   key={node.id}
                   onClick={() => setSelectedNode(node)}
-                  className={`p-3 rounded-lg border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                     isSelected
                       ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                      : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700'
+                      : 'bg-zinc-900/70 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -197,10 +198,11 @@ export const ObservabilityFlowDiagram: React.FC = () => {
         </div>
 
         {/* Column 2: Collectors & Agents */}
-        <div className="p-4 rounded-xl bg-black/40 border border-zinc-800/80 space-y-3">
-          <div className="flex items-center justify-between pb-1">
-            <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold">
-              2. Collectors &amp; Agents
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between pb-1 px-1">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+              <span>2. Collectors &amp; Agents</span>
             </span>
             <span className="text-[10px] font-mono text-zinc-500">Scrapers</span>
           </div>
@@ -213,10 +215,10 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                 <div
                   key={node.id}
                   onClick={() => setSelectedNode(node)}
-                  className={`p-3 rounded-lg border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                     isSelected
                       ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                      : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700'
+                      : 'bg-zinc-900/70 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -241,10 +243,11 @@ export const ObservabilityFlowDiagram: React.FC = () => {
         </div>
 
         {/* Column 3: Storage & Visualization */}
-        <div className="p-4 rounded-xl bg-black/40 border border-zinc-800/80 space-y-3">
-          <div className="flex items-center justify-between pb-1">
-            <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold">
-              3. Storage &amp; Visualization
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between pb-1 px-1">
+            <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span>3. Storage &amp; Visualization</span>
             </span>
             <span className="text-[10px] font-mono text-zinc-500">Query &amp; Dashboards</span>
           </div>
@@ -257,10 +260,10 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                 <div
                   key={node.id}
                   onClick={() => setSelectedNode(node)}
-                  className={`p-3 rounded-lg border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
                     isSelected
                       ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                      : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700'
+                      : 'bg-zinc-900/70 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -276,7 +279,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-1">
                     <span>{node.protocol}</span>
-                    <span className="text-emerald-400 font-bold">&bull; Active</span>
+                    <ArrowRight className="w-3 h-3 text-white" />
                   </div>
                 </div>
               );
@@ -286,8 +289,8 @@ export const ObservabilityFlowDiagram: React.FC = () => {
       </div>
 
       {/* Selected Node Details Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/80 border border-zinc-800 space-y-3">
-        <div className="flex items-start justify-between gap-4 pb-2">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-3">
+        <div className="flex items-start justify-between gap-4 pb-2 border-b border-zinc-800/60">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
               <selectedNode.icon className="w-4 h-4 text-white" />
@@ -318,7 +321,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
             {selectedNode.configOrMetrics.map((item, idx) => (
               <div
                 key={idx}
-                className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800/80 text-[11px] font-mono text-zinc-300 flex items-start gap-2"
+                className="px-3 py-2 rounded-lg bg-zinc-950/80 border-l-2 border-zinc-700 text-[11px] font-mono text-zinc-300 flex items-start gap-2"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0 mt-1.5" />
                 <span className="truncate">{item}</span>

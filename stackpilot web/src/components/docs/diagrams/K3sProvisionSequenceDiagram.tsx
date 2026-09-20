@@ -151,34 +151,36 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
         </div>
       </div>
 
-      {/* Required Firewall Holes Badges */}
-      <div className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-2">
+      {/* Required Firewall Holes Badges - Direct Flat Cards without nested border container */}
+      <div className="space-y-2.5">
         <div className="flex items-center justify-between">
-          <span className="text-[11px] font-mono uppercase text-zinc-400 flex items-center gap-1.5">
+          <span className="text-[11px] font-mono uppercase text-zinc-400 flex items-center gap-1.5 font-semibold">
             <Lock className="w-3.5 h-3.5 text-white" />
             <span>Automated Firewall Holes Provisioned by StackPilot</span>
           </span>
-          <span className="text-[10px] font-mono text-emerald-400">Auto-configured</span>
+          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded-full">
+            Auto-configured
+          </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          <div className="p-2.5 rounded-lg bg-black/60 border border-zinc-800 text-xs space-y-1">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs space-y-1 hover:border-zinc-700 transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 6443/tcp</span>
-              <span className="text-[10px] text-zinc-400">TCP</span>
+              <span className="text-[10px] text-zinc-400 font-normal">TCP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Kubernetes API Server communication and kubectl proxy.</p>
           </div>
-          <div className="p-2.5 rounded-lg bg-black/60 border border-zinc-800 text-xs space-y-1">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs space-y-1 hover:border-zinc-700 transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 10250/tcp</span>
-              <span className="text-[10px] text-zinc-400">TCP</span>
+              <span className="text-[10px] text-zinc-400 font-normal">TCP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Kubelet API for pod metrics, logs, and exec telemetry.</p>
           </div>
-          <div className="p-2.5 rounded-lg bg-black/60 border border-zinc-800 text-xs space-y-1">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs space-y-1 hover:border-zinc-700 transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 8472/udp</span>
-              <span className="text-[10px] text-zinc-400">UDP</span>
+              <span className="text-[10px] text-zinc-400 font-normal">UDP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Flannel VXLAN encapsulation for cross-node pod routing.</p>
           </div>
@@ -280,8 +282,8 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
       </div>
 
       {/* Selected Step Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/80 border border-zinc-800 space-y-3">
-        <div className="flex items-start justify-between gap-4 pb-2">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-3">
+        <div className="flex items-start justify-between gap-4 pb-2 border-b border-zinc-800/60">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
               <Code2 className="w-4 h-4 text-white" />
@@ -305,11 +307,11 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
         </p>
 
         {selectedStep.commandSnippet && (
-          <div className="rounded-lg bg-zinc-950 border border-zinc-800/80 p-3 overflow-x-auto">
+          <div className="pt-1">
             <div className="text-[10px] font-mono uppercase text-zinc-500 mb-1.5">
               Script Execution / Command Payload
             </div>
-            <pre className="font-mono text-xs text-zinc-200 leading-relaxed selection:bg-zinc-800">
+            <pre className="font-mono text-xs text-zinc-200 leading-relaxed selection:bg-zinc-800 p-3 rounded-lg bg-zinc-950/80 border-l-2 border-zinc-700 overflow-x-auto">
               <code>{selectedStep.commandSnippet}</code>
             </pre>
           </div>
