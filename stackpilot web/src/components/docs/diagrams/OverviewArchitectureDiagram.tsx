@@ -40,77 +40,77 @@ const CLUSTERS: SubsystemCluster[] = [
   {
     id: 'clients',
     name: 'Clients & Ingress',
-    badge: 'EDGE PERIMETER',
+    badge: 'ENTRY POINTS',
     color: 'zinc',
-    description: 'Entry points, developer interfaces, MCP tooling, and automated TLS termination.',
+    description: 'Entry points, developer interfaces, IDE tools, and HTTPS connections.',
     services: [
-      { id: 'caddy', name: 'Caddy 2.8 Reverse Proxy', port: '80 / 443', tech: 'Auto TLS / ACME', ram: '~28 MB', description: 'Terminates HTTPS, auto-renews Let\'s Encrypt certificates, reverse-proxies REST & WebSockets.' },
-      { id: 'ui', name: 'Next.js 16 Web Dashboard', port: '3000', tech: 'React 19, Tailwind, Canvas', ram: '~45 MB', description: 'Real-time dashboard, terminal multiplexer, visual canvas, and deployment controls.' },
-      { id: 'mcp', name: 'IDE Agents via MCP', port: 'Stdio / SSE', tech: 'Model Context Protocol', ram: 'Embedded', description: 'Connects Claude Code, Cursor, and Windsurf directly to StackPilot tools.' },
-      { id: 'gh', name: 'GitHub Webhook Gateway', port: '443 / Hook', tech: 'HMAC-SHA256 Gating', ram: 'Stateless', description: 'Ingests push events and check_run completions for automatic deployments.' }
+      { id: 'caddy', name: 'Caddy 2.8 Reverse Proxy', port: '80 / 443', tech: 'Auto TLS / HTTPS', ram: '~28 MB', description: 'Handles HTTPS, auto-renews SSL certificates, and routes traffic.' },
+      { id: 'ui', name: 'Web Dashboard', port: '3000', tech: 'React, Tailwind, Canvas', ram: '~45 MB', description: 'Real-time dashboard, live terminal, video stream, and deployment controls.' },
+      { id: 'mcp', name: 'IDE Agents via MCP', port: 'Stdio / SSE', tech: 'Model Context Protocol', ram: 'Embedded', description: 'Connects AI coding tools like Claude Code and Cursor directly to StackPilot.' },
+      { id: 'gh', name: 'GitHub Webhooks', port: '443 / Hook', tech: 'Secure Webhooks', ram: 'Stateless', description: 'Listens for git push events to trigger automatic deployments.' }
     ]
   },
   {
     id: 'control',
     name: 'Control Plane & Orchestration',
-    badge: 'CORE ENGINE',
+    badge: 'MAIN BACKEND',
     color: 'zinc',
-    description: 'Ultra-low-latency compiled C++17 core running high-concurrency event loops.',
+    description: 'Lightweight, fast C++ core that handles requests and manages tasks.',
     services: [
-      { id: 'drogon', name: 'C++ Drogon Engine', port: '8090', tech: 'C++17 Non-blocking epoll', ram: '< 30 MB', description: 'Compiled microsecond REST API, WebSocket dispatcher, and PTY terminal multiplexer.' },
-      { id: 'workers', name: 'Drogon Worker Pool', port: 'Threads', tech: 'std::thread (2-4 cores)', ram: '~12 MB', description: 'Asynchronous task workers polling Redis for build and deployment execution.' },
-      { id: 'postgres', name: 'PostgreSQL 16 + pgvector', port: '5432', tech: 'libpqxx + IVFFlat index', ram: '~65 MB', description: 'System of record with 56 migrations, RBAC, and semantic vector memory.' },
-      { id: 'redis', name: 'Redis 7 FIFO Queue', port: '6379', tech: 'AOF Persistence', ram: '~15 MB', description: 'Durable deployment queue buffer (stackpilot:jobs:deployment) preventing task loss.' }
+      { id: 'drogon', name: 'C++ Drogon Engine', port: '8090', tech: 'Fast C++17 Core', ram: '< 30 MB', description: 'Lightweight REST API, live WebSockets, and terminal management.' },
+      { id: 'workers', name: 'Drogon Worker Pool', port: 'Threads', tech: 'Background Threads', ram: '~12 MB', description: 'Background workers that execute builds and deployments.' },
+      { id: 'postgres', name: 'PostgreSQL Database', port: '5432', tech: 'Postgres + pgvector', ram: '~65 MB', description: 'Main database for projects, users, permissions, and AI memories.' },
+      { id: 'redis', name: 'Redis Queue', port: '6379', tech: 'Fast In-Memory Queue', ram: '~15 MB', description: 'Reliable deployment queue so tasks are never lost.' }
     ]
   },
   {
     id: 'ai',
-    name: 'AI & Visual Operations Engine',
-    badge: 'AUTONOMOUS SRE',
+    name: 'AI Operations & QA',
+    badge: 'AI ASSISTANT',
     color: 'zinc',
-    description: 'LangGraph swarm orchestrating autonomous diagnostics and AST code repair.',
+    description: 'AI team that diagnoses build errors, fixes code, and tests web pages.',
     services: [
-      { id: 'fastapi', name: 'FastAPI AI Service', port: '8010', tech: 'Python 3.11, Uvicorn', ram: '~140 MB', description: 'Houses the 27 tool schemas and LangGraph state machines for autonomous healing.' },
-      { id: 'swarm', name: 'Multi-Agent Swarm', port: 'Internal', tech: 'Supervisor/Coder/Verifier', ram: 'Shared', description: 'Hierarchical team diagnosing build errors and applying surgical patches.' },
-      { id: 'searxng', name: 'SearXNG Private Search', port: '8088', tech: 'Metasearch Engine', ram: '~70 MB', description: 'Local private web search engine for error solutions without tracking.' },
-      { id: 'llm', name: 'NVIDIA NIM / LLM API', port: 'HTTPS', tech: 'Llama 3.1 / DeepSeek', ram: 'Cloud/Local', description: 'Accelerated enterprise inference backends for reasoning and vision.' }
+      { id: 'fastapi', name: 'FastAPI AI Service', port: '8010', tech: 'Python 3.11', ram: '~140 MB', description: 'Runs the AI agent tools and automated self-healing routines.' },
+      { id: 'swarm', name: 'AI Agent Team', port: 'Internal', tech: 'Lead / Coder / Tester', ram: 'Shared', description: 'Team of specialized AI roles that plan, write code, and verify fixes.' },
+      { id: 'searxng', name: 'Private Web Search', port: '8088', tech: 'Private Search', ram: '~70 MB', description: 'Local private search for documentation and error solutions.' },
+      { id: 'llm', name: 'AI Models (NVIDIA / Gemini)', port: 'HTTPS', tech: 'Llama 3.1 / DeepSeek / Gemini', ram: 'Cloud/Local', description: 'Language models for reasoning, code analysis, and visual testing.' }
     ]
   },
   {
     id: 'sandbox',
-    name: 'Visual Browser Sandbox',
-    badge: 'REAL-TIME QA',
+    name: 'Browser Sandbox',
+    badge: 'BROWSER TESTING',
     color: 'zinc',
-    description: 'Rootless Chromium container with 60 FPS low-latency video streaming.',
+    description: 'Isolated browser container that runs tests and streams video in real time.',
     services: [
-      { id: 'chromium', name: 'Alpine Chromium', port: '9223', tech: 'CDP Protocol', ram: '~180 MB', description: 'Sandboxed browser instance for autonomous page inspection and element clicking.' },
-      { id: 'xvfb', name: 'Xvfb Virtual Display', port: ':99', tech: 'Virtual X11 Server', ram: '~35 MB', description: '1280x720 24-bit virtual screen buffer capturing browser rendering.' },
-      { id: 'streamer', name: 'H.264 TCP Streamer', port: '8099', tech: 'FFmpeg x11grab + WebCodecs', ram: '~40 MB', description: 'Encodes screen frames to Annex-B H.264 NALUs and streams directly to canvas.' }
+      { id: 'chromium', name: 'Alpine Chromium', port: '9223', tech: 'Headless Browser', ram: '~180 MB', description: 'Isolated browser for clicking elements, typing, and testing pages.' },
+      { id: 'xvfb', name: 'Virtual Display', port: ':99', tech: 'Virtual Screen', ram: '~35 MB', description: 'Virtual screen that lets the browser render without a physical monitor.' },
+      { id: 'streamer', name: 'Video Streamer', port: '8099', tech: 'Fast Video Streaming', ram: '~40 MB', description: 'Captures and streams browser video directly to your dashboard.' }
     ]
   },
   {
     id: 'compute',
-    name: 'Target Compute Runtimes',
-    badge: 'HYBRID FABRIC',
+    name: 'Deployment Targets',
+    badge: 'SERVERS & CLOUD',
     color: 'zinc',
-    description: 'Flexible execution targets supporting single Docker hosts to Kubernetes clusters.',
+    description: 'Deploy to your local machine, remote VPS servers, or Kubernetes clusters.',
     services: [
-      { id: 'docker', name: 'Local Docker Engine', port: 'sock', tech: '/var/run/docker.sock', ram: 'Host Daemon', description: 'Direct container execution via native BuildKit and rootless compose profiles.' },
-      { id: 'ssh', name: 'Remote VPS via SSH', port: '22', tech: 'libssh2 / Tailscale Mesh', ram: 'External', description: 'Deploys to remote servers over encrypted tunnels without agent daemons.' },
-      { id: 'k8s', name: 'Kubernetes / k3s', port: '6443', tech: 'ComposeKubernetesPlanner', ram: 'External', description: 'Automated 1-click k3s cluster provisioning with PVCs, Services, and Ingress.' }
+      { id: 'docker', name: 'Local Docker', port: 'sock', tech: 'Docker Socket', ram: 'Host Daemon', description: 'Runs your apps as standard Docker containers on the host.' },
+      { id: 'ssh', name: 'Remote Servers via SSH', port: '22', tech: 'Encrypted SSH', ram: 'External', description: 'Deploys directly to remote VPS servers without installing agents.' },
+      { id: 'k8s', name: 'Kubernetes (k3s)', port: '6443', tech: 'Kubernetes Cluster', ram: 'External', description: 'Automatic 1-click lightweight Kubernetes cluster setup.' }
     ]
   },
   {
     id: 'observability',
-    name: 'Observability Stack',
-    badge: 'METRICS & LOGS',
+    name: 'Logs & Metrics',
+    badge: 'LOGS & METRICS',
     color: 'zinc',
-    description: 'Unified time-series metrics, cgroup v2 container telemetry, and log stores.',
+    description: 'See live system performance, container memory, and application logs.',
     services: [
-      { id: 'prom', name: 'Prometheus TSDB', port: '9090', tech: '15s Scrape Interval', ram: '~95 MB', description: 'Gathers Drogon throughput, system memory, and container stats.' },
-      { id: 'cadvisor', name: 'cAdvisor Engine', port: '8081', tech: 'cgroup v2 Exporter', ram: '~45 MB', description: 'Inspects CPU throttling, working set memory, and container network I/O.' },
-      { id: 'loki', name: 'Grafana Loki Store', port: '3100', tech: 'LogQL Ingestion', ram: '~80 MB', description: 'Label-indexed structured log store aggregating stdout/stderr from containers.' },
-      { id: 'grafana', name: 'Grafana Dashboards', port: '3001', tech: 'Pre-baked Dashboards', ram: '~60 MB', description: 'Unified visualization panels for host telemetry and deployment audit.' }
+      { id: 'prom', name: 'Prometheus Metrics', port: '9090', tech: 'Time-Series Metrics', ram: '~95 MB', description: 'Tracks CPU, memory, response times, and system health.' },
+      { id: 'cadvisor', name: 'cAdvisor Container Stats', port: '8081', tech: 'Container Telemetry', ram: '~45 MB', description: 'Monitors memory and CPU usage across every running container.' },
+      { id: 'loki', name: 'Loki Log Store', port: '3100', tech: 'Fast Log Search', ram: '~80 MB', description: 'Collects and indexes logs from all your containers.' },
+      { id: 'grafana', name: 'Grafana Dashboards', port: '3001', tech: 'Visual Dashboards', ram: '~60 MB', description: 'Clean visual charts and graphs for your server performance.' }
     ]
   }
 ];
@@ -133,11 +133,11 @@ export const OverviewArchitectureDiagram: React.FC = () => {
               <Layers className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              StackPilot High-Level System Architecture
+              How StackPilot Works
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            Multi-engine control plane connecting compiled C++ core, AI multi-agent swarm, visual sandbox, and hybrid compute runtimes.
+            A simple overview of how StackPilot connects your web dashboard, backend services, AI testing, and servers.
           </p>
         </div>
       </div>

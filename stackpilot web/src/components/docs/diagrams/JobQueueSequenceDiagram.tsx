@@ -159,11 +159,11 @@ export const JobQueueSequenceDiagram: React.FC = () => {
               <Zap className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              Deployment Job Execution Sequence
+              How Deployments Run in the Background
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            Drogon non-blocking C++ controller, Redis FIFO queue buffer, and multi-threaded worker lifecycle.
+            Step-by-step flow from when you click Deploy to when your app is live.
           </p>
         </div>
 

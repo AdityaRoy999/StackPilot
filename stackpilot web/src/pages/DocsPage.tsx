@@ -44,9 +44,9 @@ const DOCS_MENU_ITEMS: BranchedMenuItem[] = [
     label: 'AI & Autonomous QA',
     children: [
       { value: 'ai-agent', label: 'AI Operations Agent', icon: CpuIcon },
-      { value: 'screencast', label: '60 FPS Screencast', icon: DashboardBrowsingIcon },
+      { value: 'screencast', label: 'Live Browser Stream', icon: DashboardBrowsingIcon },
       { value: 'sandboxing', label: 'Chromium Sandboxing', icon: GitBranchIcon },
-      { value: 'replay', label: 'Time-Travel Replay', icon: HelpCircleIcon }
+      { value: 'replay', label: 'Video Session Replay', icon: HelpCircleIcon }
     ]
   },
   {

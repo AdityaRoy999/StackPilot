@@ -130,11 +130,11 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
               <Layers className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              Automated k3s Cluster Provisioning Flow
+              Setting Up a Kubernetes (k3s) Cluster
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            One-click remote SSH provisioning with multi-distro adaptation and AES-256 encrypted kubeconfig.
+            How StackPilot connects to your server via SSH and installs a lightweight Kubernetes cluster automatically.
           </p>
         </div>
       </div>

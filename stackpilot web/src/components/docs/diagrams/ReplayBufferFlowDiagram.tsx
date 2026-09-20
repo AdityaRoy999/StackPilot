@@ -26,58 +26,54 @@ interface BufferStage {
 const STAGES: BufferStage[] = [
   {
     id: 'stream',
-    name: 'Incoming 60 FPS Video Stream',
-    subtitle: 'H.264 Raw Video Stream',
+    name: '1. Receive video stream',
+    subtitle: 'Live browser feed',
     icon: Video,
-    description: 'Raw video frames received over WebSocket from Xvfb display via FFmpeg x11grab. Emits a new frame chunk every 16.6ms.',
-    techDetails: ['Format: Annex-B NALU (SPS/PPS + IDR + P-frames)', 'Framerate: 60 FPS Target', 'Bitrate: ~1.8 - 3.2 Mbps adaptive'],
-    metrics: '16.6ms / frame'
+    description: 'Receives video frames from the browser session in real time as tests run.',
+    techDetails: ['Smooth 60 frames per second', 'Lightweight video stream', 'Low delay under 35ms'],
+    metrics: 'Live stream'
   },
   {
     id: 'filter',
-    name: 'Action & Throttle Filter',
-    subtitle: 'FrameCheck Decision',
+    name: '2. Skip idle frames',
+    subtitle: 'Save frames on change',
     icon: Sliders,
-    description: 'Evaluates if an active user interaction occurred (click, scroll, keystroke) or if >65ms elapsed since the last recorded frame.',
-    techDetails: ['Prevents idle static screen bloat', 'Preserves 100% of interaction transitions', 'Throttles static idle from 60 FPS to 15 FPS in buffer'],
-    metrics: '>65ms OR Action'
+    description: 'Checks if anything changed on screen (clicks, scrolling, typing). When idle, it saves fewer frames to keep memory low.',
+    techDetails: ['Captures every user interaction', 'Drops repeated static frames', 'Saves memory on longer runs'],
+    metrics: 'Only on changes'
   },
   {
     id: 'push',
-    name: 'Push to recordedFramesRef',
-    subtitle: 'In-Memory Ring Buffer',
+    name: '3. Save to memory',
+    subtitle: 'Store in temporary list',
     icon: Layers,
-    description: 'The valid video chunk along with DOM event timestamp and coordinates is appended to React useRef circular array.',
-    techDetails: ['TypedArray: Uint8Array memory chunks', 'Zero React re-render overhead (Ref-based)', 'Coupled with mouse coordinate telemetry'],
-    metrics: 'Append to Array'
+    description: 'Stores each video frame along with the time and mouse position in memory.',
+    techDetails: ['Kept in browser memory', 'Very fast with zero re-rendering lag', 'Tracks mouse coordinates'],
+    metrics: 'Saved to list'
   },
   {
     id: 'cap',
-    name: 'CapCheck (Length > 700)',
-    subtitle: '700-Frame Ring Boundary',
+    name: '4. Check buffer size',
+    subtitle: 'Up to 700 frames',
     icon: Database,
-    description: 'Checks if array exceeds 700 frames. 700 frames at dynamic rate covers ~11.6 seconds of intense action or up to 45 seconds of mixed interaction.',
-    techDetails: ['Maximum Memory Cap: ~24 MB RAM', 'Prevents memory leak on multi-hour sessions', 'Zero Garbage Collection pauses'],
-    metrics: 'Max 700 Elements'
+    description: 'Checks if the buffer has reached the 700-frame limit (about 12 to 45 seconds of video).',
+    techDetails: ['Memory stays under 30 MB', 'Stops memory from growing infinitely', 'Runs smoothly for hours'],
+    metrics: 'Max 700 frames'
   },
   {
     id: 'evict',
-    name: 'buffer.shift() & Retain',
-    subtitle: 'FIFO Eviction & Seek Ready',
+    name: '5. Keep newest frames',
+    subtitle: 'Drop oldest frame',
     icon: RotateCcw,
-    description: 'When length > 700, the oldest frame is popped from the front (FIFO). Otherwise, frames are immediately seekable via the UI scrubber.',
-    techDetails: ['O(1) amortized ring buffer eviction', 'Instant seek to any timestamp via WebCodecs', 'Fast IDR keyframe reference resolution'],
-    metrics: 'Oldest Evicted'
+    description: 'When the buffer is full, the oldest frame is removed so you always have the most recent video ready to play.',
+    techDetails: ['Oldest frame drops automatically', 'Rewind to any second instantly', 'Smooth playback at any speed'],
+    metrics: 'Oldest removed'
   }
 ];
 
 export const ReplayBufferFlowDiagram: React.FC = () => {
   const [selectedStage, setSelectedStage] = useState<BufferStage>(STAGES[1]);
   const [simulatedFrame, setSimulatedFrame] = useState<number>(542);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-
-  // Time calculation from frame
-  const secondsAgo = ((700 - simulatedFrame) * (11.6 / 700)).toFixed(1);
 
   return (
     <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-6">
@@ -89,11 +85,11 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
               <RotateCcw className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              Time-Travel 700-Frame FIFO Ring Buffer
+              Video Replay Buffer (Last 700 Frames)
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            Zero-leak circular memory pipeline for instant 60 FPS visual session rewinds.
+            Saves recent video frames in memory so you can rewind and inspect what happened during tests.
           </p>
         </div>
       </div>
@@ -101,7 +97,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
       {/* Interactive 5-Stage Pipeline */}
       <div className="space-y-3">
         <div className="text-[11px] font-mono uppercase tracking-wider text-zinc-400">
-          Ring Buffer Ingestion Pipeline (Click stage to inspect)
+          How video frames are saved (click a step to inspect)
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
@@ -140,49 +136,53 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
         </div>
       </div>
 
-      {/* Decision Flow Breakdown - Direct Flat Cards */}
+      {/* Decision Flow Breakdown - Outline-less, border-0 cards with simple language */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Gate 1 */}
+        {/* Stream Mode */}
         <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-3">
-          <div className="flex items-center justify-between pb-2">
+          <div className="flex items-center justify-between pb-1">
             <span className="text-xs font-mono font-bold text-white flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              Incoming Frame Ingestion Gate
+              Live Stream vs Replay Mode
             </span>
-            <span className="text-[10px] font-mono text-zinc-400">isPlaybackModeRef check</span>
+            <span className="text-[10px] font-mono text-zinc-400">Current state</span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-            <div className="p-2.5 rounded-lg bg-emerald-950/20 border-l-2 border-emerald-500 space-y-1">
-              <div className="font-semibold text-emerald-300">Live Mode (False)</div>
-              <p className="text-[11px] text-zinc-400">Binary frames append to recordedFramesRef. Scrubber expands.</p>
+            <div className="p-3 rounded-lg bg-[#202024] space-y-1">
+              <div className="font-semibold text-emerald-400">Watching live</div>
+              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                Saves new video frames so you can rewind later. The replay bar grows as the test runs.
+              </p>
             </div>
-            <div className="p-2.5 rounded-lg bg-zinc-950/60 border-l-2 border-zinc-600 space-y-1">
-              <div className="font-semibold text-zinc-300">Replay Mode (True)</div>
-              <p className="text-[11px] text-zinc-400">Incoming frames silent-dropped or buffered without disrupting playback canvas.</p>
+            <div className="p-3 rounded-lg bg-[#202024] space-y-1">
+              <div className="font-semibold text-zinc-300">Watching replay</div>
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                Pauses saving new frames so your replay plays smoothly without jumping around.
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Gate 2 */}
+        {/* Capacity Check */}
         <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-3">
-          <div className="flex items-center justify-between pb-2">
+          <div className="flex items-center justify-between pb-1">
             <span className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
               <Database className="w-3.5 h-3.5 text-white" />
-              <span>Gate 2: Capacity Check</span>
+              <span>Memory limit check</span>
             </span>
-            <span className="text-[10px] font-mono text-zinc-400">Length &gt; 700 Frames</span>
+            <span className="text-[10px] font-mono text-zinc-400">700 frames max</span>
           </div>
-          <div className="grid grid-cols-2 gap-2.5 text-xs">
-            <div className="p-2.5 rounded-lg bg-amber-950/20 border-l-2 border-amber-500 space-y-1">
-              <div className="text-amber-400 font-bold font-mono text-[11px]">&bull; YES (Evict)</div>
-              <p className="text-[11px] text-zinc-300">
-                Executes <code className="text-white bg-zinc-800 px-1 py-0.5 rounded text-[10px]">buffer.shift()</code> to remove oldest frame.
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="p-3 rounded-lg bg-[#202024] space-y-1">
+              <div className="text-amber-400 font-semibold font-mono text-[11px]">Over 700 frames</div>
+              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                Removes the oldest frame to keep memory usage low and smooth.
               </p>
             </div>
-            <div className="p-2.5 rounded-lg bg-emerald-950/20 border-l-2 border-emerald-500 space-y-1">
-              <div className="text-emerald-400 font-bold font-mono text-[11px]">&bull; NO (Retain)</div>
-              <p className="text-[11px] text-zinc-300">
-                Buffer retains frame; ready for scrubber seek.
+            <div className="p-3 rounded-lg bg-[#202024] space-y-1">
+              <div className="text-emerald-400 font-semibold font-mono text-[11px]">Under 700 frames</div>
+              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                Keeps the frame in memory ready to rewind and play.
               </p>
             </div>
           </div>
@@ -198,11 +198,11 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
                 <Sliders className="w-3.5 h-3.5 text-white" />
               </span>
               <span className="text-xs font-bold text-white font-mono uppercase tracking-wider">
-                Interactive Time-Travel Scrubber Preview
+                Interactive Replay Scrubber Preview
               </span>
             </div>
             <p className="text-[11px] text-zinc-400">
-              Drag scrubber to simulate traveling back across the in-memory 700-frame ring buffer.
+              Drag the slider to test scrubbing backwards through recent test frames.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -222,9 +222,9 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
             className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-white"
           />
           <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-            <span>Oldest Evicted (-11.6s)</span>
-            <span>Buffer Center (-5.8s)</span>
-            <span className="text-emerald-400 font-bold">Live Stream (0.0s)</span>
+            <span>Oldest saved frame (-11.6s)</span>
+            <span>Middle (-5.8s)</span>
+            <span className="text-emerald-400 font-bold">Live (0.0s)</span>
           </div>
         </div>
       </div>
@@ -244,7 +244,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
             </div>
           </div>
           <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
-            Metric: <span className="text-white font-bold">{selectedStage.metrics}</span>
+            Status: <span className="text-white font-bold">{selectedStage.metrics}</span>
           </span>
         </div>
 
@@ -254,13 +254,13 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
 
         <div className="space-y-1.5 pt-1">
           <div className="text-[10px] font-mono uppercase text-zinc-500">
-            Technical Implementation Rules
+            How this works
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {selectedStage.techDetails.map((detail, idx) => (
               <div
                 key={idx}
-                className="px-3 py-2 rounded-lg bg-zinc-950/80 border-l-2 border-zinc-700 text-[11px] font-mono text-zinc-300 flex items-start gap-2"
+                className="px-3 py-2 rounded-lg bg-[#18181c] text-[11px] font-mono text-zinc-300 flex items-start gap-2 border-0"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0 mt-1.5" />
                 <span>{detail}</span>

@@ -135,11 +135,11 @@ export const AiSwarmFlowDiagram: React.FC = () => {
               <Bot className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              Multi-Agent Autonomous Swarm Architecture
+              How the AI Agent Team Works
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            LangGraph state machine routing, 27 reasoning tools, and self-healing verification loop.
+            How specialized AI roles plan, write code, test changes, and verify your web app.
           </p>
         </div>
 

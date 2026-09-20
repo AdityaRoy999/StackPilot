@@ -97,11 +97,11 @@ export const ScreencastPipelineDiagram: React.FC = () => {
               <Video className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              60 FPS Low-Latency Screencast Pipeline
+              Live Browser Video Stream
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            From Xvfb display to WebCodecs GPU hardware decoding over binary WebSockets.
+            How browser video is captured and shown in your dashboard in real time.
           </p>
         </div>
       </div>
@@ -228,7 +228,7 @@ export const ScreencastPipelineDiagram: React.FC = () => {
           {selectedStage.specs.map((spec, i) => (
             <div
               key={i}
-              className="px-3 py-2 rounded-lg bg-zinc-950/80 border-l-2 border-zinc-700 text-[11px] font-mono text-zinc-300 flex items-center gap-2"
+              className="px-3 py-2 rounded-lg bg-[#18181c] text-[11px] font-mono text-zinc-300 flex items-center gap-2 border-0"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0" />
               <span>{spec}</span>

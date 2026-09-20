@@ -137,11 +137,11 @@ export const GithubCiSequenceDiagram: React.FC = () => {
               <GitBranch className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              GitHub App Webhook &amp; CI/CD Gating Pipeline
+              Automatic Deployments from GitHub
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            HMAC-SHA256 signature verification, branch environment routing, and automated GitHub Actions gating.
+            How pushing code to GitHub automatically builds and deploys your changes safely.
           </p>
         </div>
 

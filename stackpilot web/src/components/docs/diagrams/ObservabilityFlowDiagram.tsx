@@ -129,11 +129,11 @@ export const ObservabilityFlowDiagram: React.FC = () => {
               <Activity className="w-4 h-4 text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-              Real-Time Telemetry &amp; Observability Pipeline
+              Monitoring, Metrics &amp; Logs
             </h3>
           </div>
           <p className="text-xs text-zinc-400">
-            End-to-end metrics, cgroup v2 container telemetry, and structured log streaming to Loki and Grafana.
+            How StackPilot collects metrics and logs from your containers and displays them in Grafana.
           </p>
         </div>
       </div>
@@ -309,7 +309,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
             {selectedNode.configOrMetrics.map((item, idx) => (
               <div
                 key={idx}
-                className="px-3 py-2 rounded-lg bg-zinc-950/80 border-l-2 border-zinc-700 text-[11px] font-mono text-zinc-300 flex items-start gap-2"
+                className="px-3 py-2 rounded-lg bg-[#18181c] text-[11px] font-mono text-zinc-300 flex items-start gap-2 border-0"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-white shrink-0 mt-1.5" />
                 <span className="truncate">{item}</span>
