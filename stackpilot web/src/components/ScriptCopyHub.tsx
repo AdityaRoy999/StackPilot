@@ -13,10 +13,10 @@ import {
   Server, 
   Laptop, 
   Code, 
-  GitBranch,
-  ExternalLink
+  GitBranch
 } from 'lucide-react';
 import { SpotlightCard } from './reactbits/SpotlightCard';
+import { MacTrafficLights } from './docs/CodeBlock';
 
 type ScriptTab = 'bash' | 'powershell' | 'docker' | 'cli' | 'github-actions' | 'embed';
 
@@ -151,9 +151,7 @@ jobs:
           <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 border-b border-slate-200/80 dark:border-slate-800/80 bg-slate-100/50 dark:bg-slate-900/50">
             {/* Window Dots */}
             <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-rose-500/80 inline-block" />
-              <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block" />
-              <span className="w-3 h-3 rounded-full bg-emerald-500/80 inline-block" />
+              <MacTrafficLights onClose={handleCopy} />
               <span className="ml-3 text-xs font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                 <Terminal className="w-3.5 h-3.5 text-cyan-500" />
                 stackpilot-quickstart.sh

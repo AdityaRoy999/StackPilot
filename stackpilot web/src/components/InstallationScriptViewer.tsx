@@ -18,6 +18,8 @@ import {
   ShieldAlert,
   HelpCircle
 } from 'lucide-react';
+import { MacTrafficLights } from './docs/CodeBlock';
+import { highlightCode } from '../utils/syntaxHighlight';
 
 export type InstallScriptTab = 
   | 'bash' 
@@ -349,37 +351,60 @@ export const InstallationScriptViewer: React.FC = () => {
           })}
         </div>
 
-        {/* Row 3: Command Code Display Box with Copy Button & Check Animation */}
-        <div className="relative group rounded-2xl border border-zinc-800/90 bg-[#0c0c0e] p-4 sm:p-5 font-mono text-xs text-zinc-100 flex items-center justify-between gap-4 shadow-inner">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <span className="text-zinc-500 select-none font-bold">$</span>
-            <code className="text-zinc-100 break-all leading-relaxed select-all">
-              {currentCommand}
-            </code>
+        {/* Row 3: Command Code Display Box with Mac Traffic Lights & Syntax Highlighting */}
+        <div className="relative group rounded-2xl border border-zinc-800/90 bg-[#0c0c0e] overflow-hidden shadow-xl">
+          <div className="px-4 py-2.5 bg-[#161619] border-b border-zinc-800/70 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <MacTrafficLights onClose={handleCopy} />
+              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-300 font-semibold px-2 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40">
+                {selectedScript.id === 'powershell' ? 'POWERSHELL' : selectedScript.id === 'docker' ? 'DOCKER COMPOSE' : 'BASH'}
+              </span>
+            </div>
+            <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1.5">
+              <Terminal className="w-3 h-3 text-white" />
+              <span>One-Click Installer</span>
+            </span>
           </div>
 
-          <button
-            type="button"
-            onClick={handleCopy}
-            className={`relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-sans font-semibold transition-all duration-200 cursor-pointer shrink-0 border select-none ${
-              copied
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.3)]'
-                : 'bg-[#222226] text-white border-zinc-700 hover:bg-zinc-700 hover:border-zinc-500 shadow-md'
-            }`}
-            title="Copy command to clipboard"
-          >
-            {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3.5 h-3.5 text-white" />
-                <span>Copy</span>
-              </>
-            )}
-          </button>
+          <div className="p-4 sm:p-5 font-mono text-xs flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              <span className="text-emerald-400 select-none font-bold text-sm">$</span>
+              <pre className="font-mono text-xs leading-relaxed selection:bg-zinc-800 selection:text-white m-0 p-0 overflow-x-auto">
+                <code
+                  dangerouslySetInnerHTML={{
+                    __html: highlightCode(
+                      currentCommand,
+                      selectedScript.id === 'powershell' ? 'bash' : selectedScript.id === 'docker' ? 'yaml' : 'bash'
+                    )
+                  }}
+                  className="break-all leading-relaxed select-all"
+                />
+              </pre>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCopy}
+              className={`relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-sans font-semibold transition-all duration-200 cursor-pointer shrink-0 border select-none ${
+                copied
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.3)]'
+                  : 'bg-[#222226] text-white border-zinc-700 hover:bg-zinc-700 hover:border-zinc-500 shadow-md'
+              }`}
+              title="Copy command to clipboard"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3.5 h-3.5 text-white" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Row 4: Script Metadata, OS Targets & Estimated Execution Time */}

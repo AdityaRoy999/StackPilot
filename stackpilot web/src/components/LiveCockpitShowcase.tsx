@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { SpotlightCard } from './reactbits/SpotlightCard';
 import { TiltedCard } from './reactbits/TiltedCard';
+import { MacTrafficLights } from './docs/CodeBlock';
 
 export const LiveCockpitShowcase: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(true);
@@ -98,11 +99,7 @@ export const LiveCockpitShowcase: React.FC = () => {
                 <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800 text-xs font-mono">
                   {/* Traffic lights & URL bar */}
                   <div className="flex items-center gap-3 flex-1 max-w-lg">
-                    <div className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block" />
-                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
-                    </div>
+                    <MacTrafficLights />
                     <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-300 flex-1 truncate">
                       <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
                       <span className="truncate">{step.url}</span>

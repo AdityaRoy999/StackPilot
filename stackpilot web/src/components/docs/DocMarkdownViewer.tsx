@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Copy, Check, Terminal, ExternalLink } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { DocDiagramDispatcher } from './diagrams/DocDiagramDispatcher';
+import { CodeBlock } from './CodeBlock';
 
 interface DocMarkdownViewerProps {
   content: string;
@@ -146,46 +147,12 @@ export const DocMarkdownViewer: React.FC<DocMarkdownViewerProps> = ({ content, d
         }
 
         blocks.push(
-          <div
-            key={`code-block-${blockKey}`}
-            className="my-5 rounded-2xl border border-zinc-800 bg-[#141416] overflow-hidden shadow-lg group"
-          >
-            {/* Code Block Header */}
-            <div className="px-4 py-2.5 bg-[#18181b] border-b border-zinc-800/80 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-zinc-700" />
-                <span className="w-2.5 h-2.5 rounded-full bg-zinc-700" />
-                <span className="w-2.5 h-2.5 rounded-full bg-zinc-700" />
-                <span className="ml-2 text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold">
-                  {lang}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={(e) => handleCopy(codeString, codeId, e)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-xs text-zinc-300 hover:text-white transition-colors cursor-pointer border-0"
-                title="Copy code"
-              >
-                {copiedId === codeId ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-[11px] text-emerald-400 font-mono font-medium">Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5 text-white" />
-                    <span className="text-[11px] font-mono">Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
-            {/* Code Block Content */}
-            <div className="p-4 bg-black overflow-x-auto">
-              <pre className="font-mono text-xs text-zinc-200 leading-relaxed selection:bg-zinc-800 selection:text-white">
-                <code>{codeString}</code>
-              </pre>
-            </div>
-          </div>
+          <CodeBlock
+            key={`code-block-${docId}-${blockKey++}`}
+            code={codeString}
+            lang={lang}
+            id={codeId}
+          />
         );
         continue;
       }

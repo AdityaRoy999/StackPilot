@@ -149,3 +149,78 @@ html.lenis, html.lenis body {
 .lenis.lenis-stopped {
   overflow: hidden;
 }
+
+/* =========================================================================
+   SYNTAX HIGHLIGHTING (PRISM TOKENS) - MODERN DARK VS CODE / TOKYO NIGHT
+   ========================================================================= */
+pre code {
+  color: #f4f4f5;
+  text-shadow: none;
+}
+
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: #71717a !important;
+  font-style: italic !important;
+}
+
+.token.punctuation {
+  color: #e4e4e7 !important;
+}
+
+.token.property,
+.token.tag,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: #38bdf8 !important; /* sky-400 */
+}
+
+.token.boolean,
+.token.number {
+  color: #fb923c !important; /* orange-400 */
+  font-weight: 500;
+}
+
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: #4ade80 !important; /* emerald-400 */
+}
+
+.token.operator,
+.token.entity,
+.token.url {
+  color: #93c5fd !important; /* blue-300 */
+}
+
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: #f472b6 !important; /* pink-400 */
+  font-weight: 600;
+}
+
+.token.function,
+.token.class-name {
+  color: #c084fc !important; /* purple-400 */
+}
+
+.token.regex,
+.token.important,
+.token.variable {
+  color: #fbbf24 !important; /* amber-300 */
+}
+
+.token.bold {
+  font-weight: bold;
+}
+
+.token.italic {
+  font-style: italic;
+}
