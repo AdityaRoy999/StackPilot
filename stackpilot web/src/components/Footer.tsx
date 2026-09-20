@@ -14,40 +14,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
         aria-hidden="true"
       />
 
-      {/* Giant Very Stylish Display Wordmark: Hollow Letters Filled from Below Fading Upwards */}
+      {/* Giant Chronicle-Style Wordmark: Clean, Monolithic Typography Fading into Background */}
       <div className="w-full overflow-visible flex items-center justify-center my-6 sm:my-10 px-4 sm:px-8 relative">
-        <div className="relative inline-block select-none pointer-events-none">
-          {/* Base Layer: Crisp Hollow Outline */}
+        <div className="relative select-none pointer-events-none">
           <h2
-            className="font-headline text-[11.5vw] sm:text-[13vw] md:text-[14vw] font-black tracking-[-0.035em] leading-[1.2] text-center whitespace-nowrap select-none"
-            style={{
-              WebkitTextStroke: '1.2px rgba(255, 255, 255, 0.45)',
-              color: 'transparent',
-              textShadow: '0 0 35px rgba(255, 255, 255, 0.08)',
-            }}
-          >
-            StackPilot
-          </h2>
-
-          {/* Foreground Layer: Filled from below, smoothly fading to transparent upwards */}
-          <h2
-            aria-hidden="true"
-            className="font-headline text-[11.5vw] sm:text-[13vw] md:text-[14vw] font-black tracking-[-0.035em] leading-[1.2] text-center whitespace-nowrap absolute inset-0 select-none text-transparent bg-clip-text"
+            className="font-headline text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.02em] sm:tracking-[0.01em] uppercase leading-[1.1] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
             style={{
               backgroundImage:
-                'linear-gradient(to top, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.85) 20%, rgba(255, 255, 255, 0.35) 48%, rgba(255, 255, 255, 0.06) 72%, transparent 88%)',
+                'linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.55) 28%, rgba(255, 255, 255, 0.18) 65%, rgba(255, 255, 255, 0.03) 88%, transparent 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
             }}
           >
             StackPilot
           </h2>
-
-          {/* Subtle bottom horizon shimmer under the filled letters */}
-          <div
-            className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4/5 max-w-2xl h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent blur-[0.5px]"
-            aria-hidden="true"
-          />
         </div>
       </div>
 
