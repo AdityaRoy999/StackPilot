@@ -15,12 +15,12 @@ interface ContactPageProps {
   onNavigateDocs: () => void;
 }
 
-const INQUIRY_TYPES = ['Backing us up', 'Problem'];
+const INQUIRY_TYPES = ['Back us', 'Problem'];
 
 export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavigateDocs }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [inquiryType, setInquiryType] = useState('Backing us up');
+  const [inquiryType, setInquiryType] = useState('Back us');
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -41,7 +41,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
   const resetForm = () => {
     setName('');
     setEmail('');
-    setInquiryType('Backing us up');
+    setInquiryType('Back us');
     setMessage('');
     setIsSubmitted(false);
   };

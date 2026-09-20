@@ -1,19 +1,15 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Copy, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SCRIPTS, ScriptTab } from '../config/scripts';
 import { useScript } from '../context/ScriptContext';
-import { highlightCode } from '../utils/syntaxHighlight';
+import { BlurText } from './reactbits/BlurText';
 
 export const ScriptBox: React.FC = () => {
   const { activeTab, setActiveTab, activeScript } = useScript();
   const [copied, setCopied] = useState(false);
   const [hoveredTab, setHoveredTab] = useState<ScriptTab | null>(null);
-
-  const highlightedCommand = useMemo(() => {
-    return highlightCode(activeScript.command, 'bash');
-  }, [activeScript.command]);
 
   const handleCopy = (e?: React.MouseEvent) => {
     navigator.clipboard.writeText(activeScript.command);
@@ -40,23 +36,26 @@ export const ScriptBox: React.FC = () => {
     <div className="w-full max-w-[650px] mx-auto mt-8 flex justify-center px-4 sm:px-0">
       {/* Unified Bento Grid Card */}
       <div className="w-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all shadow-2xl">
-        {/* Top Bento Row: Platform Options switcher with matching capsule physics */}
+        {/* Top Bento Row: Platform Options switcher with segmented corner geometry and dividers */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
           className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
         >
           {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
-            const isHovered = hoveredTab === script.id;
-            const prevActive = idx > 0 && SCRIPTS[idx - 1].id === activeTab;
-            const prevHovered = idx > 0 && hoveredTab === SCRIPTS[idx - 1].id;
-            const showDivider = idx > 0 && !isActive && !prevActive && !isHovered && !prevHovered;
+            // Segmented corner geometry: ( | on first tab, | | square-rounded in middle, | ) on last tab
+            const cornerClass =
+              idx === 0
+                ? 'rounded-l-full rounded-r-md'
+                : idx === SCRIPTS.length - 1
+                ? 'rounded-l-md rounded-r-full'
+                : 'rounded-md';
 
             return (
               <React.Fragment key={script.id}>
-                {showDivider && (
+                {idx > 0 && (
                   <span
-                    className="h-3 w-[1px] bg-zinc-800/70 select-none shrink-0 pointer-events-none mx-0.5"
+                    className="h-3.5 w-[1px] bg-zinc-800 shrink-0 pointer-events-none mx-0.5 select-none"
                     aria-hidden="true"
                   />
                 )}
@@ -64,27 +63,27 @@ export const ScriptBox: React.FC = () => {
                   type="button"
                   onClick={() => setActiveTab(script.id)}
                   onMouseEnter={() => setHoveredTab(script.id)}
-                  className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
+                  className={`relative px-3.5 py-1.5 ${cornerClass} text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
                     isActive
                       ? 'text-zinc-950 font-semibold'
                       : 'text-zinc-400 hover:text-zinc-100'
                   }`}
                   title={`Switch to ${script.label}`}
                 >
-                  {/* Matching capsule hover pill */}
-                  {isHovered && !isActive && (
+                  {/* Segmented hover pill */}
+                  {hoveredTab === script.id && !isActive && (
                     <motion.div
                       layoutId="scriptTabHoverPill"
-                      className="absolute inset-0 bg-[#27272a] rounded-full"
+                      className={`absolute inset-0 bg-[#27272a] ${cornerClass}`}
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}
 
-                  {/* Matching capsule active pill */}
+                  {/* Segmented active pill */}
                   {isActive && (
                     <motion.div
                       layoutId="activeTabSelection"
-                      className="absolute inset-0 bg-zinc-100 rounded-full shadow-sm"
+                      className={`absolute inset-0 bg-zinc-100 ${cornerClass} shadow-sm`}
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}
@@ -95,24 +94,26 @@ export const ScriptBox: React.FC = () => {
           })}
         </div>
 
-        {/* Bottom Bento Row: Command well with traffic lights, syntax highlighting and animated copy button */}
+        {/* Bottom Bento Row: Command well with terminal prompt, animated BlurText switching and spring copy button */}
         <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl sm:rounded-2xl bg-[#121214]/95 border border-zinc-800/60 transition-all relative">
-          {/* Left: Terminal traffic lights + Command text */}
-          <div className="flex items-center gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden py-0.5 pr-2">
-            {/* Mac traffic lights */}
-            <div className="flex items-center gap-1.5 shrink-0 select-none opacity-85">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#ff5f56]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#ffbd2e]" />
-              <span className="w-2.5 h-2.5 rounded-full bg-[#27c93f]" />
+          {/* Command text container with right fading gradient and smooth letter switching animation */}
+          <div className="relative flex-1 min-w-0 overflow-hidden">
+            <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5 pr-10">
+              <span className="text-emerald-400 font-mono font-bold select-none shrink-0 text-xs sm:text-sm">$</span>
+              <BlurText
+                key={activeScript.id}
+                text={activeScript.command}
+                delay={10}
+                animateBy="letters"
+                stepDuration={0.2}
+                direction="top"
+                as="span"
+                className="flex-nowrap font-mono text-xs sm:text-sm text-zinc-200 whitespace-nowrap selection:bg-zinc-800 selection:text-white"
+              />
             </div>
 
-            <span className="text-emerald-400 font-mono font-bold select-none shrink-0 text-xs sm:text-sm">$</span>
-
-            {/* Crisp syntax-highlighted command */}
-            <span
-              className="font-mono text-xs sm:text-sm text-zinc-200 whitespace-nowrap selection:bg-zinc-800 selection:text-white"
-              dangerouslySetInnerHTML={{ __html: highlightedCommand }}
-            />
+            {/* Smooth fading gradient towards the copy button */}
+            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-r from-transparent to-[#121214]" />
           </div>
 
           {/* Circular Copy Button: smooth emerald transition and checkmark spring pop */}
