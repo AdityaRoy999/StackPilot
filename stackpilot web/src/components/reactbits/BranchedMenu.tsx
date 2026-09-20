@@ -41,6 +41,8 @@ export interface BranchedMenuProps {
   fontSize?: number;
   drawDuration?: number;
   foldDuration?: number;
+  showMarker?: boolean;
+  showTrunkLine?: boolean;
   className?: string;
 }
 
@@ -90,6 +92,8 @@ export const BranchedMenu: React.FC<BranchedMenuProps> = ({
   fontSize = 14,
   drawDuration = 400,
   foldDuration = 300,
+  showMarker = true,
+  showTrunkLine = true,
   className = ''
 }) => {
   const [open, setOpen] = useState<Set<number>>(() => toSet(defaultOpen));
@@ -107,6 +111,7 @@ export const BranchedMenu: React.FC<BranchedMenuProps> = ({
   const activeSection = items.findIndex(it => it.children?.some(kid => kid.value === active));
   const markerShown = activeSection >= 0 && open.has(activeSection);
   useLayoutEffect(() => {
+    if (!showMarker) return;
     const place = (glide: boolean) => {
       const m = markerRef.current;
       const el = heads.current[activeSection];
@@ -131,7 +136,7 @@ export const BranchedMenu: React.FC<BranchedMenuProps> = ({
     });
     if (navRef.current) ro.observe(navRef.current);
     return () => ro.disconnect();
-  }, [activeSection, markerShown, items, fontSize, rowHeight]);
+  }, [activeSection, markerShown, items, fontSize, rowHeight, showMarker]);
 
   const select = (value: string, item: BranchedMenuChild | BranchedMenuItem) => {
     setActive(value);
@@ -158,7 +163,7 @@ export const BranchedMenu: React.FC<BranchedMenuProps> = ({
   return (
     <nav
       ref={navRef}
-      className={`relative flex w-fit max-w-[min(var(--bm-w),100%)] flex-col pl-3.5 leading-[1.2] [color:var(--bm-ink)] [font-family:inherit] [font-size:var(--bm-font)] before:absolute before:top-2 before:bottom-0 before:left-0 before:w-0.5 before:rounded-[1px] before:[background:linear-gradient(to_bottom,var(--bm-line)_0%,var(--bm-line)_55%,transparent_100%)] before:content-['']${className ? ` ${className}` : ''}`}
+      className={`relative flex w-fit max-w-[min(var(--bm-w),100%)] flex-col ${showTrunkLine ? 'pl-3.5 before:absolute before:top-2 before:bottom-0 before:left-0 before:w-0.5 before:rounded-[1px] before:[background:linear-gradient(to_bottom,var(--bm-line)_0%,var(--bm-line)_55%,transparent_100%)] before:content-[\'\']' : 'pl-1'} leading-[1.2] [color:var(--bm-ink)] [font-family:inherit] [font-size:var(--bm-font)]${className ? ` ${className}` : ''}`}
       style={
         {
           '--bm-w': `${width}px`,
@@ -175,11 +180,13 @@ export const BranchedMenu: React.FC<BranchedMenuProps> = ({
         } as CSSProperties
       }
     >
-      <span
-        ref={markerRef}
-        className="absolute -top-px left-0 z-[1] h-4 w-0.5 rounded-[1px] opacity-0 [background:var(--bm-accent)] [transition:top_220ms_cubic-bezier(0.23,1,0.32,1),opacity_150ms_ease] data-[on]:opacity-100 motion-reduce:[transition:opacity_150ms_ease]"
-        aria-hidden="true"
-      />
+      {showMarker && (
+        <span
+          ref={markerRef}
+          className="absolute -top-px left-0 z-[1] h-4 w-0.5 rounded-[1px] opacity-0 [background:var(--bm-accent)] [transition:top_220ms_cubic-bezier(0.23,1,0.32,1),opacity_150ms_ease] data-[on]:opacity-100 motion-reduce:[transition:opacity_150ms_ease]"
+          aria-hidden="true"
+        />
+      )}
       {items.map((item, i) => {
         const kids = item.children;
         const isOpen = kids ? open.has(i) : false;
