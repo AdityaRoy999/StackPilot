@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
+import { BookOpen } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import { StarIcon } from './icons/StarIcon';
 import { UsersIcon } from './icons/UsersIcon';
 
-export const Navbar: React.FC = () => {
+interface NavbarProps {
+  onNavigateDocs?: () => void;
+  onNavigateHome?: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }) => {
   const [stars, setStars] = useState<number | null>(null);
   const [visitors, setVisitors] = useState<number>(1482);
 
@@ -48,10 +54,11 @@ export const Navbar: React.FC = () => {
     <header className="fixed top-5 left-0 right-0 z-50 px-4 sm:px-8 flex items-center justify-between pointer-events-none">
       {/* Left side: Expandable Terminal Button (reveals 'StackPilot' on hover) */}
       <div className="pointer-events-auto">
-        <a
-          href="#"
+        <button
+          type="button"
+          onClick={onNavigateHome}
           className="group inline-flex items-center h-10 px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl hover:bg-[#262629] transition-all duration-300 ease-out cursor-pointer select-none"
-          title="StackPilot"
+          title="StackPilot Home"
         >
           {/* Terminal prompt icon */}
           <div className="font-mono font-bold text-xs text-zinc-300 group-hover:text-emerald-400 transition-colors flex items-center justify-center shrink-0">
@@ -64,10 +71,10 @@ export const Navbar: React.FC = () => {
               StackPilot
             </span>
           </div>
-        </a>
+        </button>
       </div>
 
-      {/* Right side: Floating pill bubbles (Visitors & GitHub) */}
+      {/* Right side: Floating pill bubbles (Visitors, Docs & GitHub) */}
       <div className="pointer-events-auto flex items-center gap-2 sm:gap-2.5">
         {/* Visitors Bubble */}
         <div
@@ -77,6 +84,17 @@ export const Navbar: React.FC = () => {
           <UsersIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           <span>{visitors.toLocaleString()} visitors</span>
         </div>
+
+        {/* Docs Button */}
+        <button
+          type="button"
+          onClick={onNavigateDocs}
+          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl text-xs font-mono text-zinc-300 hover:text-white hover:bg-[#262629] transition-all cursor-pointer"
+          title="StackPilot Documentation"
+        >
+          <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+          <span>Docs</span>
+        </button>
 
         {/* GitHub Stars Bubble */}
         <a

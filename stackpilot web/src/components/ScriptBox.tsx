@@ -21,28 +21,35 @@ export const ScriptBox: React.FC = () => {
       <div className="rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all">
         {/* Top Bento Row: Platform Options switcher (left-aligned flush with command well below) */}
         <div className="flex items-center gap-1 sm:gap-1.5 px-0 py-0.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs font-mono select-none">
-          {SCRIPTS.map((script) => {
+          {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
             return (
-              <button
-                key={script.id}
-                type="button"
-                onClick={() => setActiveTab(script.id)}
-                className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                  isActive ? 'text-zinc-950 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-                title={`Switch to ${script.label}`}
-              >
-                {/* Smooth sliding pill animation */}
-                {isActive && (
-                  <motion.div
-                    layoutId="activeTabSelection"
-                    className="absolute inset-0 rounded-full bg-zinc-100"
-                    transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              <React.Fragment key={script.id}>
+                {idx > 0 && (
+                  <span
+                    className="h-3 w-[1px] bg-zinc-800/90 select-none shrink-0 pointer-events-none"
+                    aria-hidden="true"
                   />
                 )}
-                <span className="relative z-10">{script.label}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab(script.id)}
+                  className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    isActive ? 'text-zinc-950 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                  title={`Switch to ${script.label}`}
+                >
+                  {/* Smooth sliding pill animation */}
+                  {isActive && (
+                    <motion.div
+                      layoutId="activeTabSelection"
+                      className="absolute inset-0 rounded-full bg-zinc-100"
+                      transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                    />
+                  )}
+                  <span className="relative z-10">{script.label}</span>
+                </button>
+              </React.Fragment>
             );
           })}
         </div>

@@ -1,12 +1,48 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { Footer } from './components/Footer';
 import { SmoothScroll } from './components/SmoothScroll';
 import { WebThreads } from './components/reactbits/WebThreads';
 import { ScriptProvider } from './context/ScriptContext';
+import { DocsPage } from './pages/DocsPage';
 
 export const App: React.FC = () => {
+  const [route, setRoute] = useState<'home' | 'docs'>(() => {
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.toLowerCase();
+      if (path.startsWith('/docs')) return 'docs';
+    }
+    return 'home';
+  });
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname.toLowerCase();
+      if (path.startsWith('/docs')) {
+        setRoute('docs');
+      } else {
+        setRoute('home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateTo = (target: 'home' | 'docs') => {
+    const targetPath = target === 'docs' ? '/docs' : '/';
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, '', targetPath);
+    }
+    setRoute(target);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  if (route === 'docs') {
+    return <DocsPage onNavigateHome={() => navigateTo('home')} />;
+  }
+
   return (
     <ScriptProvider>
       <SmoothScroll>
@@ -38,13 +74,13 @@ export const App: React.FC = () => {
             />
           </div>
 
-          <Navbar />
+          <Navbar onNavigateDocs={() => navigateTo('docs')} onNavigateHome={() => navigateTo('home')} />
 
           <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 flex flex-col justify-center relative z-10">
             <Hero />
           </main>
 
-          <Footer />
+          <Footer onNavigateDocs={() => navigateTo('docs')} />
         </div>
       </SmoothScroll>
     </ScriptProvider>

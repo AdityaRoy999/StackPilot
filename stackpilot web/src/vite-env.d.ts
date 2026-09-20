@@ -50,4 +50,7 @@ declare module 'lucide-react' {
   export const Heart: React.FC<any>;
   export const Sliders: React.FC<any>;
   export const RefreshCw: React.FC<any>;
+  export const BookOpen: React.FC<any>;
+  export const ArrowLeft: React.FC<any>;
+  export const Search: React.FC<any>;
 }
