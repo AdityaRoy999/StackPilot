@@ -1,20 +1,48 @@
-import React from 'react';
-import { BlurText } from './reactbits/BlurText';
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ScriptBox } from './ScriptBox';
 
+const MORPH_WORDS = [
+  { text: 'Deployment', gradient: 'from-emerald-400 via-teal-300 to-cyan-400' },
+  { text: 'Testing', gradient: 'from-cyan-300 via-sky-300 to-indigo-400' },
+];
+
 export const Hero: React.FC = () => {
+  const [wordIndex, setWordIndex] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setWordIndex((prev) => (prev + 1) % MORPH_WORDS.length);
+    }, 3200);
+    return () => clearInterval(timer);
+  }, []);
+
+  const currentWord = MORPH_WORDS[wordIndex];
+
   return (
     <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
-      {/* Main Title animated with BlurText letter-by-letter */}
-      <div className="w-full max-w-5xl mx-auto mb-6 flex justify-center">
-        <BlurText
-          text="Autonomous AI Deployment & Testing Platform"
-          delay={25}
-          animateBy="letters"
-          direction="top"
-          stepDuration={0.25}
-          className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.12] justify-center text-center flex-wrap"
-        />
+      {/* Main Title with Smooth Morph Transition between 'Deployment' and 'Testing' */}
+      <div className="w-full max-w-5xl mx-auto mb-6 flex flex-col items-center justify-center select-none">
+        <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.14] text-center">
+          <span className="block">Autonomous AI</span>
+          <span className="flex items-center justify-center gap-2 sm:gap-3.5 mt-1 sm:mt-2">
+            <span className="relative inline-flex items-center justify-center min-w-[210px] sm:min-w-[320px] md:min-w-[390px] text-center">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={currentWord.text}
+                  initial={{ opacity: 0, y: 16, filter: 'blur(8px)', scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)', scale: 1 }}
+                  exit={{ opacity: 0, y: -16, filter: 'blur(8px)', scale: 0.96 }}
+                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                  className={`bg-gradient-to-r ${currentWord.gradient} bg-clip-text text-transparent inline-block`}
+                >
+                  {currentWord.text}
+                </motion.span>
+              </AnimatePresence>
+            </span>
+            <span className="text-zinc-50">Platform</span>
+          </span>
+        </h1>
       </div>
 
       {/* Subtitle - Rephrased and enhanced value proposition */}

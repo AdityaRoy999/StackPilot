@@ -16,10 +16,12 @@ import { Copy, Check, ArrowLeft, ExternalLink, Search, Terminal, Shield, Zap, Re
 import { BranchedMenu, BranchedMenuItem } from '../components/reactbits/BranchedMenu';
 import { GithubIcon } from '../components/icons/GithubIcon';
 import { StarIcon } from '../components/icons/StarIcon';
+import { MailIcon } from '../components/icons/MailIcon';
 import { SearchModal } from '../components/SearchModal';
 
 interface DocsPageProps {
   onNavigateHome: () => void;
+  onNavigateContact?: () => void;
 }
 
 const DOCS_MENU_ITEMS: BranchedMenuItem[] = [
@@ -61,7 +63,7 @@ const DOCS_MENU_ITEMS: BranchedMenuItem[] = [
   }
 ];
 
-export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
+export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateContact }) => {
   const [activeDoc, setActiveDoc] = useState<string>('overview');
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -156,6 +158,23 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
             >
               <span>{mobileMenuOpen ? 'Close' : 'Topics'}</span>
             </button>
+
+            {/* Vertical Divider */}
+            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
+
+            {/* Contact: between '|' and '|' -> square rounded tab */}
+            <a
+              href="/contact"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigateContact?.();
+              }}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0"
+              title="Contact StackPilot Team"
+            >
+              <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              <span className="hidden sm:inline">Contact</span>
+            </a>
 
             {/* Vertical Divider */}
             <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
@@ -774,42 +793,109 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
                     </p>
                   </div>
 
-                  <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
-                    <div className="divide-y divide-zinc-800 text-zinc-300">
-                      <div className="py-2 flex items-center justify-between">
-                        <div>
-                          <code className="text-white font-semibold">STACKPILOT_DOMAIN</code>
-                          <div className="text-[11px] text-zinc-500 font-sans">Primary platform hostname</div>
+                  <div className="space-y-4">
+                    {/* Category 1: Core Platform & Security */}
+                    <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
+                      <span className="text-zinc-200 font-sans font-semibold text-sm">Core Platform &amp; Security</span>
+                      <div className="divide-y divide-zinc-800 text-zinc-300">
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">STACKPILOT_DOMAIN</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Primary platform hostname for SSL routing &amp; Caddy certs</div>
+                          </div>
+                          <code className="text-zinc-400">localhost</code>
                         </div>
-                        <code className="text-zinc-400">localhost</code>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">JWT_SECRET</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Cryptographic HMAC-SHA256 secret for user session tokens</div>
+                          </div>
+                          <code className="text-zinc-400">min 48 chars hex</code>
+                        </div>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">TOKEN_ENCRYPTION_KEY</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">AES-256-GCM symmetric key encrypting stored VCS &amp; cloud tokens</div>
+                          </div>
+                          <code className="text-zinc-400">32 bytes hex</code>
+                        </div>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">APP_ENV</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Runtime stage: development, staging, or production</div>
+                          </div>
+                          <code className="text-zinc-400">production</code>
+                        </div>
                       </div>
-                      <div className="py-2 flex items-center justify-between">
-                        <div>
-                          <code className="text-white font-semibold">DB_USER / DB_PASSWORD</code>
-                          <div className="text-[11px] text-zinc-500 font-sans">PostgreSQL credentials</div>
+                    </div>
+
+                    {/* Category 2: Database & Message Queues */}
+                    <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
+                      <span className="text-zinc-200 font-sans font-semibold text-sm">Database &amp; Message Queues</span>
+                      <div className="divide-y divide-zinc-800 text-zinc-300">
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">POSTGRES_DB / POSTGRES_PORT</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">PostgreSQL database name and external listen port</div>
+                          </div>
+                          <code className="text-zinc-400">stackpilot_db / 5432</code>
                         </div>
-                        <code className="text-zinc-400">stackpilot_admin</code>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">DB_USER / DB_PASSWORD</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">PostgreSQL user credentials with pgvector permissions</div>
+                          </div>
+                          <code className="text-zinc-400">stackpilot_admin / secure_pass</code>
+                        </div>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">REDIS_HOST / REDIS_PORT</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Redis queue broker host and communication port</div>
+                          </div>
+                          <code className="text-zinc-400">redis / 6379</code>
+                        </div>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">REDIS_PASSWORD</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Authentication password for Redis cluster access</div>
+                          </div>
+                          <code className="text-zinc-400">auth_token_redis</code>
+                        </div>
                       </div>
-                      <div className="py-2 flex items-center justify-between">
-                        <div>
-                          <code className="text-white font-semibold">JWT_SECRET</code>
-                          <div className="text-[11px] text-zinc-500 font-sans">Secret key for session tokens (48+ chars)</div>
+                    </div>
+
+                    {/* Category 3: AI Gateway & Autonomous Sandbox */}
+                    <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
+                      <span className="text-zinc-200 font-sans font-semibold text-sm">AI Gateway &amp; Autonomous Sandbox</span>
+                      <div className="divide-y divide-zinc-800 text-zinc-300">
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">AI_SERVICE_PORT</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Internal port for the Python FastAPI model gateway</div>
+                          </div>
+                          <code className="text-zinc-400">8010</code>
                         </div>
-                        <code className="text-zinc-400">aes-256-gcm</code>
-                      </div>
-                      <div className="py-2 flex items-center justify-between">
-                        <div>
-                          <code className="text-white font-semibold">TOKEN_ENCRYPTION_KEY</code>
-                          <div className="text-[11px] text-zinc-500 font-sans">Encryption for stored project credentials</div>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">NVIDIA_NIM_API_KEY / OPENAI_API_KEY</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">API credentials for remote LLM inference (or local vLLM endpoint)</div>
+                          </div>
+                          <code className="text-zinc-400">nvapi-... / sk-...</code>
                         </div>
-                        <code className="text-zinc-400">32 bytes hex</code>
-                      </div>
-                      <div className="py-2 flex items-center justify-between">
-                        <div>
-                          <code className="text-white font-semibold">AI_SERVICE_PORT</code>
-                          <div className="text-[11px] text-zinc-500 font-sans">Internal AI gateway port</div>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">SCREENCAST_FPS</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">CDP binary streaming frame cap (30 or 60 FPS)</div>
+                          </div>
+                          <code className="text-zinc-400">60</code>
                         </div>
-                        <code className="text-zinc-400">8010</code>
+                        <div className="py-2.5 flex items-center justify-between">
+                          <div>
+                            <code className="text-white font-semibold">SANDBOX_MAX_CONCURRENCY</code>
+                            <div className="text-[11px] text-zinc-400 font-sans">Maximum simultaneous isolated browser runner containers</div>
+                          </div>
+                          <code className="text-zinc-400">8</code>
+                        </div>
                       </div>
                     </div>
                   </div>

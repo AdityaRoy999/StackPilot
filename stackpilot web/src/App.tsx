@@ -6,20 +6,25 @@ import { SmoothScroll } from './components/SmoothScroll';
 import { WebThreads } from './components/reactbits/WebThreads';
 import { ScriptProvider } from './context/ScriptContext';
 import { DocsPage } from './pages/DocsPage';
+import { ContactPage } from './pages/ContactPage';
 
-const checkIsDocs = () => {
-  if (typeof window === 'undefined') return false;
+type RouteState = 'home' | 'docs' | 'contact';
+
+const getInitialRoute = (): RouteState => {
+  if (typeof window === 'undefined') return 'home';
   const path = window.location.pathname.toLowerCase();
   const hash = window.location.hash.toLowerCase();
-  return path.includes('docs') || hash.includes('docs');
+  if (path.includes('contact') || hash.includes('contact')) return 'contact';
+  if (path.includes('docs') || hash.includes('docs')) return 'docs';
+  return 'home';
 };
 
 export const App: React.FC = () => {
-  const [route, setRoute] = useState<'home' | 'docs'>(() => (checkIsDocs() ? 'docs' : 'home'));
+  const [route, setRoute] = useState<RouteState>(() => getInitialRoute());
 
   useEffect(() => {
     const handleLocationChange = () => {
-      setRoute(checkIsDocs() ? 'docs' : 'home');
+      setRoute(getInitialRoute());
     };
 
     window.addEventListener('popstate', handleLocationChange);
@@ -30,8 +35,10 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  const navigateTo = (target: 'home' | 'docs') => {
-    const targetPath = target === 'docs' ? '/docs' : '/';
+  const navigateTo = (target: RouteState) => {
+    let targetPath = '/';
+    if (target === 'docs') targetPath = '/docs';
+    if (target === 'contact') targetPath = '/contact';
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
@@ -42,7 +49,21 @@ export const App: React.FC = () => {
   if (route === 'docs') {
     return (
       <SmoothScroll>
-        <DocsPage onNavigateHome={() => navigateTo('home')} />
+        <DocsPage
+          onNavigateHome={() => navigateTo('home')}
+          onNavigateContact={() => navigateTo('contact')}
+        />
+      </SmoothScroll>
+    );
+  }
+
+  if (route === 'contact') {
+    return (
+      <SmoothScroll>
+        <ContactPage
+          onNavigateHome={() => navigateTo('home')}
+          onNavigateDocs={() => navigateTo('docs')}
+        />
       </SmoothScroll>
     );
   }
@@ -78,13 +99,20 @@ export const App: React.FC = () => {
             />
           </div>
 
-          <Navbar onNavigateDocs={() => navigateTo('docs')} onNavigateHome={() => navigateTo('home')} />
+          <Navbar
+            onNavigateDocs={() => navigateTo('docs')}
+            onNavigateHome={() => navigateTo('home')}
+            onNavigateContact={() => navigateTo('contact')}
+          />
 
           <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 flex flex-col justify-center relative z-10">
             <Hero />
           </main>
 
-          <Footer onNavigateDocs={() => navigateTo('docs')} />
+          <Footer
+            onNavigateDocs={() => navigateTo('docs')}
+            onNavigateContact={() => navigateTo('contact')}
+          />
         </div>
       </SmoothScroll>
     </ScriptProvider>

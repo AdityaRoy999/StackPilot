@@ -2,9 +2,10 @@ import React from 'react';
 
 interface FooterProps {
   onNavigateDocs?: () => void;
+  onNavigateContact?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigateDocs }) => {
+export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContact }) => {
   return (
     <footer className="relative w-full py-12 flex flex-col items-center justify-center overflow-hidden z-20 text-xs font-mono">
       <div className="flex items-center gap-3 text-xs text-zinc-400 mb-2">
@@ -16,9 +17,20 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs }) => {
             e.preventDefault();
             onNavigateDocs?.();
           }}
-          className="text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer font-mono text-xs select-none"
+          className="text-zinc-400 hover:text-white transition-colors cursor-pointer font-mono text-xs select-none"
         >
           Documentation
+        </a>
+        <span className="text-zinc-700">•</span>
+        <a
+          href="/contact"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigateContact?.();
+          }}
+          className="text-zinc-400 hover:text-white transition-colors cursor-pointer font-mono text-xs select-none"
+        >
+          Contact
         </a>
         <span className="text-zinc-700">•</span>
         <a

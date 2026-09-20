@@ -3,13 +3,15 @@ import { BookOpen } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import { StarIcon } from './icons/StarIcon';
 import { UsersIcon } from './icons/UsersIcon';
+import { MailIcon } from './icons/MailIcon';
 
 interface NavbarProps {
   onNavigateDocs?: () => void;
   onNavigateHome?: () => void;
+  onNavigateContact?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, onNavigateContact }) => {
   const [stars, setStars] = useState<number | null>(null);
   const [visitors, setVisitors] = useState<number>(1482);
 
@@ -106,6 +108,23 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
           >
             <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>Docs</span>
+          </a>
+
+          {/* Vertical Divider */}
+          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
+
+          {/* Contact: between '|' and '|' -> square rounded tab */}
+          <a
+            href="/contact"
+            onClick={(e) => {
+              e.preventDefault();
+              onNavigateContact?.();
+            }}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent hover:bg-[#242428] text-zinc-400 hover:text-white transition-all cursor-pointer select-none"
+            title="Contact StackPilot Team"
+          >
+            <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <span>Contact</span>
           </a>
 
           {/* Vertical Divider */}
