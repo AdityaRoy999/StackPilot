@@ -71,18 +71,20 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
       <header className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-4 flex items-center justify-between gap-4">
         {/* Left: Home Navigation */}
         <div className="flex items-center gap-3 sm:gap-4">
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigateHome();
-            }}
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#28282c] text-zinc-300 hover:text-white text-xs font-mono transition-all cursor-pointer select-none border border-zinc-800/80"
-            title="Return to StackPilot Home"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Home</span>
-          </a>
+          <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300">
+            <a
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigateHome();
+              }}
+              className="inline-flex items-center gap-2 h-8 px-3.5 rounded-full bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0"
+              title="Return to StackPilot Home"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Home</span>
+            </a>
+          </div>
 
           <div className="h-4 w-[1px] bg-zinc-800 select-none hidden sm:block" />
 

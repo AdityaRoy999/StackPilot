@@ -25,15 +25,19 @@ export const Hero: React.FC = () => {
       <div className="w-full max-w-5xl mx-auto mb-6 flex flex-col items-center justify-center select-none">
         <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.14] text-center">
           <span className="block">Autonomous AI</span>
-          <span className="flex items-center justify-center gap-2 sm:gap-3.5 mt-1 sm:mt-2">
-            <span className="relative inline-flex items-center justify-center min-w-[210px] sm:min-w-[320px] md:min-w-[390px] text-center">
+          <motion.span
+            layout
+            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            className="inline-flex items-center justify-center gap-2.5 sm:gap-3.5 mt-1 sm:mt-2"
+          >
+            <span className="relative inline-flex items-center justify-center">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
                   key={currentWord.text}
-                  initial={{ opacity: 0, y: 16, filter: 'blur(8px)', scale: 0.96 }}
+                  initial={{ opacity: 0, y: 14, filter: 'blur(8px)', scale: 0.96 }}
                   animate={{ opacity: 1, y: 0, filter: 'blur(0px)', scale: 1 }}
-                  exit={{ opacity: 0, y: -16, filter: 'blur(8px)', scale: 0.96 }}
-                  transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                  exit={{ opacity: 0, y: -14, filter: 'blur(8px)', scale: 0.96 }}
+                  transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
                   className={`bg-gradient-to-r ${currentWord.gradient} bg-clip-text text-transparent inline-block`}
                 >
                   {currentWord.text}
@@ -41,7 +45,7 @@ export const Hero: React.FC = () => {
               </AnimatePresence>
             </span>
             <span className="text-zinc-50">Platform</span>
-          </span>
+          </motion.span>
         </h1>
       </div>
 
