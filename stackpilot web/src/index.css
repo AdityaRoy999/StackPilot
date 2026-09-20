@@ -28,19 +28,65 @@
 @tailwind components;
 @tailwind utilities;
 
-:root,
-:root[data-font="stylish"],
-body[data-font="stylish"] {
-  --app-font-body: 'Fuzzy Bubbles', cursive, sans-serif;
-  --app-font-heading: 'Caveat Brush', cursive, sans-serif;
-  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+/* =========================================================================
+   GLOBAL FONT MODE: STYLISH (HANDWRITING) MODE
+   Applies Fuzzy Bubbles everywhere across the full site (navbar, body, forms,
+   docs, buttons, cards) and Caveat Brush to headlines. Only code tags remain mono.
+   ========================================================================= */
+html.font-stylish,
+html.font-stylish body,
+html.font-stylish *:not(code):not(pre):not(kbd):not(code *):not(pre *):not(.keep-mono) {
+  font-family: 'Fuzzy Bubbles', cursive, sans-serif !important;
 }
 
-:root[data-font="normal"],
-body[data-font="normal"] {
-  --app-font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --app-font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+html.font-stylish h1,
+html.font-stylish h2,
+html.font-stylish h3,
+html.font-stylish .font-headline,
+html.font-stylish h1 *:not(code),
+html.font-stylish h2 *:not(code),
+html.font-stylish h3 *:not(code),
+html.font-stylish .font-headline *:not(code) {
+  font-family: 'Caveat Brush', cursive, sans-serif !important;
+}
+
+html.font-stylish code,
+html.font-stylish pre,
+html.font-stylish kbd,
+html.font-stylish code *,
+html.font-stylish pre *,
+html.font-stylish .keep-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+}
+
+/* =========================================================================
+   GLOBAL FONT MODE: NORMAL (CLEAN SANS) MODE
+   Applies clean modern sans-serif everywhere across the full site.
+   ========================================================================= */
+html.font-normal-mode,
+html.font-normal-mode body,
+html.font-normal-mode *:not(code):not(pre):not(kbd):not(code *):not(pre *):not(.keep-mono) {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+}
+
+html.font-normal-mode h1,
+html.font-normal-mode h2,
+html.font-normal-mode h3,
+html.font-normal-mode .font-headline,
+html.font-normal-mode h1 *:not(code),
+html.font-normal-mode h2 *:not(code),
+html.font-normal-mode h3 *:not(code),
+html.font-normal-mode .font-headline *:not(code) {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+}
+
+html.font-normal-mode code,
+html.font-normal-mode pre,
+html.font-normal-mode kbd,
+html.font-normal-mode code *,
+html.font-normal-mode pre *,
+html.font-normal-mode .keep-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
 }
 
 @layer base {
@@ -52,26 +98,12 @@ body[data-font="normal"] {
   body {
     background-color: #000000;
     color: #f4f4f5;
-    font-family: var(--app-font-body) !important;
   }
 
   /* Form controls inherit font so all forms and inputs throughout the site automatically switch */
   input, textarea, select, button {
     font-family: inherit;
   }
-
-  /* Monospace stays crisp for commands, terminals, and code */
-  code, pre, kbd, .font-mono {
-    font-family: var(--app-font-mono) !important;
-  }
-}
-
-.font-headline {
-  font-family: var(--app-font-heading) !important;
-}
-
-.font-body-app {
-  font-family: var(--app-font-body) !important;
 }
 
 /* Custom minimal scrollbar */

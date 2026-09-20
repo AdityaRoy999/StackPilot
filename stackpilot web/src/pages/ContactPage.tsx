@@ -85,7 +85,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
         {/* Right: Unified Navigation Capsule with Sliding Tab Physics and Font Switcher */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
-          className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300 relative"
+          className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs text-zinc-300 relative"
         >
           {/* Docs Tab: between '(' and '|' -> left fully rounded, right square rounded */}
           <a
@@ -129,7 +129,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
                 transition={{ type: 'spring', stiffness: 450, damping: 35 }}
               />
             )}
-            <span className="relative z-10 flex items-center gap-1.5 font-mono">
+            <span className="relative z-10 flex items-center gap-1.5">
               {fontMode === 'stylish' ? (
                 <>
                   <span className="text-xs">✍️</span>
