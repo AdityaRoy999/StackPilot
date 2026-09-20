@@ -207,7 +207,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 sm:pt-24 px-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
           {/* Smooth Dark Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -218,14 +218,14 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
             className="fixed inset-0 bg-black/75 backdrop-blur-sm cursor-pointer"
           />
 
-          {/* Modal Container */}
+          {/* Modal Container Centered in the Middle of the Page */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.96, y: -10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -10 }}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 450, damping: 30 }}
             data-lenis-prevent
-            className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 font-sans"
+            className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 font-sans my-auto"
           >
             {/* Search Input Bar */}
             <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 border-b border-zinc-800/80 bg-[#1a1a1e]">
