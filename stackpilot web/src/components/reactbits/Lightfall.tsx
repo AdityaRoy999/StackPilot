@@ -137,8 +137,10 @@ void mainImage(out vec4 o, vec2 C) {
   vec2 r = iResolution.xy;
   vec2 uv0 = (C + C - r) / r.x;
   float T = 0.1 * iTime * uSpeed + 9.0;
-  float angRings = max(1.0, floor(6.28318530718 * max(uDensity, 0.05) + 0.5));
-  vec2 Y = vec2(5e-3, 6.28318530718 / angRings);
+  float dClamped = clamp(uDensity, 0.01, 2.0);
+  float angRings = max(1.0, floor(6.28318530718 * dClamped + 0.5));
+  float radialSpacing = 0.005 / dClamped;
+  vec2 Y = vec2(radialSpacing, 6.28318530718 / angRings);
 
   vec2 c0 = sceneC(C, r);
   vec2 cdx = sceneC(C + vec2(1.0, 0.0), r);
@@ -171,6 +173,7 @@ void mainImage(out vec4 o, vec2 C) {
     if (m >= uStreakCount) break;
     float jf = float(m) + 1.0;
     float ic = fract(sin(dot(vec2(jf, floor(C.x / Y.x + 0.5)), vec2(7.0, 11.0)) * 73.0));
+    if (fract(ic * 43.17) > clamp(dClamped * 2.2, 0.15, 1.0)) continue;
     vec2 Pp = C - (T + T * ic) * vec2(0.0, 1.0);
     Pp -= floor(Pp / Y + 0.5) * Y;
     float h = fract(8663.0 * ic);

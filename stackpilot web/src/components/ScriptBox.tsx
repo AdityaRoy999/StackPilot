@@ -40,19 +40,23 @@ export const ScriptBox: React.FC = () => {
     <div className="w-full max-w-[650px] mx-auto mt-8 flex justify-center px-4 sm:px-0">
       {/* Unified Bento Grid Card */}
       <div className="w-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all shadow-2xl">
-        {/* Top Bento Row: Platform Options switcher with smooth pill physics */}
+        {/* Top Bento Row: Platform Options switcher with matching capsule physics */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
-          className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-xl sm:rounded-2xl bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
+          className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
         >
           {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
+            const isHovered = hoveredTab === script.id;
+            const prevActive = idx > 0 && SCRIPTS[idx - 1].id === activeTab;
+            const prevHovered = idx > 0 && hoveredTab === SCRIPTS[idx - 1].id;
+            const showDivider = idx > 0 && !isActive && !prevActive && !isHovered && !prevHovered;
 
             return (
               <React.Fragment key={script.id}>
-                {idx > 0 && (
+                {showDivider && (
                   <span
-                    className="h-3 w-[1px] bg-zinc-800/60 select-none shrink-0 pointer-events-none mx-0.5"
+                    className="h-3 w-[1px] bg-zinc-800/70 select-none shrink-0 pointer-events-none mx-0.5"
                     aria-hidden="true"
                   />
                 )}
@@ -60,27 +64,27 @@ export const ScriptBox: React.FC = () => {
                   type="button"
                   onClick={() => setActiveTab(script.id)}
                   onMouseEnter={() => setHoveredTab(script.id)}
-                  className={`relative px-3.5 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
+                  className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
                     isActive
                       ? 'text-zinc-950 font-semibold'
-                      : 'text-zinc-400 hover:text-zinc-200'
+                      : 'text-zinc-400 hover:text-zinc-100'
                   }`}
                   title={`Switch to ${script.label}`}
                 >
-                  {/* Smooth hover pill */}
-                  {hoveredTab === script.id && !isActive && (
+                  {/* Matching capsule hover pill */}
+                  {isHovered && !isActive && (
                     <motion.div
                       layoutId="scriptTabHoverPill"
-                      className="absolute inset-0 bg-[#26262a] rounded-lg"
+                      className="absolute inset-0 bg-[#27272a] rounded-full"
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}
 
-                  {/* Smooth sliding active tab pill */}
+                  {/* Matching capsule active pill */}
                   {isActive && (
                     <motion.div
                       layoutId="activeTabSelection"
-                      className="absolute inset-0 bg-zinc-100 rounded-lg shadow-sm"
+                      className="absolute inset-0 bg-zinc-100 rounded-full shadow-sm"
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}

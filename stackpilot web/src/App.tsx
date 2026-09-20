@@ -76,19 +76,19 @@ export const App: React.FC = () => {
                 <Lightfall
                   colors={['#A6C8FF', '#5227FF', '#FF9FFC']}
                   backgroundColor="#000000"
-                  speed={0.8}
-                  streakCount={8}
-                  streakWidth={1.2}
-                  streakLength={1.2}
-                  glow={1}
-                  density={1}
-                  twinkle={0.8}
-                  zoom={1.8}
-                  backgroundGlow={0.4}
-                  opacity={0.7}
+                  speed={0.35}
+                  streakCount={2}
+                  streakWidth={0.8}
+                  streakLength={0.8}
+                  glow={0.6}
+                  density={0.12}
+                  twinkle={0.5}
+                  zoom={1.5}
+                  backgroundGlow={0.15}
+                  opacity={0.4}
                   mouseInteraction={true}
-                  mouseStrength={0.8}
-                  mouseRadius={0.5}
+                  mouseStrength={0.5}
+                  mouseRadius={0.4}
                 />
               </div>
 
