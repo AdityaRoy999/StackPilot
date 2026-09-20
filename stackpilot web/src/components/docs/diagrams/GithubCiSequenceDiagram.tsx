@@ -183,7 +183,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 flex flex-col gap-1.5 transition-all hover:border-zinc-700"
+                className="p-3 rounded-xl bg-zinc-900/80 border-0 flex flex-col gap-1.5 transition-all hover:bg-zinc-800/60"
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
@@ -221,10 +221,10 @@ export const GithubCiSequenceDiagram: React.FC = () => {
               <div
                 key={step.id}
                 onClick={() => setSelectedStep(step)}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/60 border-zinc-800/80 hover:bg-zinc-800/40 hover:border-zinc-700'
+                    ? 'bg-zinc-800 text-white shadow-md'
+                    : 'bg-zinc-900/60 hover:bg-zinc-800/40'
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3">
@@ -242,7 +242,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
                         {step.action}
                       </span>
                       {step.branch === 'gated' && (
-                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300">
                           CI Gated
                         </span>
                       )}
@@ -256,7 +256,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/60">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded">
                     <Zap className="w-2.5 h-2.5 text-white" />
                     {step.latency}
                   </span>
@@ -268,7 +268,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
       </div>
 
       {/* Selected Step Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/80 border border-zinc-800 space-y-3">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
@@ -283,7 +283,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
               </p>
             </div>
           </div>
-          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
             Latency: <span className="text-white font-bold">{selectedStep.latency}</span>
           </span>
         </div>
@@ -293,7 +293,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
         </p>
 
         {selectedStep.codeSnippet && (
-          <div className="rounded-lg bg-zinc-950 border border-zinc-800/80 p-3 overflow-x-auto">
+          <div className="rounded-lg bg-zinc-950/80 border-0 p-3 overflow-x-auto">
             <div className="text-[10px] font-mono uppercase text-zinc-500 mb-1.5">
               Code / Webhook Snippet
             </div>

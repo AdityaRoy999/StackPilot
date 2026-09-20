@@ -188,7 +188,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
         {visibleClusters.map((cluster) => (
           <div
             key={cluster.id}
-            className="p-4 rounded-xl bg-zinc-900/60 border border-zinc-800/80 space-y-3 flex flex-col justify-between"
+            className="p-4 rounded-xl bg-zinc-900/60 border-0 space-y-3 flex flex-col justify-between"
           >
             <div>
               <div className="flex items-center justify-between pb-1">
@@ -238,7 +238,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
               </div>
             </div>
 
-            <div className="pt-2 flex items-center justify-between text-[10px] font-mono text-zinc-500 border-t border-zinc-800/40 mt-2">
+            <div className="pt-2 flex items-center justify-between text-[10px] font-mono text-zinc-500 mt-2">
               <span>{cluster.services.length} Microservices</span>
               <span>Click to inspect &rarr;</span>
             </div>
@@ -248,8 +248,8 @@ export const OverviewArchitectureDiagram: React.FC = () => {
 
       {/* Selected Microservice Inspection Drawer */}
       {inspectService && (
-        <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-3">
-          <div className="flex items-start justify-between gap-4 pb-2 border-b border-zinc-800/60">
+        <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+          <div className="flex items-start justify-between gap-4 pb-2">
             <div className="flex items-center gap-2">
               <span className="p-1 rounded bg-zinc-800 text-white">
                 <Server className="w-4 h-4 text-white" />
@@ -264,10 +264,10 @@ export const OverviewArchitectureDiagram: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+              <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
                 Port: <span className="text-white font-bold">{inspectService.port}</span>
               </span>
-              <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+              <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
                 Memory: <span className="text-emerald-400 font-bold">{inspectService.ram}</span>
               </span>
             </div>
@@ -286,15 +286,15 @@ export const OverviewArchitectureDiagram: React.FC = () => {
           <span>Core End-to-End Control Plane Pathways</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-zinc-300 font-mono">
-          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 space-y-1 hover:border-zinc-700 transition-colors">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 space-y-1 hover:bg-zinc-800/80 transition-colors">
             <div className="text-white font-bold text-[11px]">1. Ingress &rarr; Control Plane</div>
             <p className="text-[10px] text-zinc-400">Client/Webhook &rarr; Caddy 2.8 &rarr; Drogon API (:8090) &rarr; PostgreSQL 16</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 space-y-1 hover:border-zinc-700 transition-colors">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 space-y-1 hover:bg-zinc-800/80 transition-colors">
             <div className="text-white font-bold text-[11px]">2. Queue &rarr; Deployment</div>
             <p className="text-[10px] text-zinc-400">Drogon &rarr; Redis 7 FIFO &rarr; JobQueueWorker &rarr; Docker / k3s</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 space-y-1 hover:border-zinc-700 transition-colors">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 space-y-1 hover:bg-zinc-800/80 transition-colors">
             <div className="text-white font-bold text-[11px]">3. AI &rarr; Visual Sandbox</div>
             <p className="text-[10px] text-zinc-400">FastAPI Swarm (:8010) &rarr; Chromium CDP &rarr; H.264 Streamer (:8099) &rarr; Canvas</p>
           </div>

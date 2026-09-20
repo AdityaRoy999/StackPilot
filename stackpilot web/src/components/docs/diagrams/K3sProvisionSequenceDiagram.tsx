@@ -158,26 +158,26 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
             <Lock className="w-3.5 h-3.5 text-white" />
             <span>Automated Firewall Holes Provisioned by StackPilot</span>
           </span>
-          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded-full">
+          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full">
             Auto-configured
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs space-y-1 hover:border-zinc-700 transition-colors">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 text-xs space-y-1 hover:bg-zinc-800/80 transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 6443/tcp</span>
               <span className="text-[10px] text-zinc-400 font-normal">TCP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Kubernetes API Server communication and kubectl proxy.</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs space-y-1 hover:border-zinc-700 transition-colors">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 text-xs space-y-1 hover:bg-zinc-800/80 transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 10250/tcp</span>
               <span className="text-[10px] text-zinc-400 font-normal">TCP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Kubelet API for pod metrics, logs, and exec telemetry.</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 text-xs space-y-1 hover:border-zinc-700 transition-colors">
+          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 text-xs space-y-1 hover:bg-zinc-800/80 transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 8472/udp</span>
               <span className="text-[10px] text-zinc-400 font-normal">UDP</span>
@@ -198,7 +198,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className="p-3 rounded-xl bg-zinc-900/80 border border-zinc-800/80 flex flex-col gap-1.5 transition-all hover:border-zinc-700"
+                className="p-3 rounded-xl bg-zinc-900/80 border-0 flex flex-col gap-1.5 transition-all hover:bg-zinc-800/80"
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
@@ -231,10 +231,10 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
               <div
                 key={step.id}
                 onClick={() => setSelectedStep(step)}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/60 border-zinc-800/80 hover:bg-zinc-800/40 hover:border-zinc-700'
+                    ? 'bg-zinc-800 text-white shadow-md'
+                    : 'bg-zinc-900/60 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3">
@@ -254,7 +254,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
                       {step.ports && (
                         <div className="flex items-center gap-1">
                           {step.ports.map((pt, i) => (
-                            <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">
+                            <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border-0">
                               {pt}
                             </span>
                           ))}
@@ -270,7 +270,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded border border-zinc-700/60">
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded border-0">
                     <Zap className="w-2.5 h-2.5 text-white" />
                     {step.latency}
                   </span>
@@ -282,8 +282,8 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
       </div>
 
       {/* Selected Step Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-3">
-        <div className="flex items-start justify-between gap-4 pb-2 border-b border-zinc-800/60">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+        <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
               <Code2 className="w-4 h-4 text-white" />
@@ -297,7 +297,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
               </p>
             </div>
           </div>
-          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
             Duration: <span className="text-white font-bold">{selectedStep.latency}</span>
           </span>
         </div>
@@ -311,7 +311,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
             <div className="text-[10px] font-mono uppercase text-zinc-500 mb-1.5">
               Script Execution / Command Payload
             </div>
-            <pre className="font-mono text-xs text-zinc-200 leading-relaxed selection:bg-zinc-800 p-3 rounded-lg bg-zinc-950/80 border-l-2 border-zinc-700 overflow-x-auto">
+            <pre className="font-mono text-xs text-zinc-200 leading-relaxed selection:bg-zinc-800 p-3 rounded-lg bg-zinc-950/80 border-0 overflow-x-auto">
               <code>{selectedStep.commandSnippet}</code>
             </pre>
           </div>

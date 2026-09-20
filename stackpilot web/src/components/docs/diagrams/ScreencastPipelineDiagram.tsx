@@ -134,10 +134,10 @@ export const ScreencastPipelineDiagram: React.FC = () => {
               <div
                 key={s.id}
                 onClick={() => setSelectedStage(s)}
-                className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col gap-1 ${
+                className={`p-3 rounded-xl border-0 transition-all cursor-pointer flex flex-col gap-1 ${
                   selectedStage.id === s.id
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/70 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
+                    ? 'bg-zinc-800 text-white shadow-md'
+                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -165,10 +165,10 @@ export const ScreencastPipelineDiagram: React.FC = () => {
               <div
                 key={s.id}
                 onClick={() => setSelectedStage(s)}
-                className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col gap-1 ${
+                className={`p-3 rounded-xl border-0 transition-all cursor-pointer flex flex-col gap-1 ${
                   selectedStage.id === s.id
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/70 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
+                    ? 'bg-zinc-800 text-white shadow-md'
+                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -196,10 +196,10 @@ export const ScreencastPipelineDiagram: React.FC = () => {
               <div
                 key={s.id}
                 onClick={() => setSelectedStage(s)}
-                className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col gap-1 ${
+                className={`p-3 rounded-xl border-0 transition-all cursor-pointer flex flex-col gap-1 ${
                   selectedStage.id === s.id
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/70 border-zinc-800/80 hover:border-zinc-700 hover:bg-zinc-800/40'
+                    ? 'bg-zinc-800 text-white shadow-md'
+                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -215,8 +215,8 @@ export const ScreencastPipelineDiagram: React.FC = () => {
       </div>
 
       {/* Selected Stage Detail Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-3">
-        <div className="flex items-start justify-between gap-4 pb-2 border-b border-zinc-800/60">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+        <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
               <Monitor className="w-4 h-4 text-white" />

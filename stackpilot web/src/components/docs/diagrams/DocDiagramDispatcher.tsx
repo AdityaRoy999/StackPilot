@@ -104,7 +104,7 @@ export const DocDiagramDispatcher: React.FC<DocDiagramDispatcherProps> = ({
               <p className="text-xs text-zinc-400">Interactive visual workflow for {docId || 'StackPilot'}</p>
             </div>
           </div>
-          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800/80 flex items-center justify-center text-xs font-mono text-zinc-400">
+          <div className="p-4 rounded-xl bg-zinc-950/80 border-0 flex items-center justify-center text-xs font-mono text-zinc-400">
             <Activity className="w-4 h-4 text-white mr-2" />
             <span>Interactive diagram rendering active</span>
           </div>

@@ -124,10 +124,10 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
               <div
                 key={stage.id}
                 onClick={() => setSelectedStage(stage)}
-                className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-md ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/70 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/50'
+                    ? 'bg-zinc-800 text-white shadow-md'
+                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -154,34 +154,30 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
 
       {/* Decision Flow Breakdown - Direct Flat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* FrameCheck Gate */}
-        <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 space-y-3">
-          <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
-            <span className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
-              <Sliders className="w-3.5 h-3.5 text-white" />
-              <span>Gate 1: FrameCheck Condition</span>
+        {/* Gate 1 */}
+        <div className="p-4 rounded-xl bg-zinc-900/80 border-0 space-y-3">
+          <div className="flex items-center justify-between pb-2">
+            <span className="text-xs font-mono font-bold text-white flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              Incoming Frame Ingestion Gate
             </span>
-            <span className="text-[10px] font-mono text-zinc-400">Active Action or &gt;65ms</span>
+            <span className="text-[10px] font-mono text-zinc-400">isPlaybackModeRef check</span>
           </div>
-          <div className="grid grid-cols-2 gap-2.5 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
             <div className="p-2.5 rounded-lg bg-emerald-950/20 border-l-2 border-emerald-500 space-y-1">
-              <div className="text-emerald-400 font-bold font-mono text-[11px]">&bull; YES (Keep)</div>
-              <p className="text-[11px] text-zinc-300">
-                Pushes frame into <code className="text-white bg-zinc-800 px-1 py-0.5 rounded text-[10px]">recordedFramesRef</code>.
-              </p>
+              <div className="font-semibold text-emerald-300">Live Mode (False)</div>
+              <p className="text-[11px] text-zinc-400">Binary frames append to recordedFramesRef. Scrubber expands.</p>
             </div>
             <div className="p-2.5 rounded-lg bg-zinc-950/60 border-l-2 border-zinc-600 space-y-1">
-              <div className="text-zinc-400 font-bold font-mono text-[11px]">&bull; NO (Drop)</div>
-              <p className="text-[11px] text-zinc-400">
-                Static idle frame dropped, saving heap memory.
-              </p>
+              <div className="font-semibold text-zinc-300">Replay Mode (True)</div>
+              <p className="text-[11px] text-zinc-400">Incoming frames silent-dropped or buffered without disrupting playback canvas.</p>
             </div>
           </div>
         </div>
 
-        {/* CapCheck Gate */}
-        <div className="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 space-y-3">
-          <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
+        {/* Gate 2 */}
+        <div className="p-4 rounded-xl bg-zinc-900/80 border-0 space-y-3">
+          <div className="flex items-center justify-between pb-2">
             <span className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
               <Database className="w-3.5 h-3.5 text-white" />
               <span>Gate 2: Capacity Check</span>
@@ -206,7 +202,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
       </div>
 
       {/* Interactive Time-Travel Scrubber Simulator */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-4">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
@@ -222,7 +218,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+            <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
               Seek: <span className="text-white font-bold">{simulatedFrame} / 700</span>
             </span>
           </div>
@@ -246,8 +242,8 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
       </div>
 
       {/* Selected Stage Detail Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/70 border border-zinc-800 space-y-3">
-        <div className="flex items-start justify-between gap-4 pb-2 border-b border-zinc-800/60">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+        <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
               <selectedStage.icon className="w-4 h-4 text-white" />
@@ -259,7 +255,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
               <p className="text-[11px] font-mono text-zinc-400">{selectedStage.subtitle}</p>
             </div>
           </div>
-          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border border-zinc-800">
+          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
             Metric: <span className="text-white font-bold">{selectedStage.metrics}</span>
           </span>
         </div>

@@ -179,17 +179,17 @@ export const AiSwarmFlowDiagram: React.FC = () => {
               <div
                 key={node.id}
                 onClick={() => setSelectedNode(node)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                className={`p-4 rounded-xl border-0 transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-lg ring-1 ring-zinc-500/20'
-                    : 'bg-zinc-900/70 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/50'
+                    ? 'bg-zinc-800 text-white shadow-lg'
+                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
                     <Icon className="w-4 h-4 text-white" />
                   </div>
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-zinc-800/90 text-zinc-300 border border-zinc-700/60">
+                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-zinc-800/90 text-zinc-300">
                     Step {idx + 1} &bull; {node.badge}
                   </span>
                 </div>
@@ -216,19 +216,19 @@ export const AiSwarmFlowDiagram: React.FC = () => {
               <div
                 key={node.id}
                 onClick={() => setSelectedNode(node)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-3 ${
+                className={`p-4 rounded-xl border-0 transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800/90 border-zinc-600 shadow-lg ring-1 ring-zinc-500/20'
+                    ? 'bg-zinc-800 text-white shadow-lg'
                     : isDecision && simulatedLoop
-                    ? 'bg-amber-950/20 border-amber-800/60 hover:bg-amber-950/30'
-                    : 'bg-zinc-900/70 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-800/50'
+                    ? 'bg-amber-950/30 hover:bg-amber-950/40'
+                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
                     <Icon className="w-4 h-4 text-white" />
                   </div>
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-zinc-800/90 text-zinc-300 border border-zinc-700/60">
+                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-zinc-800/90 text-zinc-300">
                     Step {idx + 5} &bull; {node.badge}
                   </span>
                 </div>
@@ -254,7 +254,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
       </div>
 
       {/* Decision Branching & Feedback Loop Indicator */}
-      <div className="p-4 rounded-xl bg-black/60 border border-zinc-800/80 space-y-3">
+      <div className="p-4 rounded-xl bg-black/40 border-0 space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-mono uppercase text-zinc-400 flex items-center gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-white" />
@@ -265,7 +265,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Passed branch */}
-          <div className="p-3.5 rounded-lg bg-emerald-950/30 border border-emerald-800/40 space-y-1.5">
+          <div className="p-3.5 rounded-lg bg-emerald-950/30 border-0 space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-white" />
@@ -280,10 +280,10 @@ export const AiSwarmFlowDiagram: React.FC = () => {
 
           {/* Failed branch */}
           <div
-            className={`p-3.5 rounded-lg border space-y-1.5 transition-all ${
+            className={`p-3.5 rounded-lg border-0 space-y-1.5 transition-all ${
               simulatedLoop
-                ? 'bg-amber-950/40 border-amber-600 ring-1 ring-amber-500/30'
-                : 'bg-zinc-900/50 border-zinc-800'
+                ? 'bg-amber-950/40 ring-1 ring-amber-500/30'
+                : 'bg-zinc-900/50'
             }`}
           >
             <div className="flex items-center justify-between">
@@ -301,7 +301,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
       </div>
 
       {/* Selected Node Details Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/80 border border-zinc-800 space-y-3">
+      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
@@ -310,7 +310,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
             <div>
               <h4 className="text-sm font-semibold text-white flex items-center gap-2">
                 <span>{selectedNode.name}</span>
-                <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+                <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border-0">
                   {selectedNode.role}
                 </span>
               </h4>
@@ -327,7 +327,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
 
         {/* Tools and Output Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-          <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800/80 space-y-1.5">
+          <div className="p-3 rounded-lg bg-zinc-950/80 border-0 space-y-1.5">
             <div className="text-[10px] font-mono uppercase text-zinc-500">
               Attached Python Tools
             </div>
@@ -335,7 +335,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
               {selectedNode.tools.map((t, i) => (
                 <code
                   key={i}
-                  className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300"
+                  className="px-2 py-0.5 rounded bg-zinc-900 border-0 text-[11px] font-mono text-zinc-300"
                 >
                   {t}
                 </code>
@@ -343,7 +343,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
             </div>
           </div>
 
-          <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800/80 space-y-1.5">
+          <div className="p-3 rounded-lg bg-zinc-950/80 border-0 space-y-1.5">
             <div className="text-[10px] font-mono uppercase text-zinc-500">
               Output Artifact
             </div>
