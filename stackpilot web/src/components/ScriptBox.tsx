@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { Copy, Check } from 'lucide-react';
 import { SCRIPTS } from '../config/scripts';
 import { useScript } from '../context/ScriptContext';
+import { BlurText } from './reactbits/BlurText';
 
 export const ScriptBox: React.FC = () => {
   const { activeTab, setActiveTab, activeScript } = useScript();
@@ -15,48 +17,56 @@ export const ScriptBox: React.FC = () => {
 
   return (
     <div className="w-full max-w-3xl mx-auto mt-8">
-      {/* Unified Bento Grid Card joining platform options & command bar */}
-      <div className="rounded-2xl sm:rounded-3xl border border-zinc-800/90 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all">
-        {/* Top Bento Row: Platform Options switcher */}
+      {/* Unified Bento Grid Card */}
+      <div className="rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all">
+        {/* Top Bento Row: Platform Options switcher with smooth sliding tab animation */}
         <div className="flex items-center gap-1 sm:gap-1.5 px-2 py-1 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs font-mono select-none">
-          {SCRIPTS.map((script, idx) => {
+          {SCRIPTS.map((script) => {
             const isActive = script.id === activeTab;
             return (
-              <React.Fragment key={script.id}>
-                {idx > 0 && (
-                  <span className="h-3.5 w-[1px] bg-zinc-800/80 select-none hidden md:inline-block shrink-0" />
+              <button
+                key={script.id}
+                type="button"
+                onClick={() => setActiveTab(script.id)}
+                className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  isActive ? 'text-zinc-950 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+                title={`Switch to ${script.label}`}
+              >
+                {/* Smooth sliding pill animation */}
+                {isActive && (
+                  <motion.div
+                    layoutId="activeTabSelection"
+                    className="absolute inset-0 rounded-full bg-zinc-100"
+                    transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                  />
                 )}
-                <button
-                  type="button"
-                  onClick={() => setActiveTab(script.id)}
-                  className={`px-3 sm:px-3.5 py-1.5 rounded-full transition-all duration-200 cursor-pointer whitespace-nowrap text-xs font-medium shrink-0 ${
-                    isActive
-                      ? 'bg-[#121212] border border-zinc-700 text-white font-bold'
-                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-[#121212]/70 active:scale-95'
-                  }`}
-                  title={`Switch to ${script.label}`}
-                >
-                  {script.label}
-                </button>
-              </React.Fragment>
+                <span className="relative z-10">{script.label}</span>
+              </button>
             );
           })}
         </div>
 
-        {/* Bottom Bento Row: Command well with copy button */}
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl bg-black/70 border border-zinc-850/80 transition-all group hover:border-zinc-700/80">
-          {/* Command text */}
+        {/* Bottom Bento Row: Command well with letter-by-letter blur animation on change */}
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl bg-black/60 transition-all group">
+          {/* Command text with headline-style BlurText transition when switching tabs */}
           <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5">
             <span className="text-zinc-500 font-bold select-none shrink-0">$</span>
-            <code className="whitespace-nowrap font-mono selection:bg-zinc-800 selection:text-white">
-              {activeScript.command}
-            </code>
+            <BlurText
+              key={activeScript.id}
+              text={activeScript.command}
+              delay={10}
+              animateBy="letters"
+              stepDuration={0.2}
+              direction="top"
+              className="flex-nowrap font-mono text-xs sm:text-sm text-zinc-200 whitespace-nowrap selection:bg-zinc-800 selection:text-white"
+            />
           </div>
 
-          {/* Copy Button styled with #121212 */}
+          {/* Copy Button: borderless subtle grey (#1c1c1e) */}
           <button
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#121212] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1a1a1a] text-zinc-200 hover:text-white text-xs font-semibold font-sans shrink-0 transition-all active:scale-95 cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border-0 bg-[#1c1c1e] hover:bg-[#262629] text-zinc-200 hover:text-white text-xs font-semibold font-sans shrink-0 transition-all active:scale-95 cursor-pointer"
             title="Copy command to clipboard"
           >
             {copied ? (

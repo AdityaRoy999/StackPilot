@@ -50,7 +50,7 @@ export const Navbar: React.FC = () => {
       <div className="pointer-events-auto">
         <a
           href="#"
-          className="group inline-flex items-center h-10 px-3.5 rounded-full border border-zinc-800 bg-[#121212] backdrop-blur-xl hover:border-zinc-700 hover:bg-[#1a1a1a] transition-all duration-300 ease-out cursor-pointer select-none"
+          className="group inline-flex items-center h-10 px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl hover:bg-[#262629] transition-all duration-300 ease-out cursor-pointer select-none"
           title="StackPilot"
         >
           {/* Terminal prompt icon */}
@@ -63,7 +63,7 @@ export const Navbar: React.FC = () => {
             <span className="ml-2.5 font-semibold text-xs sm:text-sm tracking-tight text-zinc-100">
               StackPilot
             </span>
-            <span className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+            <span className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#28282c] text-zinc-400 border-0">
               v2.0
             </span>
           </div>
@@ -74,7 +74,7 @@ export const Navbar: React.FC = () => {
       <div className="pointer-events-auto flex items-center gap-2 sm:gap-2.5">
         {/* Visitors Bubble */}
         <div
-          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border border-zinc-800 bg-[#121212] backdrop-blur-xl text-xs font-mono text-zinc-300 hover:border-zinc-700 transition-colors"
+          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl text-xs font-mono text-zinc-300 transition-colors"
           title="Unique site visitors"
         >
           <UsersIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -86,12 +86,12 @@ export const Navbar: React.FC = () => {
           href="https://github.com/AdityaRoy999/StackPilot"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 h-10 px-3 sm:px-3.5 rounded-full border border-zinc-800 bg-[#121212] backdrop-blur-xl text-xs text-zinc-300 hover:text-white hover:border-zinc-700 transition-all group"
+          className="inline-flex items-center gap-2 h-10 px-3 sm:px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl text-xs text-zinc-300 hover:text-white hover:bg-[#262629] transition-all group"
           title="View StackPilot on GitHub"
         >
           <GithubIcon className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-100 transition-colors shrink-0" />
           <span className="hidden sm:inline">GitHub</span>
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-zinc-900 text-[10px] font-mono text-zinc-300 border border-zinc-800">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] font-mono text-zinc-300 border-0">
             <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
             <span>{stars !== null ? stars : '1'}</span>
           </span>

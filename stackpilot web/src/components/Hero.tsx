@@ -15,7 +15,7 @@ export const Hero: React.FC = () => {
           animateBy="letters"
           direction="top"
           stepDuration={0.25}
-          className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.12] justify-center text-center"
+          className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.12] justify-center text-center flex-wrap"
         />
       </div>
 
@@ -32,13 +32,13 @@ export const Hero: React.FC = () => {
         <ScriptBox />
       </div>
 
-      {/* Action Buttons styled with the exact requested #121212 color */}
+      {/* Action Buttons: slightly grey in color (#1c1c1e), no thin outline */}
       <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
         <a
           href="http://localhost:3000"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-[#121212] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1a1a1a] text-zinc-100 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-[#1c1c1e] hover:bg-[#262629] text-zinc-100 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
         >
           <span>Open Cockpit</span>
           <ArrowRight className="w-4 h-4 text-zinc-400" />
@@ -48,7 +48,7 @@ export const Hero: React.FC = () => {
           href="https://github.com/AdityaRoy999/StackPilot"
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-[#121212] border border-zinc-800 hover:border-zinc-700 hover:bg-[#1a1a1a] text-zinc-100 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
+          className="inline-flex items-center gap-2.5 px-8 py-3.5 rounded-full bg-[#1c1c1e] hover:bg-[#262629] text-zinc-100 hover:text-white text-sm sm:text-base font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer"
         >
           <GithubIcon className="w-4 h-4 text-zinc-400" />
           <span>Star on GitHub</span>
