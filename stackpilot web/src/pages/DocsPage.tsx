@@ -19,7 +19,10 @@ import { StarIcon } from '../components/icons/StarIcon';
 import { MailIcon } from '../components/icons/MailIcon';
 import { SearchModal } from '../components/SearchModal';
 import { SystemTopologyDiagram } from '../components/SystemTopologyDiagram';
+import { InstallationScriptViewer } from '../components/InstallationScriptViewer';
 import { useFont } from '../context/FontContext';
+import { DOCS_CONTENT } from '../data/docsContent';
+import { DocMarkdownViewer } from '../components/docs/DocMarkdownViewer';
 
 interface DocsPageProps {
   onNavigateHome: () => void;
@@ -64,6 +67,25 @@ const DOCS_MENU_ITEMS: BranchedMenuItem[] = [
     ]
   }
 ];
+
+const SECTION_ICONS: Record<string, any> = {
+  overview: Rocket01Icon,
+  quickstart: ComputerTerminal01Icon,
+  install: Download04Icon,
+  architecture: Layers01Icon,
+  templates: Settings02Icon,
+  'ai-agent': CpuIcon,
+  screencast: DashboardBrowsingIcon,
+  sandboxing: GitBranchIcon,
+  replay: HelpCircleIcon,
+  docker: Settings02Icon,
+  kubernetes: Layers01Icon,
+  mcp: ComputerTerminal01Icon,
+  cicd: GitBranchIcon,
+  env: Settings02Icon,
+  observability: DashboardBrowsingIcon,
+  troubleshooting: HelpCircleIcon,
+};
 
 export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateContact }) => {
   const [activeDoc, setActiveDoc] = useState<string>('overview');
@@ -336,695 +358,67 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               transition={{ duration: 0.2 }}
               className="space-y-10"
             >
-              {/* SECTION: Overview */}
-              {activeDoc === 'overview' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Rocket01Icon} size={16} />
-                      <span>GETTING STARTED / OVERVIEW</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      StackPilot Platform Overview
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      StackPilot is a self-hosted application delivery cockpit and autonomous QA platform. It turns GitHub repositories, SSH/VPS folders, local codebases, and application templates into running Docker Compose or Kubernetes deployments with an integrated AI agent, live 60 FPS browser cockpit, and full-stack observability.
-                    </p>
-                  </div>
+              {/* Top Section Breadcrumb & Actions Bar */}
+              <div className="flex items-center justify-between gap-4 pb-3 border-b border-zinc-800/80">
+                <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
+                  <HugeiconsIcon icon={SECTION_ICONS[activeDoc] || Rocket01Icon} size={16} className="text-white shrink-0" />
+                  <span className="uppercase tracking-wider text-zinc-300 font-semibold">{DOCS_CONTENT[activeDoc]?.category || 'DOCUMENTATION'}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => copyCode(DOCS_CONTENT[activeDoc]?.content || '', 'copy-page')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#18181b] hover:bg-[#242428] border border-zinc-800 text-xs font-mono text-zinc-300 hover:text-white transition-all cursor-pointer select-none"
+                    title="Copy full page markdown"
+                  >
+                    {copiedSnippet === 'copy-page' ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-400 text-[11px] font-medium">Copied Markdown!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-white" />
+                        <span className="text-[11px]">Copy Markdown</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-                        <Server className="w-4 h-4 text-zinc-300" />
-                        <span>Self-Hosted Control Plane</span>
-                      </div>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        C++ Drogon backend, PostgreSQL with pgvector, and Redis orchestration keep all application secrets and code on your own infrastructure.
-                      </p>
-                    </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 flex flex-col gap-2">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-zinc-100">
-                        <Zap className="w-4 h-4 text-amber-400" />
-                        <span>Autonomous AI QA &amp; Screencast</span>
-                      </div>
-                      <p className="text-xs text-zinc-400 leading-relaxed">
-                        Hardware-accelerated Chromium sandbox streams 60 FPS interactive feeds over binary WebSockets with self-healing element discovery.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* End-to-End System Topology: Interactive Cards & Real SVG Connecting Lines */}
-                  <SystemTopologyDiagram />
-                </article>
-              )}
-
-              {/* SECTION: Quickstart */}
-              {activeDoc === 'quickstart' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} />
-                      <span>GETTING STARTED / QUICK START</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      60-Second Quick Start
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed">
-                      Deploy the complete StackPilot platform locally or on a remote server with Docker Compose.
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-2">
-                      <span className="text-xs font-mono text-zinc-300 font-bold">1. Clone &amp; prepare environment</span>
-                      <div className="p-3 rounded-xl bg-black font-mono text-xs text-zinc-200 border border-zinc-800 flex items-center justify-between">
-                        <code>git clone https://github.com/AdityaRoy999/StackPilot.git &amp;&amp; cd StackPilot</code>
-                        <button
-                          onClick={() => copyCode('git clone https://github.com/AdityaRoy999/StackPilot.git && cd StackPilot', 'qs-1')}
-                          className="text-zinc-400 hover:text-white cursor-pointer bg-transparent border-0"
-                        >
-                          {copiedSnippet === 'qs-1' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-2">
-                      <span className="text-xs font-mono text-zinc-300 font-bold">2. Generate local secrets</span>
-                      <div className="p-3 rounded-xl bg-black font-mono text-xs text-zinc-200 border border-zinc-800 flex items-center justify-between">
-                        <code>cp production.env.template .env</code>
-                        <button
-                          onClick={() => copyCode('cp production.env.template .env', 'qs-2')}
-                          className="text-zinc-400 hover:text-white cursor-pointer bg-transparent border-0"
-                        >
-                          {copiedSnippet === 'qs-2' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-2">
-                      <span className="text-xs font-mono text-zinc-300 font-bold">3. Start the entire container stack</span>
-                      <div className="p-3 rounded-xl bg-black font-mono text-xs text-zinc-200 border border-zinc-800 flex items-center justify-between">
-                        <code>docker compose up -d --build</code>
-                        <button
-                          onClick={() => copyCode('docker compose up -d --build', 'qs-3')}
-                          className="text-zinc-400 hover:text-white cursor-pointer bg-transparent border-0"
-                        >
-                          {copiedSnippet === 'qs-3' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Endpoints Table */}
-                  <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
-                    <h3 className="font-semibold text-zinc-200 text-sm font-sans">Core Service Endpoints</h3>
-                    <div className="divide-y divide-zinc-800 text-zinc-300">
-                      <div className="py-2.5 flex items-center justify-between">
-                        <span>StackPilot Dashboard</span>
-                        <a href="http://localhost:3000" target="_blank" rel="noopener noreferrer" className="text-zinc-200 hover:underline">http://localhost:3000</a>
-                      </div>
-                      <div className="py-2.5 flex items-center justify-between">
-                        <span>C++ Backend REST API</span>
-                        <code className="text-zinc-300">http://localhost:8090/api/v1</code>
-                      </div>
-                      <div className="py-2.5 flex items-center justify-between">
-                        <span>AI Service &amp; Model Gateway</span>
-                        <code className="text-zinc-300">http://localhost:8010</code>
-                      </div>
-                      <div className="py-2.5 flex items-center justify-between">
-                        <span>Grafana Observability</span>
-                        <code className="text-zinc-300">http://localhost:3001</code>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Installation */}
+              {/* Special View for Installation Hub */}
               {activeDoc === 'install' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Download04Icon} size={16} />
-                      <span>GETTING STARTED / INSTALLATION</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Automated Installation Scripts
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed">
-                      Deploy the complete StackPilot platform on Linux VPS, macOS, or Windows with a single command.
-                    </p>
+                <div className="space-y-10">
+                  <InstallationScriptViewer />
+                  <div className="pt-8 border-t border-zinc-800/80">
+                    <DocMarkdownViewer content={DOCS_CONTENT['install']?.content || ''} docId="install" />
                   </div>
-
-                  {/* Linux / macOS Snippet */}
-                  <div className="space-y-2">
-                    <span className="text-xs font-mono text-zinc-400 font-semibold">Linux VPS &amp; macOS (Bash / Zsh)</span>
-                    <div className="relative group rounded-2xl border border-zinc-800 bg-[#18181b] p-4 font-mono text-xs text-zinc-200 flex items-center justify-between gap-4">
-                      <code className="text-zinc-200 break-all">
-                        curl -fsSL https://stackpilot.vercel.app/install.sh | bash
-                      </code>
-                      <button
-                        onClick={() => copyCode('curl -fsSL https://stackpilot.vercel.app/install.sh | bash', 'inst-sh')}
-                        className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shrink-0 border-0 cursor-pointer transition-colors"
-                        title="Copy command"
-                      >
-                        {copiedSnippet === 'inst-sh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Windows PowerShell Snippet */}
-                  <div className="space-y-2">
-                    <span className="text-xs font-mono text-zinc-400 font-semibold">Windows (PowerShell)</span>
-                    <div className="relative group rounded-2xl border border-zinc-800 bg-[#18181b] p-4 font-mono text-xs text-zinc-200 flex items-center justify-between gap-4">
-                      <code className="text-zinc-200 break-all">
-                        irm https://stackpilot.vercel.app/install.ps1 | iex
-                      </code>
-                      <button
-                        onClick={() => copyCode('irm https://stackpilot.vercel.app/install.ps1 | iex', 'inst-ps1')}
-                        className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shrink-0 border-0 cursor-pointer transition-colors"
-                        title="Copy command"
-                      >
-                        {copiedSnippet === 'inst-ps1' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-2 font-sans text-xs text-zinc-400">
-                    <h4 className="font-semibold text-zinc-200">Prerequisites Checked by Script:</h4>
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>Docker Engine 24.0+ and Docker Compose v2</li>
-                      <li>Inbound open ports: 3000 (UI), 8090 (Backend), 8010 (AI Service)</li>
-                      <li>At least 2 vCPUs and 2GB RAM (1.5GB baseline with low-memory configuration)</li>
-                    </ul>
-                  </div>
-                </article>
+                </div>
               )}
 
-              {/* SECTION: Architecture */}
-              {activeDoc === 'architecture' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Layers01Icon} size={16} />
-                      <span>GETTING STARTED / ARCHITECTURE</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Deep-Dive: Subsystems &amp; Data Flow
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      StackPilot's architecture balances ultra-fast C++ asynchronous request handling with a flexible Python AI gateway and React/Next.js dashboard.
-                    </p>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1.5">
-                      <span className="font-mono text-zinc-100 font-semibold text-sm">1. C++ Drogon Core Engine</span>
-                      <p className="text-xs text-zinc-400 leading-relaxed font-sans">
-                        Event-driven non-blocking HTTP/WebSocket server written in modern C++20. Handles authentication, RBAC, deployment state machines, project CRUD, and direct Docker socket orchestration with zero runtime garbage collection pauses.
+              {/* Special View for Overview: System Topology Diagram */}
+              {activeDoc === 'overview' && (
+                <div className="space-y-10">
+                  <DocMarkdownViewer content={DOCS_CONTENT['overview']?.content || ''} docId="overview" />
+                  <div className="pt-8 border-t border-zinc-800/80 space-y-4">
+                    <div className="mb-2">
+                      <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
+                        <span className="w-1.5 h-5 rounded-full bg-white inline-block shrink-0" />
+                        <span>Interactive Subsystem Topology &amp; Communications</span>
+                      </h2>
+                      <p className="mt-2 text-sm text-zinc-400">
+                        Interactive inspection cards showing live communication protocols, ports, and connection lines between all control plane microservices:
                       </p>
                     </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1.5">
-                      <span className="font-mono text-zinc-100 font-semibold text-sm">2. Python AI Service &amp; Model Gateway</span>
-                      <p className="text-xs text-zinc-400 leading-relaxed font-sans">
-                        FastAPI service that interfaces with LLM providers (NVIDIA NIM, OpenAI, Anthropic, or local vLLM). Houses the APV (Accessibility, Proximity, Vision) engine and the autonomous browser crawler driver.
-                      </p>
-                    </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1.5">
-                      <span className="font-mono text-zinc-100 font-semibold text-sm">3. PostgreSQL with pgvector &amp; Redis</span>
-                      <p className="text-xs text-zinc-400 leading-relaxed font-sans">
-                        PostgreSQL stores users, credentials, build logs, and high-dimensional vector embeddings for AI memory. Redis manages ephemeral job queues and coordinates WebSocket pub/sub broadcasting.
-                      </p>
-                    </div>
+                    <SystemTopologyDiagram />
                   </div>
-                </article>
+                </div>
               )}
 
-              {/* SECTION: Templates */}
-              {activeDoc === 'templates' && (
+              {/* All Other 14 Documentation Pages: Render Complete Exhaustive Guide */}
+              {activeDoc !== 'install' && activeDoc !== 'overview' && (
                 <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Settings02Icon} size={16} />
-                      <span>GETTING STARTED / APPLICATION TEMPLATES</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Built-in Application Templates
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Deploy standard databases, object storage, caches, and message brokers with zero configuration files required.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    {[
-                      { name: 'PostgreSQL 16', desc: 'Relational database with persistent volume and pgvector extension pre-installed.' },
-                      { name: 'MySQL 8 / MariaDB', desc: 'High-performance SQL engines with configurable root passwords and charsets.' },
-                      { name: 'Redis Stack', desc: 'In-memory data store with RedisInsight management UI included.' },
-                      { name: 'MinIO S3 Storage', desc: 'S3-compatible object storage with web management console and bucket policies.' },
-                      { name: 'Grafana & Prometheus', desc: 'Complete observability suite with automated dashboard provisioning.' },
-                      { name: 'NATS Messaging', desc: 'Ultra-lightweight cloud-native message broker with JetStream persistence.' }
-                    ].map(app => (
-                      <div key={app.name} className="p-3.5 rounded-2xl border border-zinc-800 bg-[#18181b]/80 flex flex-col gap-1">
-                        <span className="font-semibold text-zinc-100 font-mono">{app.name}</span>
-                        <span className="text-zinc-400 leading-relaxed">{app.desc}</span>
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: AI Operations Agent */}
-              {activeDoc === 'ai-agent' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={CpuIcon} size={16} />
-                      <span>AI &amp; AUTONOMOUS QA / AI AGENT</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      StackPilot AI Operations Agent
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      An intelligent agent operating directly on the deployment control plane. The agent diagnoses failing containers, inspects crash dumps, auto-generates compose configurations, and executes root cause repairs.
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
-                    <span className="text-zinc-400 font-sans font-semibold">Example Natural Language Commands:</span>
-                    <div className="p-3 rounded-xl bg-black border border-zinc-800 text-zinc-200 space-y-2">
-                      <div className="text-zinc-400">&gt; "Deploy a clustered Redis instance with 2 replicas and password authentication"</div>
-                      <div className="text-zinc-400">&gt; "Inspect deployment #84 and explain why the container exited with code 137"</div>
-                      <div className="text-zinc-400">&gt; "Diagnose high memory usage on the frontend service and optimize Node flags"</div>
-                    </div>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Screencasting */}
-              {activeDoc === 'screencast' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={DashboardBrowsingIcon} size={16} />
-                      <span>AI &amp; AUTONOMOUS QA / SCREENCAST</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      60 FPS Low-Latency Screencast
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Real-time interactive canvas streaming directly from Chromium DevTools Protocol (CDP) WebSocket feeds. Unlike WebRTC, it requires zero STUN/TURN servers or open UDP ports.
-                    </p>
-                  </div>
-
-                  <div className="p-5 rounded-2xl border border-zinc-800 bg-[#18181b]/90 space-y-3 font-mono text-xs">
-                    <span className="text-zinc-400 font-sans font-semibold">CDP Screencast Configuration</span>
-                    <div className="p-4 rounded-xl bg-black border border-zinc-800 text-zinc-300">
-                      <pre>{`await cdp.send("Page.startScreencast", {
-  format: "jpeg",
-  quality: 80,
-  maxWidth: 1280,
-  maxHeight: 720,
-  everyNthFrame: 1
-});`}</pre>
-                    </div>
-                    <p className="text-xs text-zinc-400 font-sans">
-                      Frames are decoded via <code className="text-zinc-200">createImageBitmap</code> in a dedicated Web Worker, blitting directly to an offscreen canvas with under 50ms glass-to-glass latency.
-                    </p>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Sandboxing */}
-              {activeDoc === 'sandboxing' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={GitBranchIcon} size={16} />
-                      <span>AI &amp; AUTONOMOUS QA / SANDBOXING</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Chromium Kernel Sandboxing
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Untrusted web applications executed by the autonomous agent run inside locked-down, rootless containers equipped with custom seccomp filters and isolated cgroups.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-200 font-mono">Rootless Execution</span>
-                      <p className="text-zinc-400">Runs as unprivileged user (UID 1000) with no access to host filesystem.</p>
-                    </div>
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-200 font-mono">Memory Reclamation</span>
-                      <p className="text-zinc-400">Kills browser processes and cleans IPC shared memory segments after each mission.</p>
-                    </div>
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-200 font-mono">Seccomp Filters</span>
-                      <p className="text-zinc-400">Restricts dangerous kernel syscalls preventing sandbox breakout exploits.</p>
-                    </div>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Replay */}
-              {activeDoc === 'replay' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={HelpCircleIcon} size={16} />
-                      <span>AI &amp; AUTONOMOUS QA / REPLAY</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Time-Travel Session Replay
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Every test mission captures an indexed timeline of frames, synthetic mouse movements, keystrokes, and DOM snapshots. Developers can scrub back and forward to pinpoint the exact millisecond a failure occurred.
-                    </p>
-                  </div>
-
-                  <div className="p-5 rounded-2xl border border-zinc-800 bg-[#18181b]/90 space-y-3 font-sans text-xs text-zinc-300">
-                    <h3 className="font-semibold text-zinc-200 text-sm">Key Capabilities</h3>
-                    <ul className="list-disc list-inside space-y-1.5 text-zinc-400">
-                      <li>Scrubber slider with real-time frame seeking and playback speeds from 0.5x to 4x.</li>
-                      <li>Interactive cursor ripples and element highlight overlays tied to agent thought logs.</li>
-                      <li>Export recordings as portable JSON session files or MP4 video recordings.</li>
-                    </ul>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Docker */}
-              {activeDoc === 'docker' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Settings02Icon} size={16} />
-                      <span>DEPLOYMENT / DOCKER COMPOSE</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Docker Build &amp; Runtime Management
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      StackPilot communicates directly with the Docker Engine daemon (via local Unix socket or remote TCP/TLS) to orchestrate multi-container application stacks.
-                    </p>
-                  </div>
-
-                  <div className="relative group rounded-2xl border border-zinc-800 bg-[#18181b] p-4 font-mono text-xs text-zinc-200">
-                    <button
-                      onClick={() => copyCode('docker compose -f docker-compose.prod.yml up -d --build', 'dc-prod')}
-                      className="absolute top-4 right-4 w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center border-0 cursor-pointer transition-colors"
-                      title="Copy command"
-                    >
-                      {copiedSnippet === 'dc-prod' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                    <code className="text-zinc-200">docker compose -f docker-compose.prod.yml up -d --build</code>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Kubernetes */}
-              {activeDoc === 'kubernetes' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Layers01Icon} size={16} />
-                      <span>DEPLOYMENT / KUBERNETES</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Kubernetes Cluster Integration
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Deploy projects to local Kubernetes instances (k3s, Minikube, kind) or production cloud providers (AWS EKS, Google GKE, Azure AKS). StackPilot translates project specifications into native Deployments, Services, and Ingress resources.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-2 font-sans text-xs text-zinc-300">
-                    <h4 className="font-semibold text-zinc-200">Features:</h4>
-                    <ul className="list-disc list-inside space-y-1 text-zinc-400">
-                      <li>Automatic namespace isolation per project environment.</li>
-                      <li>ConfigMap and Secret injection with AES-256 encryption.</li>
-                      <li>Rolling updates with automated health check probes.</li>
-                    </ul>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: MCP for IDE Agents */}
-              {activeDoc === 'mcp' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} />
-                      <span>DEPLOYMENT / MCP SERVER</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Model Context Protocol (MCP) Server
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Connect your AI coding assistants (Claude Code, Cursor, Codex, VS Code) directly to StackPilot. Agents can deploy code, check logs, inspect containers, and trigger test missions without leaving the editor.
-                    </p>
-                  </div>
-
-                  <div className="p-5 rounded-2xl border border-zinc-800 bg-[#18181b]/90 space-y-3 font-mono text-xs">
-                    <span className="text-zinc-400 font-sans font-semibold">Claude Code / Cursor Configuration (`mcpServers`):</span>
-                    <div className="p-4 rounded-xl bg-black border border-zinc-800 text-zinc-300">
-                      <pre>{`{
-  "mcpServers": {
-    "stackpilot": {
-      "command": "node",
-      "args": ["/path/to/StackPilot/mcp-server/dist/index.js"],
-      "env": {
-        "STACKPILOT_API_URL": "http://localhost:8090/api/v1",
-        "STACKPILOT_API_TOKEN": "your-api-token"
-      }
-    }
-  }
-}`}</pre>
-                    </div>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: CI/CD & GitHub App */}
-              {activeDoc === 'cicd' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={GitBranchIcon} size={16} />
-                      <span>DEPLOYMENT / CI/CD PIPELINES</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      CI/CD &amp; GitHub App Automation
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      StackPilot integrates with GitHub Webhooks and GitHub Apps. Push events trigger automatic container rebuilding, ephemeral preview environments for Pull Requests, and commit status updates.
-                    </p>
-                  </div>
-
-                  <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-2 font-sans text-xs text-zinc-300">
-                    <h4 className="font-semibold text-zinc-200">Continuous Delivery Workflow:</h4>
-                    <ol className="list-decimal list-inside space-y-1 text-zinc-400">
-                      <li>Developer pushes code to branch or opens Pull Request.</li>
-                      <li>GitHub sends signed webhook to StackPilot C++ API (`/api/v1/webhooks/github`).</li>
-                      <li>Build worker compiles container image with layer caching.</li>
-                      <li>AI QA agent executes autonomous regression test against preview URL.</li>
-                      <li>Status badge and preview link posted back to GitHub PR.</li>
-                    </ol>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Environment Variables */}
-              {activeDoc === 'env' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={Settings02Icon} size={16} />
-                      <span>CONFIGURATION / ENVIRONMENT VARIABLES</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Platform Environment Variables
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Complete reference of core configuration options set in your `.env` file.
-                    </p>
-                  </div>
-
-                  <div className="space-y-4">
-                    {/* Category 1: Core Platform & Security */}
-                    <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
-                      <span className="text-zinc-200 font-sans font-semibold text-sm">Core Platform &amp; Security</span>
-                      <div className="divide-y divide-zinc-800 text-zinc-300">
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">STACKPILOT_DOMAIN</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Primary platform hostname for SSL routing &amp; Caddy certs</div>
-                          </div>
-                          <code className="text-zinc-400">localhost</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">JWT_SECRET</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Cryptographic HMAC-SHA256 secret for user session tokens</div>
-                          </div>
-                          <code className="text-zinc-400">min 48 chars hex</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">TOKEN_ENCRYPTION_KEY</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">AES-256-GCM symmetric key encrypting stored VCS &amp; cloud tokens</div>
-                          </div>
-                          <code className="text-zinc-400">32 bytes hex</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">APP_ENV</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Runtime stage: development, staging, or production</div>
-                          </div>
-                          <code className="text-zinc-400">production</code>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Category 2: Database & Message Queues */}
-                    <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
-                      <span className="text-zinc-200 font-sans font-semibold text-sm">Database &amp; Message Queues</span>
-                      <div className="divide-y divide-zinc-800 text-zinc-300">
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">POSTGRES_DB / POSTGRES_PORT</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">PostgreSQL database name and external listen port</div>
-                          </div>
-                          <code className="text-zinc-400">stackpilot_db / 5432</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">DB_USER / DB_PASSWORD</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">PostgreSQL user credentials with pgvector permissions</div>
-                          </div>
-                          <code className="text-zinc-400">stackpilot_admin / secure_pass</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">REDIS_HOST / REDIS_PORT</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Redis queue broker host and communication port</div>
-                          </div>
-                          <code className="text-zinc-400">redis / 6379</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">REDIS_PASSWORD</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Authentication password for Redis cluster access</div>
-                          </div>
-                          <code className="text-zinc-400">auth_token_redis</code>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Category 3: AI Gateway & Autonomous Sandbox */}
-                    <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3 font-mono text-xs">
-                      <span className="text-zinc-200 font-sans font-semibold text-sm">AI Gateway &amp; Autonomous Sandbox</span>
-                      <div className="divide-y divide-zinc-800 text-zinc-300">
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">AI_SERVICE_PORT</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Internal port for the Python FastAPI model gateway</div>
-                          </div>
-                          <code className="text-zinc-400">8010</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">NVIDIA_NIM_API_KEY / OPENAI_API_KEY</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">API credentials for remote LLM inference (or local vLLM endpoint)</div>
-                          </div>
-                          <code className="text-zinc-400">nvapi-... / sk-...</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">SCREENCAST_FPS</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">CDP binary streaming frame cap (30 or 60 FPS)</div>
-                          </div>
-                          <code className="text-zinc-400">60</code>
-                        </div>
-                        <div className="py-2.5 flex items-center justify-between">
-                          <div>
-                            <code className="text-white font-semibold">SANDBOX_MAX_CONCURRENCY</code>
-                            <div className="text-[11px] text-zinc-400 font-sans">Maximum simultaneous isolated browser runner containers</div>
-                          </div>
-                          <code className="text-zinc-400">8</code>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Observability */}
-              {activeDoc === 'observability' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={DashboardBrowsingIcon} size={16} />
-                      <span>CONFIGURATION / OBSERVABILITY</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Observability: Prometheus, Grafana &amp; Loki
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      StackPilot includes a full telemetry pipeline out of the box. Metrics and logs from deployed containers and system services are aggregated without external SaaS dependencies.
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-sans">
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-100 font-mono">cAdvisor &amp; Prometheus</span>
-                      <p className="text-zinc-400">Continuous tracking of CPU, RAM, disk I/O, and network packet rates per container.</p>
-                    </div>
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-100 font-mono">Promtail &amp; Loki</span>
-                      <p className="text-zinc-400">High-throughput log scraper streaming container stdout/stderr to indexed Loki storage.</p>
-                    </div>
-                  </div>
-                </article>
-              )}
-
-              {/* SECTION: Troubleshooting */}
-              {activeDoc === 'troubleshooting' && (
-                <article className="space-y-6">
-                  <div>
-                    <div className="flex items-center gap-2 text-xs font-mono text-zinc-400 mb-2">
-                      <HugeiconsIcon icon={HelpCircleIcon} size={16} />
-                      <span>CONFIGURATION / TROUBLESHOOTING</span>
-                    </div>
-                    <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
-                      Troubleshooting Guide
-                    </h1>
-                    <p className="mt-3 text-base text-zinc-300 leading-relaxed font-sans">
-                      Solutions for common setup, network, and runtime issues.
-                    </p>
-                  </div>
-
-                  <div className="space-y-3 text-xs font-sans">
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-200 font-mono">Port Already in Use (3000, 8090, 8010)</span>
-                      <p className="text-zinc-400">Run <code className="text-zinc-300 font-mono">docker compose ps</code> to check existing containers. Adjust the port mapping in `.env` if local host services conflict.</p>
-                    </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-200 font-mono">Database Migration Retry</span>
-                      <p className="text-zinc-400">If PostgreSQL is slow to initialize on cold start, the backend will automatically retry with exponential backoff (up to 30 seconds).</p>
-                    </div>
-
-                    <div className="p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/80 space-y-1">
-                      <span className="font-semibold text-zinc-200 font-mono">Docker Socket Permission Denied</span>
-                      <p className="text-zinc-400">Ensure the user running StackPilot belongs to the <code className="text-zinc-300 font-mono">docker</code> group: <code className="text-zinc-300 font-mono">sudo usermod -aG docker $USER</code>.</p>
-                    </div>
-                  </div>
+                  <DocMarkdownViewer content={DOCS_CONTENT[activeDoc]?.content || ''} docId={activeDoc} />
                 </article>
               )}
             </motion.div>

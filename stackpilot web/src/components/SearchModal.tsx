@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Search, X, ArrowRight } from 'lucide-react';
+import { AnimatedList } from './reactbits/AnimatedList';
 
 export interface SearchDocItem {
   id: string;
@@ -254,30 +255,26 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
               </div>
             </div>
 
-            {/* Results List - Scrollable with sleek custom scrollbar */}
-            <div
-              ref={listRef}
-              data-lenis-prevent
-              onWheel={(e) => e.stopPropagation()}
-              className="max-h-[52vh] sm:max-h-[420px] overflow-y-auto p-2 space-y-1 overscroll-contain [scrollbar-width:thin] [scrollbar-color:#3f3f46_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-zinc-700/80 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500"
-            >
+            {/* Results List - Animated with React Bits AnimatedList */}
+            <div data-lenis-prevent onWheel={(e) => e.stopPropagation()} className="p-1 sm:p-2">
               {filtered.length > 0 ? (
-                filtered.map((item, idx) => {
-                  const isSelected = idx === selectedIndex;
-                  return (
-                    <button
+                <AnimatedList<SearchDocItem>
+                  items={filtered}
+                  initialSelectedIndex={selectedIndex}
+                  onItemSelect={(item) => {
+                    onSelectDoc(item.id);
+                    onClose();
+                  }}
+                  showGradients={true}
+                  enableArrowNavigation={true}
+                  maxHeight="420px"
+                  renderItem={(item, _idx, isSelected) => (
+                    <div
                       key={item.id}
-                      ref={el => { itemRefs.current[idx] = el; }}
-                      type="button"
-                      onClick={() => {
-                        onSelectDoc(item.id);
-                        onClose();
-                      }}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`w-full text-left p-3 rounded-xl transition-all flex items-start justify-between gap-3 cursor-pointer border-0 ${
+                      className={`w-full text-left p-3 sm:p-3.5 rounded-xl transition-all flex items-start justify-between gap-3 cursor-pointer border ${
                         isSelected
-                          ? 'bg-[#222226] text-white'
-                          : 'bg-transparent text-zinc-300 hover:bg-[#1a1a1e]'
+                          ? 'bg-[#222226] text-white border-zinc-700 shadow-lg'
+                          : 'bg-[#18181b]/80 text-zinc-300 hover:bg-[#1f1f23] border-zinc-800/80'
                       }`}
                     >
                       <div className="flex-1 min-w-0">
@@ -299,9 +296,9 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
                           <ArrowRight className="w-3.5 h-3.5 text-white" />
                         </div>
                       )}
-                    </button>
-                  );
-                })
+                    </div>
+                  )}
+                />
               ) : (
                 <div className="py-12 px-4 text-center">
                   <p className="text-xs text-zinc-400">No documentation found matching "{query}"</p>
