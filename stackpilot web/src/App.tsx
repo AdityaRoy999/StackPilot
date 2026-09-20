@@ -40,7 +40,11 @@ export const App: React.FC = () => {
   };
 
   if (route === 'docs') {
-    return <DocsPage onNavigateHome={() => navigateTo('home')} />;
+    return (
+      <SmoothScroll>
+        <DocsPage onNavigateHome={() => navigateTo('home')} />
+      </SmoothScroll>
+    );
   }
 
   return (

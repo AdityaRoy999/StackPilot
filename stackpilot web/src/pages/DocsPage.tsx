@@ -77,8 +77,8 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
 
   return (
     <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 font-sans antialiased">
-      {/* Top Header */}
-      <header className="sticky top-0 z-50 w-full border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-xl">
+      {/* Top Header - Transparent background, no bottom border, clean floating elements */}
+      <header className="sticky top-0 z-50 w-full bg-transparent border-0 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Left: Brand & Back */}
           <div className="flex items-center gap-3 sm:gap-4">
@@ -88,7 +88,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
                 e.preventDefault();
                 onNavigateHome();
               }}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#28282c] text-zinc-300 hover:text-white text-xs font-mono transition-all duration-200 cursor-pointer select-none"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#28282c] text-zinc-300 hover:text-white text-xs font-mono transition-all duration-200 cursor-pointer select-none border-0"
               title="Return to StackPilot Home"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
@@ -110,16 +110,16 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
             </a>
           </div>
 
-          {/* Center / Right: Quick Search & GitHub */}
+          {/* Right: Search button & Repo button */}
           <div className="flex items-center gap-2.5 sm:gap-3">
             <div className="relative hidden md:flex items-center">
               <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 pointer-events-none" />
               <input
                 type="text"
-                placeholder="Search docs (e.g. Docker, CDP, Replay)..."
+                placeholder="Search docs (e.g. Docker, CDP)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-64 pl-8 pr-3 py-1.5 rounded-full bg-[#141416] border border-zinc-800/80 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-all font-mono"
+                className="w-56 pl-8 pr-3 py-1.5 rounded-full bg-[#1c1c1e] border border-zinc-800/80 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-all font-mono"
               />
             </div>
 
@@ -136,7 +136,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
               href="https://github.com/AdityaRoy999/StackPilot"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#262629] text-xs text-zinc-300 hover:text-white transition-all border-0"
+              className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#262629] text-xs text-zinc-300 hover:text-white transition-all border-0 select-none"
             >
               <GithubIcon className="w-3.5 h-3.5 text-white shrink-0" />
               <span className="hidden sm:inline">Repo</span>
@@ -151,26 +151,27 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
 
       {/* Main Container with Sidebar + Content */}
       <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 flex gap-8">
-        {/* Left Sidebar (Desktop & Mobile Dropdown) */}
+        {/* Left Sidebar Card Container (Desktop & Mobile Dropdown) */}
         <aside
-          className={`lg:w-64 shrink-0 transition-all duration-300 z-30 ${
+          className={`lg:w-72 shrink-0 transition-all duration-300 z-30 ${
             mobileMenuOpen
-              ? 'fixed inset-x-4 top-20 bottom-4 bg-zinc-950/95 backdrop-blur-2xl border border-zinc-800 rounded-2xl p-6 overflow-y-auto block shadow-2xl'
+              ? 'fixed inset-x-4 top-20 bottom-4 bg-zinc-950/95 backdrop-blur-2xl border border-zinc-800/80 rounded-2xl sm:rounded-3xl p-5 overflow-y-auto block shadow-2xl'
               : 'hidden lg:block'
           }`}
         >
-          <div className="sticky top-24 flex flex-col gap-6">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-mono uppercase tracking-widest text-zinc-500 font-semibold">
+          {/* Greyish Bento-style Card with Rounded Edges */}
+          <div className="sticky top-20 rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-4 sm:p-5 flex flex-col gap-4 shadow-xl transition-all">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-800/70">
+              <span className="text-[11px] font-mono uppercase tracking-widest text-zinc-400 font-semibold">
                 Documentation
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-mono font-medium">
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-mono font-medium border border-emerald-500/20">
                 v1.0.0
               </span>
             </div>
 
-            {/* React Bits BranchedMenu Component */}
-            <div className="py-1">
+            {/* React Bits BranchedMenu Component inside the Card */}
+            <div className="py-1 overflow-x-hidden">
               <BranchedMenu
                 items={DOCS_MENU_ITEMS}
                 defaultOpen={[0, 1, 2, 3]}
@@ -181,16 +182,16 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
                 }}
                 color="#e4e4e7"
                 accentColor="#10b981"
-                lineColor="#27272a"
-                width={250}
+                lineColor="#3f3f46"
+                width={255}
                 rowHeight={34}
                 indent={32}
                 fontSize={13}
               />
             </div>
 
-            {/* Quick Link to Cockpit */}
-            <div className="mt-4 p-3.5 rounded-xl border border-zinc-800/80 bg-zinc-950/80 flex flex-col gap-2">
+            {/* Quick Link to Cockpit inside the Card */}
+            <div className="mt-2 p-3 rounded-xl border border-zinc-800/60 bg-[#18181b]/60 flex flex-col gap-1.5">
               <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
                 <Terminal className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Live Browser Cockpit</span>
@@ -202,7 +203,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
                 href="http://localhost:3000"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-mono text-emerald-400 hover:text-emerald-300 font-medium"
+                className="mt-0.5 inline-flex items-center gap-1.5 text-[11px] font-mono text-emerald-400 hover:text-emerald-300 font-medium"
               >
                 <span>Open Cockpit</span>
                 <ExternalLink className="w-3 h-3" />
