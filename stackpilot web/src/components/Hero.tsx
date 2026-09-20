@@ -72,8 +72,8 @@ export const Hero: React.FC = () => {
   return (
     <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
       {/* Main Title with BlurText animation, Fuzzy Bubbles bold, & Caveat Brush bold on the morphing word */}
-      <div className="w-full max-w-5xl mx-auto mb-6 flex flex-col items-center justify-center select-none font-bubbles">
-        <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.14] text-center font-bubbles">
+      <div className="w-full max-w-5xl mx-auto mb-4 flex flex-col items-center justify-center select-none font-bubbles">
+        <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.06] text-center font-bubbles">
           <BlurText
             text="Autonomous AI"
             as="span"
@@ -86,7 +86,7 @@ export const Hero: React.FC = () => {
           <motion.span
             layout
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="inline-flex items-center justify-center gap-2.5 sm:gap-4 mt-1 sm:mt-2"
+            className="inline-flex items-center justify-center gap-1 sm:gap-1.5 mt-0 sm:mt-0.5"
           >
             <span className="relative inline-flex items-center justify-center">
               <AnimatePresence mode="wait" initial={false}>
@@ -98,7 +98,7 @@ export const Hero: React.FC = () => {
                     filter: 'blur(8px)',
                     transition: { duration: 0.22, ease: 'easeIn' }
                   }}
-                  className="inline-flex items-center font-caveat font-bold text-[1.18em] sm:text-[1.22em] tracking-wide"
+                  className="inline-flex items-center font-caveat font-bold text-[1.18em] sm:text-[1.22em] tracking-normal"
                   style={{
                     filter: `drop-shadow(0 0 24px ${currentWord.glow})`,
                     WebkitTextStroke: '0.6px currentColor',
@@ -137,8 +137,8 @@ export const Hero: React.FC = () => {
         </h1>
       </div>
 
-      {/* Subtitle in Fuzzy Bubbles bold */}
-      <p className="mt-4 text-base sm:text-lg md:text-xl text-zinc-300 max-w-3xl mx-auto leading-relaxed font-bold font-bubbles">
+      {/* Subtitle in Fuzzy Bubbles normal text */}
+      <p className="mt-3 text-base sm:text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto leading-relaxed font-normal font-bubbles">
         Deploy any web application, repository, or full-stack project 100% free for
         instant autonomous testing. Connect your codebase—our self-healing AI
         platform auto-provisions isolated sandboxes, audits browser workflows at
