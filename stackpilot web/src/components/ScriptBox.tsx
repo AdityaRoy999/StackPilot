@@ -47,8 +47,8 @@ export const ScriptBox: React.FC = () => {
           })}
         </div>
 
-        {/* Bottom Bento Row: Command well with letter-by-letter blur animation on change */}
-        <div className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl bg-black/60 transition-all group">
+        {/* Bottom Bento Row: Command well with grayed out background and circular copy button */}
+        <div className="flex items-center justify-between gap-3 px-4 py-2 sm:px-4 sm:py-2.5 rounded-xl sm:rounded-2xl bg-[#18181b]/80 border-0 transition-all group">
           {/* Command text with headline-style BlurText transition when switching tabs */}
           <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5">
             <span className="text-zinc-500 font-bold select-none shrink-0">$</span>
@@ -63,22 +63,17 @@ export const ScriptBox: React.FC = () => {
             />
           </div>
 
-          {/* Copy Button: borderless subtle grey (#1c1c1e) */}
+          {/* Circular Copy Button with only copy icon */}
           <button
             onClick={handleCopy}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border-0 bg-[#1c1c1e] hover:bg-[#262629] text-zinc-200 hover:text-white text-xs font-semibold font-sans shrink-0 transition-all active:scale-95 cursor-pointer"
+            className="w-8 h-8 rounded-full border-0 bg-[#1c1c1e] hover:bg-[#28282c] text-zinc-300 hover:text-white flex items-center justify-center shrink-0 transition-all active:scale-90 cursor-pointer"
             title="Copy command to clipboard"
+            aria-label="Copy command"
           >
             {copied ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                <span className="text-emerald-400 font-bold">Copied!</span>
-              </>
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
             ) : (
-              <>
-                <Copy className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                <span>Copy</span>
-              </>
+              <Copy className="w-3.5 h-3.5 text-zinc-300" />
             )}
           </button>
         </div>

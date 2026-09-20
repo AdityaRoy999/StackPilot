@@ -59,12 +59,9 @@ export const Navbar: React.FC = () => {
           </div>
 
           {/* Smoothly expanding brand container */}
-          <div className="max-w-0 opacity-0 group-hover:max-w-[200px] group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out flex items-center whitespace-nowrap">
+          <div className="max-w-0 opacity-0 group-hover:max-w-[160px] group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out flex items-center whitespace-nowrap">
             <span className="ml-2.5 font-semibold text-xs sm:text-sm tracking-tight text-zinc-100">
               StackPilot
-            </span>
-            <span className="ml-2 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#28282c] text-zinc-400 border-0">
-              v2.0
             </span>
           </div>
         </a>
