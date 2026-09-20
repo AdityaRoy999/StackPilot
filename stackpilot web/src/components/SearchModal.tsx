@@ -228,9 +228,9 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
             data-lenis-prevent
             className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 my-auto"
           >
-            {/* Search Input Bar */}
-            <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 border-b border-zinc-800/80 bg-[#1a1a1e]">
-              <Search className="w-4 h-4 text-zinc-400 shrink-0" />
+            {/* Search Input Bar - Seamless without dividing border line */}
+            <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 bg-[#161619]">
+              <Search className="w-4 h-4 text-white shrink-0" />
               <input
                 ref={inputRef}
                 type="text"
@@ -248,15 +248,15 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
                 </kbd>
                 <button
                   onClick={onClose}
-                  className="w-6 h-6 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/80 transition-colors border-0 cursor-pointer"
+                  className="w-6 h-6 rounded-full flex items-center justify-center text-white hover:bg-zinc-800/80 transition-colors border-0 cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3.5 h-3.5 text-white" />
                 </button>
               </div>
             </div>
 
-            {/* Results List - Animated with React Bits AnimatedList */}
-            <div data-lenis-prevent onWheel={(e) => e.stopPropagation()} className="p-1 sm:p-2">
+            {/* Results List - Animated with React Bits AnimatedList (No gradient line overlays) */}
+            <div data-lenis-prevent onWheel={(e) => e.stopPropagation()} className="px-2 pb-1">
               {filtered.length > 0 ? (
                 <AnimatedList<SearchDocItem>
                   items={filtered}
@@ -265,7 +265,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
                     onSelectDoc(item.id);
                     onClose();
                   }}
-                  showGradients={true}
+                  showGradients={false}
                   enableArrowNavigation={true}
                   maxHeight="420px"
                   renderItem={(item, _idx, isSelected) => (
@@ -307,8 +307,8 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
               )}
             </div>
 
-            {/* Modal Footer */}
-            <div className="px-4 py-2.5 bg-[#141416] border-t border-zinc-800/80 flex items-center justify-between text-[11px] font-mono text-zinc-500">
+            {/* Modal Footer - Seamless without dividing border line */}
+            <div className="px-5 py-3 bg-[#161619] flex items-center justify-between text-[11px] font-mono text-zinc-500">
               <div className="flex items-center gap-3">
                 <span><kbd className="text-zinc-400 font-sans">↑↓</kbd> to navigate</span>
                 <span><kbd className="text-zinc-400 font-sans">↵</kbd> to select</span>

@@ -359,7 +359,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               className="space-y-10"
             >
               {/* Top Section Breadcrumb & Actions Bar */}
-              <div className="flex items-center justify-between gap-4 pb-3 border-b border-zinc-800/80">
+              <div className="flex items-center justify-between gap-4 pb-2">
                 <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
                   <HugeiconsIcon icon={SECTION_ICONS[activeDoc] || Rocket01Icon} size={16} className="text-white shrink-0" />
                   <span className="uppercase tracking-wider text-zinc-300 font-semibold">{DOCS_CONTENT[activeDoc]?.category || 'DOCUMENTATION'}</span>
@@ -390,7 +390,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               {activeDoc === 'install' && (
                 <div className="space-y-10">
                   <InstallationScriptViewer />
-                  <div className="pt-8 border-t border-zinc-800/80">
+                  <div className="pt-6">
                     <DocMarkdownViewer content={DOCS_CONTENT['install']?.content || ''} docId="install" />
                   </div>
                 </div>
@@ -400,7 +400,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               {activeDoc === 'overview' && (
                 <div className="space-y-10">
                   <DocMarkdownViewer content={DOCS_CONTENT['overview']?.content || ''} docId="overview" />
-                  <div className="pt-8 border-t border-zinc-800/80 space-y-4">
+                  <div className="pt-6 space-y-4">
                     <div className="mb-2">
                       <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
                         <span className="w-1.5 h-5 rounded-full bg-white inline-block shrink-0" />
