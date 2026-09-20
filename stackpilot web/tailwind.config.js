@@ -34,9 +34,10 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['"Fuzzy Bubbles"', 'Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
         caveat: ['"Caveat Brush"', 'cursive', 'sans-serif'],
+        bubbles: ['"Fuzzy Bubbles"', 'cursive', 'sans-serif'],
       },
       animation: {
         'shimmer': 'shimmer 2.5s linear infinite',

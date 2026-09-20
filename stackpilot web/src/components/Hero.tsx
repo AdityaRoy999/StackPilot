@@ -71,9 +71,9 @@ export const Hero: React.FC = () => {
 
   return (
     <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
-      {/* Main Title with BlurText animation & Caveat Brush font on the morphing word */}
-      <div className="w-full max-w-5xl mx-auto mb-6 flex flex-col items-center justify-center select-none">
-        <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.14] text-center">
+      {/* Main Title with BlurText animation, Fuzzy Bubbles bold, & Caveat Brush bold on the morphing word */}
+      <div className="w-full max-w-5xl mx-auto mb-6 flex flex-col items-center justify-center select-none font-bubbles">
+        <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.14] text-center font-bubbles">
           <BlurText
             text="Autonomous AI"
             as="span"
@@ -81,7 +81,7 @@ export const Hero: React.FC = () => {
             animateBy="letters"
             direction="top"
             stepDuration={0.25}
-            className="justify-center text-center text-zinc-50 font-bold block"
+            className="justify-center text-center text-zinc-50 font-bold font-bubbles block"
           />
           <motion.span
             layout
@@ -98,9 +98,10 @@ export const Hero: React.FC = () => {
                     filter: 'blur(8px)',
                     transition: { duration: 0.22, ease: 'easeIn' }
                   }}
-                  className="inline-flex items-center font-caveat font-normal text-[1.14em] sm:text-[1.18em] tracking-wide"
+                  className="inline-flex items-center font-caveat font-bold text-[1.18em] sm:text-[1.22em] tracking-wide"
                   style={{
                     filter: `drop-shadow(0 0 24px ${currentWord.glow})`,
+                    WebkitTextStroke: '0.6px currentColor',
                   }}
                 >
                   {currentWord.text.split('').map((char, idx) => (
@@ -121,6 +122,7 @@ export const Hero: React.FC = () => {
                       style={{
                         color: letterColors[idx],
                         display: 'inline-block',
+                        fontWeight: 700,
                         willChange: 'transform, filter, opacity',
                       }}
                     >
@@ -130,13 +132,13 @@ export const Hero: React.FC = () => {
                 </motion.span>
               </AnimatePresence>
             </span>
-            <span className="text-zinc-50">Platform</span>
+            <span className="text-zinc-50 font-bold font-bubbles">Platform</span>
           </motion.span>
         </h1>
       </div>
 
-      {/* Subtitle - Rephrased and enhanced value proposition */}
-      <p className="mt-4 text-base sm:text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto leading-relaxed font-normal">
+      {/* Subtitle in Fuzzy Bubbles bold */}
+      <p className="mt-4 text-base sm:text-lg md:text-xl text-zinc-300 max-w-3xl mx-auto leading-relaxed font-bold font-bubbles">
         Deploy any web application, repository, or full-stack project 100% free for
         instant autonomous testing. Connect your codebase—our self-healing AI
         platform auto-provisions isolated sandboxes, audits browser workflows at
