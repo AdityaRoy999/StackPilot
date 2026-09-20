@@ -135,12 +135,15 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   // Focus input on open
   useEffect(() => {
     if (isOpen) {
       setQuery('');
       setSelectedIndex(0);
+      if (listRef.current) listRef.current.scrollTop = 0;
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isOpen]);
@@ -156,6 +159,23 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
       item.keywords.some(k => k.toLowerCase().includes(q))
     );
   });
+
+  // Reset scroll on filter change
+  useEffect(() => {
+    if (listRef.current) {
+      listRef.current.scrollTop = 0;
+    }
+  }, [query]);
+
+  // Scroll active item into view when navigating via keyboard
+  useEffect(() => {
+    if (itemRefs.current[selectedIndex]) {
+      itemRefs.current[selectedIndex]?.scrollIntoView({
+        block: 'nearest',
+        behavior: 'smooth'
+      });
+    }
+  }, [selectedIndex]);
 
   // Handle keyboard navigation inside popup
   useEffect(() => {
@@ -204,6 +224,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: -10 }}
             transition={{ type: 'spring', stiffness: 450, damping: 30 }}
+            data-lenis-prevent
             className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 font-sans"
           >
             {/* Search Input Bar */}
@@ -233,14 +254,20 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
               </div>
             </div>
 
-            {/* Results List */}
-            <div className="max-h-[380px] overflow-y-auto p-2 space-y-1 no-scrollbar">
+            {/* Results List - Scrollable with sleek custom scrollbar */}
+            <div
+              ref={listRef}
+              data-lenis-prevent
+              onWheel={(e) => e.stopPropagation()}
+              className="max-h-[52vh] sm:max-h-[420px] overflow-y-auto p-2 space-y-1 overscroll-contain [scrollbar-width:thin] [scrollbar-color:#3f3f46_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-zinc-700/80 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500"
+            >
               {filtered.length > 0 ? (
                 filtered.map((item, idx) => {
                   const isSelected = idx === selectedIndex;
                   return (
                     <button
                       key={item.id}
+                      ref={el => { itemRefs.current[idx] = el; }}
                       type="button"
                       onClick={() => {
                         onSelectDoc(item.id);

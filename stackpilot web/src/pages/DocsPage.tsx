@@ -132,44 +132,50 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
           </a>
         </div>
 
-        {/* Right: Search button & Repo button */}
-        <div className="flex items-center gap-2.5 sm:gap-3">
-          {/* Interactive Search Bar / Trigger */}
-          <button
-            type="button"
-            onClick={() => setIsSearchOpen(true)}
-            className="inline-flex items-center gap-2.5 h-9 px-3.5 rounded-full bg-[#1c1c1e] hover:bg-[#262629] border border-zinc-800/80 text-xs font-mono text-zinc-400 hover:text-zinc-200 transition-all cursor-pointer select-none"
-            title="Search documentation (⌘K)"
-          >
-            <Search className="w-3.5 h-3.5 text-zinc-400" />
-            <span className="hidden sm:inline">Search docs...</span>
-            <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 bg-[#28282c] rounded border border-zinc-700/60">
-              ⌘K
-            </kbd>
-          </button>
+        {/* Right: Unified Capsule (Search | Topics | Repo ★) */}
+        <div className="flex items-center">
+          <div className="inline-flex items-center h-10 px-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs font-mono text-zinc-300 backdrop-blur-xl">
+            {/* Interactive Search Bar / Trigger */}
+            <button
+              type="button"
+              onClick={() => setIsSearchOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-400 hover:text-white transition-colors cursor-pointer select-none rounded-full hover:bg-white/[0.04] border-0 bg-transparent"
+              title="Search documentation (⌘K)"
+            >
+              <Search className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="hidden sm:inline">Search docs...</span>
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 bg-[#28282c] rounded border border-zinc-700/60">
+                ⌘K
+              </kbd>
+            </button>
 
-          {/* Mobile Menu Toggle */}
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-[#1c1c1e] text-xs font-mono text-zinc-300 hover:text-white border border-zinc-800/80 cursor-pointer"
-          >
-            <span>{mobileMenuOpen ? 'Close' : 'Topics'}</span>
-          </button>
+            {/* Mobile Menu Toggle (lg:hidden) */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="lg:hidden inline-flex items-center gap-1.5 px-2.5 py-1.5 text-zinc-300 hover:text-white border-0 bg-transparent cursor-pointer rounded-full hover:bg-white/[0.04]"
+            >
+              <span>{mobileMenuOpen ? 'Close' : 'Topics'}</span>
+            </button>
 
-          {/* GitHub Stars */}
-          <a
-            href="https://github.com/AdityaRoy999/StackPilot"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 h-9 px-3.5 rounded-full bg-[#1c1c1e] hover:bg-[#262629] text-xs text-zinc-300 hover:text-white transition-all border border-zinc-800/80 select-none"
-          >
-            <GithubIcon className="w-3.5 h-3.5 text-white shrink-0" />
-            <span className="hidden sm:inline">Repo</span>
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] font-mono text-zinc-300">
-              <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
-              <span>Star</span>
-            </span>
-          </a>
+            {/* Vertical Divider */}
+            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 select-none" />
+
+            {/* GitHub Repo */}
+            <a
+              href="https://github.com/AdityaRoy999/StackPilot"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-400 hover:text-white transition-colors cursor-pointer select-none rounded-full hover:bg-white/[0.04] group border-0"
+              title="View StackPilot on GitHub"
+            >
+              <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
+              <span className="hidden sm:inline">Repo</span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] text-zinc-300 border border-zinc-700/50">
+                <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                <span>Star</span>
+              </span>
+            </a>
+          </div>
         </div>
       </div>
 
@@ -184,7 +190,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
           }`}
         >
           {/* Distinct Greyish Card matching the curl box palette */}
-          <div className="sticky top-6 rounded-2xl sm:rounded-3xl border border-zinc-800/90 bg-[#18181b]/95 p-4 sm:p-5 flex flex-col gap-3 shadow-xl transition-all">
+          <div
+            data-lenis-prevent
+            className="sticky top-6 max-h-[calc(100vh-3.5rem)] overflow-y-auto overscroll-contain [scrollbar-width:thin] [scrollbar-color:#3f3f46_transparent] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-zinc-700/60 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-zinc-500 rounded-2xl sm:rounded-3xl border border-zinc-800/90 bg-[#18181b]/95 p-4 sm:p-5 flex flex-col gap-3 shadow-xl transition-all"
+          >
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80">
               <span className="text-[11px] font-mono uppercase tracking-widest text-zinc-400 font-semibold">
                 Documentation
