@@ -23,19 +23,29 @@ export const ScriptBox: React.FC = () => {
         <div className="flex items-center gap-1 sm:gap-1.5 px-0 py-0.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs font-mono select-none">
           {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
+            // Exact corner radii: ( and | is rounded-l-full rounded-r-md; | and | is rounded-md; | and ) is rounded-l-md rounded-r-full
+            const cornerClass =
+              idx === 0
+                ? 'rounded-l-full rounded-r-md'
+                : idx === SCRIPTS.length - 1
+                ? 'rounded-l-md rounded-r-full'
+                : 'rounded-md';
+
             return (
               <React.Fragment key={script.id}>
                 {idx > 0 && (
                   <span
-                    className="h-3 w-[1px] bg-zinc-800/90 select-none shrink-0 pointer-events-none"
+                    className="h-3 w-[1px] bg-zinc-800/90 select-none shrink-0 pointer-events-none mx-0.5"
                     aria-hidden="true"
                   />
                 )}
                 <button
                   type="button"
                   onClick={() => setActiveTab(script.id)}
-                  className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
-                    isActive ? 'text-zinc-950 font-semibold' : 'text-zinc-400 hover:text-zinc-200'
+                  className={`relative px-3.5 py-1.5 ${cornerClass} text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                    isActive
+                      ? 'text-zinc-950 font-semibold'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#242428]'
                   }`}
                   title={`Switch to ${script.label}`}
                 >
@@ -43,7 +53,7 @@ export const ScriptBox: React.FC = () => {
                   {isActive && (
                     <motion.div
                       layoutId="activeTabSelection"
-                      className="absolute inset-0 rounded-full bg-zinc-100"
+                      className={`absolute inset-0 bg-zinc-100 ${cornerClass}`}
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}

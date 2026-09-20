@@ -135,42 +135,42 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
         {/* Right: Capsule Bar with Distinct Pill Selections (Search | Repo ★) */}
         <div className="flex items-center">
           <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300">
-            {/* Interactive Search Button - Left selection pill */}
+            {/* Interactive Search Button: between '(' and '|' -> left fully rounded, right square rounded */}
             <button
               type="button"
               onClick={() => setIsSearchOpen(true)}
-              className="inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-full bg-[#242428] hover:bg-[#2e2e34] text-zinc-200 hover:text-white transition-all cursor-pointer select-none border-0 group"
+              className="inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-full rounded-r-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0 group"
               title="Search documentation (⌘K)"
             >
               <Search className="w-3.5 h-3.5 text-zinc-400 group-hover:text-white transition-colors" />
               <span className="hidden sm:inline">Search docs...</span>
-              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-300 bg-[#18181b] rounded border border-zinc-700/60">
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 bg-[#161618] rounded border border-zinc-700/60">
                 ⌘K
               </kbd>
             </button>
 
-            {/* Mobile Menu Toggle (lg:hidden) */}
+            {/* Mobile Menu Toggle (lg:hidden): between '|' and '|' -> square rounded tab */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden inline-flex items-center gap-1.5 h-8 px-2.5 rounded-full bg-[#242428] hover:bg-[#2e2e34] text-zinc-200 hover:text-white border-0 cursor-pointer ml-1"
+              className="lg:hidden inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white border-0 cursor-pointer mx-0.5"
             >
               <span>{mobileMenuOpen ? 'Close' : 'Topics'}</span>
             </button>
 
             {/* Vertical Divider */}
-            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1.5 select-none" />
+            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
 
-            {/* GitHub Repo - Right selection pill */}
+            {/* GitHub Repo: between '|' and ')' -> left square rounded, right fully rounded */}
             <a
               href="https://github.com/AdityaRoy999/StackPilot"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-full bg-[#242428] hover:bg-[#2e2e34] text-zinc-200 hover:text-white transition-all cursor-pointer select-none border-0 group"
+              className="inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-md rounded-r-full bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0 group"
               title="View StackPilot on GitHub"
             >
               <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
               <span className="hidden sm:inline">Repo</span>
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#18181b] text-[10px] text-zinc-300 border border-zinc-700/50">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
                 <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
                 <span>Star</span>
               </span>

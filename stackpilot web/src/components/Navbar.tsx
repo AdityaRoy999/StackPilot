@@ -79,10 +79,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
 
       {/* Right side: Unified Capsule Pill (Visitors | Docs | GitHub ★ 1) */}
       <div className="pointer-events-auto">
-        <div className="inline-flex items-center h-10 px-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs font-mono text-zinc-300 backdrop-blur-xl">
-          {/* Visitors Item */}
+        <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs font-mono text-zinc-300 backdrop-blur-xl">
+          {/* Visitors: between '(' and '|' -> left fully rounded, right square rounded */}
           <div
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-zinc-300 select-none"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-l-full rounded-r-md text-zinc-300 select-none"
             title="Unique site visitors"
           >
             <UsersIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -92,16 +92,16 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
           </div>
 
           {/* Vertical Divider */}
-          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none" />
+          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
 
-          {/* Docs Link */}
+          {/* Docs: between '|' and '|' -> square rounded tab */}
           <a
             href="/docs"
             onClick={(e) => {
               e.preventDefault();
               onNavigateDocs?.();
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-zinc-400 hover:text-white transition-colors cursor-pointer select-none rounded-full hover:bg-white/[0.04]"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent hover:bg-[#242428] text-zinc-400 hover:text-white transition-all cursor-pointer select-none"
             title="StackPilot Documentation"
           >
             <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -109,14 +109,14 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
           </a>
 
           {/* Vertical Divider */}
-          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none" />
+          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
 
-          {/* GitHub Stars */}
+          {/* GitHub: between '|' and ')' -> left square rounded, right fully rounded */}
           <a
             href="https://github.com/AdityaRoy999/StackPilot"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-400 hover:text-white transition-colors cursor-pointer select-none rounded-full hover:bg-white/[0.04] group"
+            className="inline-flex items-center gap-2 h-8 px-3 rounded-l-md rounded-r-full bg-transparent hover:bg-[#242428] text-zinc-400 hover:text-white transition-all cursor-pointer select-none group"
             title="View StackPilot on GitHub"
           >
             <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
