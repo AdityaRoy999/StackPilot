@@ -54,9 +54,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
     <header className="fixed top-5 left-0 right-0 z-50 px-4 sm:px-8 flex items-center justify-between pointer-events-none">
       {/* Left side: Expandable Terminal Button (reveals 'StackPilot' on hover) */}
       <div className="pointer-events-auto">
-        <button
-          type="button"
-          onClick={onNavigateHome}
+        <a
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigateHome?.();
+          }}
           className="group inline-flex items-center h-10 px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl hover:bg-[#262629] transition-all duration-300 ease-out cursor-pointer select-none"
           title="StackPilot Home"
         >
@@ -71,7 +74,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
               StackPilot
             </span>
           </div>
-        </button>
+        </a>
       </div>
 
       {/* Right side: Floating pill bubbles (Visitors, Docs & GitHub) */}
@@ -86,15 +89,18 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome }
         </div>
 
         {/* Docs Button */}
-        <button
-          type="button"
-          onClick={onNavigateDocs}
-          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl text-xs font-mono text-zinc-300 hover:text-white hover:bg-[#262629] transition-all cursor-pointer"
+        <a
+          href="/docs"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigateDocs?.();
+          }}
+          className="inline-flex items-center gap-1.5 h-10 px-3 sm:px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl text-xs font-mono text-zinc-300 hover:text-white hover:bg-[#262629] transition-all cursor-pointer select-none"
           title="StackPilot Documentation"
         >
           <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
           <span>Docs</span>
-        </button>
+        </a>
 
         {/* GitHub Stars Bubble */}
         <a

@@ -7,27 +7,27 @@ import { WebThreads } from './components/reactbits/WebThreads';
 import { ScriptProvider } from './context/ScriptContext';
 import { DocsPage } from './pages/DocsPage';
 
+const checkIsDocs = () => {
+  if (typeof window === 'undefined') return false;
+  const path = window.location.pathname.toLowerCase();
+  const hash = window.location.hash.toLowerCase();
+  return path.includes('docs') || hash.includes('docs');
+};
+
 export const App: React.FC = () => {
-  const [route, setRoute] = useState<'home' | 'docs'>(() => {
-    if (typeof window !== 'undefined') {
-      const path = window.location.pathname.toLowerCase();
-      if (path.startsWith('/docs')) return 'docs';
-    }
-    return 'home';
-  });
+  const [route, setRoute] = useState<'home' | 'docs'>(() => (checkIsDocs() ? 'docs' : 'home'));
 
   useEffect(() => {
-    const handlePopState = () => {
-      const path = window.location.pathname.toLowerCase();
-      if (path.startsWith('/docs')) {
-        setRoute('docs');
-      } else {
-        setRoute('home');
-      }
+    const handleLocationChange = () => {
+      setRoute(checkIsDocs() ? 'docs' : 'home');
     };
 
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
   const navigateTo = (target: 'home' | 'docs') => {

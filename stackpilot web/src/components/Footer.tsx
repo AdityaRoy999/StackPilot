@@ -10,13 +10,16 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs }) => {
       <div className="flex items-center gap-3 text-xs text-zinc-400 mb-2">
         <span className="font-semibold text-zinc-300">StackPilot</span>
         <span className="text-zinc-700">•</span>
-        <button
-          type="button"
-          onClick={onNavigateDocs}
-          className="text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer bg-transparent border-0 p-0 font-mono text-xs"
+        <a
+          href="/docs"
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigateDocs?.();
+          }}
+          className="text-zinc-400 hover:text-emerald-400 transition-colors cursor-pointer font-mono text-xs select-none"
         >
           Documentation
-        </button>
+        </a>
         <span className="text-zinc-700">•</span>
         <a
           href="https://github.com/AdityaRoy999/StackPilot"

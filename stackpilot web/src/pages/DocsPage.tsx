@@ -82,24 +82,32 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome }) => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Left: Brand & Back */}
           <div className="flex items-center gap-3 sm:gap-4">
-            <button
-              onClick={onNavigateHome}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#28282c] text-zinc-300 hover:text-white text-xs font-mono transition-all duration-200 cursor-pointer border-0"
+            <a
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigateHome();
+              }}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#1c1c1e] hover:bg-[#28282c] text-zinc-300 hover:text-white text-xs font-mono transition-all duration-200 cursor-pointer select-none"
               title="Return to StackPilot Home"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               <span>Home</span>
-            </button>
+            </a>
 
             <div className="h-4 w-[1px] bg-zinc-800 select-none hidden sm:block" />
 
-            <button
-              onClick={onNavigateHome}
-              className="flex items-center gap-2 text-sm font-semibold tracking-tight text-white hover:text-emerald-400 transition-colors cursor-pointer bg-transparent border-0 p-0"
+            <a
+              href="/"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigateHome();
+              }}
+              className="flex items-center gap-2 text-sm font-semibold tracking-tight text-white hover:text-emerald-400 transition-colors cursor-pointer select-none"
             >
               <span className="font-mono text-emerald-400 font-bold">&gt;_</span>
               <span>StackPilot Docs</span>
-            </button>
+            </a>
           </div>
 
           {/* Center / Right: Quick Search & GitHub */}
