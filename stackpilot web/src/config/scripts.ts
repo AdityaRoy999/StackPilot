@@ -9,12 +9,12 @@ export interface ScriptOption {
 export const SCRIPTS: ScriptOption[] = [
   {
     id: 'bash',
-    label: 'curl (Linux / macOS)',
+    label: 'Linux / macOS',
     command: 'curl -fsSL https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.sh | bash',
   },
   {
     id: 'powershell',
-    label: 'PowerShell (Windows)',
+    label: 'Windows',
     command: 'irm https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.ps1 | iex',
   },
   {

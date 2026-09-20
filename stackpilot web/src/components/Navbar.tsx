@@ -86,7 +86,7 @@ export const Navbar: React.FC = () => {
           className="inline-flex items-center gap-2 h-10 px-3 sm:px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl text-xs text-zinc-300 hover:text-white hover:bg-[#262629] transition-all group"
           title="View StackPilot on GitHub"
         >
-          <GithubIcon className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-100 transition-colors shrink-0" />
+          <GithubIcon className="w-3.5 h-3.5 text-white shrink-0" />
           <span className="hidden sm:inline">GitHub</span>
           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] font-mono text-zinc-300 border-0">
             <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
