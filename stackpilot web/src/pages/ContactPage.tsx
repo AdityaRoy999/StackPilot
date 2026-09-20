@@ -24,18 +24,43 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const { fontMode, toggleFontMode } = useFont();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !email.trim() || !message.trim()) return;
 
     setIsSubmitting(true);
-    setTimeout(() => {
-      setIsSubmitting(false);
+    setErrorMessage(null);
+
+    try {
+      const res = await fetch('/api/contact', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          inquiryType,
+          message: message.trim()
+        })
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to dispatch message. Please try again.');
+      }
+
       setIsSubmitted(true);
-    }, 800);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Unable to connect to the email service. Please try again later.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const resetForm = () => {
@@ -43,6 +68,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
     setEmail('');
     setInquiryType('Back us');
     setMessage('');
+    setErrorMessage(null);
     setIsSubmitted(false);
   };
 
@@ -292,6 +318,18 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
                     className="w-full p-3.5 rounded-xl bg-black border border-zinc-800 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors font-sans resize-none leading-relaxed"
                   />
                 </div>
+
+                {/* Error Alert */}
+                {errorMessage && (
+                  <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-start gap-2.5 leading-relaxed font-sans">
+                    <svg className="w-4 h-4 text-red-400 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <span>{errorMessage}</span>
+                  </div>
+                )}
 
                 {/* Submit Button */}
                 <button
