@@ -18,6 +18,7 @@ import { GithubIcon } from '../components/icons/GithubIcon';
 import { StarIcon } from '../components/icons/StarIcon';
 import { MailIcon } from '../components/icons/MailIcon';
 import { SearchModal } from '../components/SearchModal';
+import { useFont } from '../context/FontContext';
 
 interface DocsPageProps {
   onNavigateHome: () => void;
@@ -68,6 +69,8 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
   const [copiedSnippet, setCopiedSnippet] = useState<string | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const { fontMode, toggleFontMode } = useFont();
 
   const copyCode = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -136,29 +139,50 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
           </a>
         </div>
 
-        {/* Right: Capsule Bar with Distinct Pill Selections (Search | Repo ★) */}
+        {/* Right: Capsule Bar with Sliding Tab Physics and Font Switcher */}
         <div className="flex items-center">
-          <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300">
+          <div
+            onMouseLeave={() => setHoveredTab(null)}
+            className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300 relative"
+          >
             {/* Interactive Search Button: between '(' and '|' -> left fully rounded, right square rounded */}
             <button
               type="button"
               onClick={() => setIsSearchOpen(true)}
-              className="inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-full rounded-r-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0 group"
+              onMouseEnter={() => setHoveredTab('search')}
+              className="relative inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-full rounded-r-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
               title="Search documentation (⌘K)"
             >
-              <Search className="w-3.5 h-3.5 text-zinc-400 group-hover:text-white transition-colors" />
-              <span className="hidden sm:inline">Search docs...</span>
-              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 bg-[#161618] rounded border border-zinc-700/60">
-                ⌘K
-              </kbd>
+              {hoveredTab === 'search' && (
+                <motion.div
+                  layoutId="docsHoverPill"
+                  className="absolute inset-0 bg-[#26262a] rounded-l-full rounded-r-md"
+                  transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-2.5">
+                <Search className="w-3.5 h-3.5 text-zinc-400 group-hover:text-white transition-colors" />
+                <span className="hidden sm:inline">Search docs...</span>
+                <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 bg-[#161618] rounded border border-zinc-700/60">
+                  ⌘K
+                </kbd>
+              </span>
             </button>
 
             {/* Mobile Menu Toggle (lg:hidden): between '|' and '|' -> square rounded tab */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white border-0 cursor-pointer mx-0.5"
+              onMouseEnter={() => setHoveredTab('menu')}
+              className="lg:hidden relative inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-transparent text-zinc-300 hover:text-white border-0 cursor-pointer mx-0.5"
             >
-              <span>{mobileMenuOpen ? 'Close' : 'Topics'}</span>
+              {hoveredTab === 'menu' && (
+                <motion.div
+                  layoutId="docsHoverPill"
+                  className="absolute inset-0 bg-[#26262a] rounded-md"
+                  transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                />
+              )}
+              <span className="relative z-10">{mobileMenuOpen ? 'Close' : 'Topics'}</span>
             </button>
 
             {/* Vertical Divider */}
@@ -171,12 +195,55 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 e.preventDefault();
                 onNavigateContact?.();
               }}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0"
+              onMouseEnter={() => setHoveredTab('contact')}
+              className="relative inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0"
               title="Contact StackPilot Team"
             >
-              <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-              <span className="hidden sm:inline">Contact</span>
+              {hoveredTab === 'contact' && (
+                <motion.div
+                  layoutId="docsHoverPill"
+                  className="absolute inset-0 bg-[#26262a] rounded-md"
+                  transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <span className="hidden sm:inline">Contact</span>
+              </span>
             </a>
+
+            {/* Vertical Divider */}
+            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
+
+            {/* Font Switcher Tab: between '|' and '|' -> square rounded tab */}
+            <button
+              type="button"
+              onClick={toggleFontMode}
+              onMouseEnter={() => setHoveredTab('font')}
+              className="relative inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
+              title={fontMode === 'stylish' ? 'Switch to Normal font' : 'Switch to Handwriting / Stylish font'}
+            >
+              {hoveredTab === 'font' && (
+                <motion.div
+                  layoutId="docsHoverPill"
+                  className="absolute inset-0 bg-[#26262a] rounded-md"
+                  transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5 font-mono">
+                {fontMode === 'stylish' ? (
+                  <>
+                    <span className="text-xs">✍️</span>
+                    <span className="hidden sm:inline text-[11px] text-zinc-300">Stylish</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] font-bold text-emerald-400">Aa</span>
+                    <span className="hidden sm:inline text-[11px] text-zinc-300">Normal</span>
+                  </>
+                )}
+              </span>
+            </button>
 
             {/* Vertical Divider */}
             <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
@@ -186,14 +253,24 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               href="https://github.com/AdityaRoy999/StackPilot"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-md rounded-r-full bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0 group"
+              onMouseEnter={() => setHoveredTab('repo')}
+              className="relative inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-md rounded-r-full bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
               title="View StackPilot on GitHub"
             >
-              <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
-              <span className="hidden sm:inline">Repo</span>
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
-                <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
-                <span>Star</span>
+              {hoveredTab === 'repo' && (
+                <motion.div
+                  layoutId="docsHoverPill"
+                  className="absolute inset-0 bg-[#26262a] rounded-l-md rounded-r-full"
+                  transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-2">
+                <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
+                <span className="hidden sm:inline">Repo</span>
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
+                  <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                  <span>Star</span>
+                </span>
               </span>
             </a>
           </div>

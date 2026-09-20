@@ -1,114 +1,87 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BlurText } from './reactbits/BlurText';
 import { ScriptBox } from './ScriptBox';
 
-interface MorphWord {
-  text: string;
-  stops: string[];
-  glow: string;
-}
-
-const MORPH_WORDS: MorphWord[] = [
-  {
-    text: 'Deployment',
-    stops: ['#34d399', '#2dd4bf', '#22d3ee'],
-    glow: 'rgba(52, 211, 153, 0.28)',
-  },
-  {
-    text: 'Testing',
-    stops: ['#67e8f9', '#38bdf8', '#818cf8'],
-    glow: 'rgba(56, 189, 248, 0.28)',
-  },
-];
-
-// Helper to interpolate between hex colors for multi-stop letter gradients
-function interpolateColor(color1: string, color2: string, factor: number): string {
-  const c1 = parseInt(color1.replace('#', ''), 16);
-  const c2 = parseInt(color2.replace('#', ''), 16);
-
-  const r1 = (c1 >> 16) & 255;
-  const g1 = (c1 >> 8) & 255;
-  const b1 = c1 & 255;
-
-  const r2 = (c2 >> 16) & 255;
-  const g2 = (c2 >> 8) & 255;
-  const b2 = c2 & 255;
-
-  const r = Math.round(r1 + factor * (r2 - r1));
-  const g = Math.round(g1 + factor * (g2 - g1));
-  const b = Math.round(b1 + factor * (b2 - b1));
-
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
-function getGradientLetterColors(stops: string[], count: number): string[] {
-  if (count <= 1) return [stops[0]];
-  const colors: string[] = [];
-  const segments = stops.length - 1;
-
-  for (let i = 0; i < count; i++) {
-    const globalT = i / (count - 1);
-    const segment = Math.min(Math.floor(globalT * segments), segments - 1);
-    const segmentT = (globalT - segment / segments) * segments;
-    colors.push(interpolateColor(stops[segment], stops[segment + 1], segmentT));
-  }
-  return colors;
-}
+const MORPH_WORDS = ['Deployment', 'Testing'];
+const LINE_1_TEXT = 'Autonomous AI';
+const PLATFORM_TEXT = 'Platform';
 
 export const Hero: React.FC = () => {
   const [wordIndex, setWordIndex] = useState(0);
+  const [hasLanded, setHasLanded] = useState(false);
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    // Mark initial landing complete after the cascading landing animation finishes (~1.5s)
+    const landingTimer = setTimeout(() => {
+      setHasLanded(true);
+    }, 1500);
+
+    // Continuous word morph interval
+    const morphTimer = setInterval(() => {
       setWordIndex((prev) => (prev + 1) % MORPH_WORDS.length);
     }, 3200);
-    return () => clearInterval(timer);
+
+    return () => {
+      clearTimeout(landingTimer);
+      clearInterval(morphTimer);
+    };
   }, []);
 
   const currentWord = MORPH_WORDS[wordIndex];
-  const letterColors = getGradientLetterColors(currentWord.stops, currentWord.text.length);
+
+  // Calculate delays for the initial landing animation cascade across the full headline
+  const line1Chars = LINE_1_TEXT.split('');
+  const platformChars = PLATFORM_TEXT.split('');
 
   return (
     <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
-      {/* Main Title with BlurText animation, Fuzzy Bubbles bold, & Caveat Brush bold on the morphing word */}
+      {/* Main Title - Unified font-headline across the entire headline with full cascading landing animation */}
       <div className="w-full max-w-5xl mx-auto mb-3 flex flex-col items-center justify-center select-none">
-        <h1
-          style={{ fontFamily: "'Fuzzy Bubbles', cursive, sans-serif" }}
-          className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.04] text-center"
-        >
-          <BlurText
-            text="Autonomous AI"
-            as="span"
-            delay={25}
-            animateBy="letters"
-            direction="top"
-            stepDuration={0.25}
-            className="justify-center text-center text-zinc-50 font-bold block"
-          />
+        <h1 className="font-headline text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.04] text-center">
+          {/* First Line: Autonomous AI - Full landing animation */}
+          <span className="justify-center text-center text-zinc-50 font-bold block">
+            {line1Chars.map((char, idx) => (
+              <motion.span
+                key={idx}
+                initial={{ filter: 'blur(10px)', opacity: 0, y: -45 }}
+                animate={{
+                  filter: ['blur(10px)', 'blur(4px)', 'blur(0px)'],
+                  opacity: [0, 0.5, 1],
+                  y: [-45, 5, 0],
+                }}
+                transition={{
+                  duration: 0.38,
+                  times: [0, 0.55, 1],
+                  delay: idx * 0.025,
+                  ease: [0.22, 1, 0.36, 1],
+                }}
+                className="inline-block"
+              >
+                {char === ' ' ? '\u00A0' : char}
+              </motion.span>
+            ))}
+          </span>
+
+          {/* Second Line: [Deployment/Testing] Platform */}
           <motion.span
             layout
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
             className="inline-flex items-center justify-center gap-1 sm:gap-1.5 mt-0"
           >
+            {/* Morphing Word without colored gradients - Pure crisp white matching the headline */}
             <span className="relative inline-flex items-center justify-center">
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
-                  key={currentWord.text}
+                  key={currentWord}
                   exit={{
                     opacity: 0,
                     y: 16,
                     filter: 'blur(8px)',
-                    transition: { duration: 0.22, ease: 'easeIn' }
+                    transition: { duration: 0.22, ease: 'easeIn' },
                   }}
-                  className="inline-flex items-center font-bold text-[1.18em] sm:text-[1.22em] tracking-normal"
-                  style={{
-                    fontFamily: "'Caveat Brush', cursive, sans-serif",
-                    filter: `drop-shadow(0 0 24px ${currentWord.glow})`,
-                    WebkitTextStroke: '0.6px currentColor',
-                  }}
+                  className="inline-flex items-center font-bold tracking-normal text-zinc-50"
                 >
-                  {currentWord.text.split('').map((char, idx) => (
+                  {currentWord.split('').map((char, idx) => (
                     <motion.span
                       key={idx}
                       initial={{ filter: 'blur(10px)', opacity: 0, y: -45 }}
@@ -120,15 +93,11 @@ export const Hero: React.FC = () => {
                       transition={{
                         duration: 0.38,
                         times: [0, 0.55, 1],
-                        delay: idx * 0.03,
+                        // If landing, stagger after line 1; during subsequent morphs, stagger from 0
+                        delay: hasLanded ? idx * 0.03 : (line1Chars.length + idx) * 0.025,
                         ease: [0.22, 1, 0.36, 1],
                       }}
-                      style={{
-                        color: letterColors[idx],
-                        display: 'inline-block',
-                        fontWeight: 700,
-                        willChange: 'transform, filter, opacity',
-                      }}
+                      className="inline-block font-bold"
                     >
                       {char}
                     </motion.span>
@@ -136,21 +105,36 @@ export const Hero: React.FC = () => {
                 </motion.span>
               </AnimatePresence>
             </span>
-            <span
-              style={{ fontFamily: "'Fuzzy Bubbles', cursive, sans-serif" }}
-              className="text-zinc-50 font-bold ml-0.5"
-            >
-              Platform
+
+            {/* Platform - Participates in initial landing animation then remains stable */}
+            <span className="text-zinc-50 font-bold ml-0.5 inline-flex items-center">
+              {platformChars.map((char, idx) => (
+                <motion.span
+                  key={idx}
+                  initial={{ filter: 'blur(10px)', opacity: 0, y: -45 }}
+                  animate={{
+                    filter: ['blur(10px)', 'blur(4px)', 'blur(0px)'],
+                    opacity: [0, 0.5, 1],
+                    y: [-45, 5, 0],
+                  }}
+                  transition={{
+                    duration: 0.38,
+                    times: [0, 0.55, 1],
+                    delay: (line1Chars.length + currentWord.length + idx) * 0.025,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                  className="inline-block font-bold"
+                >
+                  {char}
+                </motion.span>
+              ))}
             </span>
           </motion.span>
         </h1>
       </div>
 
-      {/* Subtitle in Fuzzy Bubbles normal text */}
-      <p
-        style={{ fontFamily: "'Fuzzy Bubbles', cursive, sans-serif" }}
-        className="mt-3 text-base sm:text-lg md:text-xl text-zinc-300 max-w-3xl mx-auto leading-relaxed font-normal"
-      >
+      {/* Subtitle - Inherits body font automatically (Fuzzy Bubbles in stylish mode, modern sans in normal mode) */}
+      <p className="mt-3 text-base sm:text-lg md:text-xl text-zinc-300 max-w-3xl mx-auto leading-relaxed font-normal">
         Deploy any web application, repository, or full-stack project 100% free for
         instant autonomous testing. Connect your codebase—our self-healing AI
         platform auto-provisions isolated sandboxes, audits browser workflows at

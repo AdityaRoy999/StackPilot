@@ -8,6 +8,7 @@ import {
 import { GithubIcon } from '../components/icons/GithubIcon';
 import { StarIcon } from '../components/icons/StarIcon';
 import { SendIcon } from '../components/icons/SendIcon';
+import { useFont } from '../context/FontContext';
 
 interface ContactPageProps {
   onNavigateHome: () => void;
@@ -23,6 +24,8 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const { fontMode, toggleFontMode } = useFont();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,35 +82,94 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
           </a>
         </div>
 
-        {/* Right: Unified Navigation Capsule */}
-        <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300">
+        {/* Right: Unified Navigation Capsule with Sliding Tab Physics and Font Switcher */}
+        <div
+          onMouseLeave={() => setHoveredTab(null)}
+          className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300 relative"
+        >
+          {/* Docs Tab: between '(' and '|' -> left fully rounded, right square rounded */}
           <a
             href="/docs"
             onClick={(e) => {
               e.preventDefault();
               onNavigateDocs();
             }}
-            className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-l-full rounded-r-md bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0"
+            onMouseEnter={() => setHoveredTab('docs')}
+            className="relative inline-flex items-center gap-1.5 h-8 px-3.5 rounded-l-full rounded-r-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0"
             title="StackPilot Documentation"
           >
-            <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>Docs</span>
+            {hoveredTab === 'docs' && (
+              <motion.div
+                layoutId="contactHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-l-full rounded-r-md"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Docs</span>
+            </span>
           </a>
 
+          {/* Vertical Divider */}
           <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
 
+          {/* Font Switcher Tab: between '|' and '|' -> square rounded tab */}
+          <button
+            type="button"
+            onClick={toggleFontMode}
+            onMouseEnter={() => setHoveredTab('font')}
+            className="relative inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
+            title={fontMode === 'stylish' ? 'Switch to Normal font' : 'Switch to Handwriting / Stylish font'}
+          >
+            {hoveredTab === 'font' && (
+              <motion.div
+                layoutId="contactHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-md"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5 font-mono">
+              {fontMode === 'stylish' ? (
+                <>
+                  <span className="text-xs">✍️</span>
+                  <span className="hidden sm:inline text-[11px] text-zinc-300">Stylish</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-[11px] font-bold text-emerald-400">Aa</span>
+                  <span className="hidden sm:inline text-[11px] text-zinc-300">Normal</span>
+                </>
+              )}
+            </span>
+          </button>
+
+          {/* Vertical Divider */}
+          <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
+
+          {/* GitHub: between '|' and ')' -> left square rounded, right fully rounded */}
           <a
             href="https://github.com/AdityaRoy999/StackPilot"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 h-8 px-3.5 rounded-l-md rounded-r-full bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0 group"
+            onMouseEnter={() => setHoveredTab('repo')}
+            className="relative inline-flex items-center gap-2 h-8 px-3.5 rounded-l-md rounded-r-full bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
             title="View StackPilot on GitHub"
           >
-            <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
-            <span className="hidden sm:inline">Repo</span>
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
-              <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
-              <span>Star</span>
+            {hoveredTab === 'repo' && (
+              <motion.div
+                layoutId="contactHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-l-md rounded-r-full"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-2">
+              <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
+              <span className="hidden sm:inline">Repo</span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
+                <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                <span>Star</span>
+              </span>
             </span>
           </a>
         </div>

@@ -28,6 +28,21 @@
 @tailwind components;
 @tailwind utilities;
 
+:root,
+:root[data-font="stylish"],
+body[data-font="stylish"] {
+  --app-font-body: 'Fuzzy Bubbles', cursive, sans-serif;
+  --app-font-heading: 'Caveat Brush', cursive, sans-serif;
+  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+:root[data-font="normal"],
+body[data-font="normal"] {
+  --app-font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --app-font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --app-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
 @layer base {
   :root {
     --background: 0 0% 0%;
@@ -37,9 +52,26 @@
   body {
     background-color: #000000;
     color: #f4f4f5;
-    font-family: 'Fuzzy Bubbles', cursive, sans-serif !important;
-    font-weight: 400;
+    font-family: var(--app-font-body) !important;
   }
+
+  /* Form controls inherit font so all forms and inputs throughout the site automatically switch */
+  input, textarea, select, button {
+    font-family: inherit;
+  }
+
+  /* Monospace stays crisp for commands, terminals, and code */
+  code, pre, kbd, .font-mono {
+    font-family: var(--app-font-mono) !important;
+  }
+}
+
+.font-headline {
+  font-family: var(--app-font-heading) !important;
+}
+
+.font-body-app {
+  font-family: var(--app-font-body) !important;
 }
 
 /* Custom minimal scrollbar */

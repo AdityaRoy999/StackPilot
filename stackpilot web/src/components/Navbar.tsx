@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen } from 'lucide-react';
 import { GithubIcon } from './icons/GithubIcon';
 import { StarIcon } from './icons/StarIcon';
 import { UsersIcon } from './icons/UsersIcon';
 import { MailIcon } from './icons/MailIcon';
+import { useFont } from '../context/FontContext';
 
 interface NavbarProps {
   onNavigateDocs?: () => void;
@@ -14,6 +16,8 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, onNavigateContact }) => {
   const [stars, setStars] = useState<number | null>(null);
   const [visitors, setVisitors] = useState<number>(1482);
+  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const { fontMode, toggleFontMode } = useFont();
 
   useEffect(() => {
     // 1. Fetch live GitHub stars from repo
@@ -79,9 +83,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
         </a>
       </div>
 
-      {/* Right side: Unified Capsule Pill (Visitors | Docs | GitHub ★ 1) */}
+      {/* Right side: Unified Capsule Pill with Animated Sliding Hover Tab Physics */}
       <div className="pointer-events-auto">
-        <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs font-mono text-zinc-300 backdrop-blur-xl">
+        <div
+          onMouseLeave={() => setHoveredTab(null)}
+          className="inline-flex items-center h-10 p-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs font-mono text-zinc-300 backdrop-blur-xl relative"
+        >
           {/* Visitors: between '(' and '|' -> left fully rounded, right square rounded */}
           <div
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-l-full rounded-r-md text-zinc-300 select-none"
@@ -96,53 +103,116 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
           {/* Vertical Divider */}
           <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
 
-          {/* Docs: between '|' and '|' -> square rounded tab */}
+          {/* Docs: between '|' and '|' -> square rounded tab with sliding hover animation */}
           <a
             href="/docs"
             onClick={(e) => {
               e.preventDefault();
               onNavigateDocs?.();
             }}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent hover:bg-[#242428] text-zinc-400 hover:text-white transition-all cursor-pointer select-none"
+            onMouseEnter={() => setHoveredTab('docs')}
+            className="relative inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none"
             title="StackPilot Documentation"
           >
-            <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>Docs</span>
+            {hoveredTab === 'docs' && (
+              <motion.div
+                layoutId="navbarHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-md"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Docs</span>
+            </span>
           </a>
 
           {/* Vertical Divider */}
           <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
 
-          {/* Contact: between '|' and '|' -> square rounded tab */}
+          {/* Contact: between '|' and '|' -> square rounded tab with sliding hover animation */}
           <a
             href="/contact"
             onClick={(e) => {
               e.preventDefault();
               onNavigateContact?.();
             }}
-            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent hover:bg-[#242428] text-zinc-400 hover:text-white transition-all cursor-pointer select-none"
+            onMouseEnter={() => setHoveredTab('contact')}
+            className="relative inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none"
             title="Contact StackPilot Team"
           >
-            <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-            <span>Contact</span>
+            {hoveredTab === 'contact' && (
+              <motion.div
+                layoutId="navbarHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-md"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5">
+              <MailIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              <span>Contact</span>
+            </span>
           </a>
 
           {/* Vertical Divider */}
           <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
 
-          {/* GitHub: between '|' and ')' -> left square rounded, right fully rounded */}
+          {/* Font Switcher Tab: between '|' and '|' -> lets visitor choose between normal and stylish font */}
+          <button
+            type="button"
+            onClick={toggleFontMode}
+            onMouseEnter={() => setHoveredTab('font')}
+            className="relative inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
+            title={fontMode === 'stylish' ? 'Switch to Normal font' : 'Switch to Handwriting / Stylish font'}
+          >
+            {hoveredTab === 'font' && (
+              <motion.div
+                layoutId="navbarHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-md"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-1.5 font-mono">
+              {fontMode === 'stylish' ? (
+                <>
+                  <span className="text-xs">✍️</span>
+                  <span className="hidden sm:inline text-[11px] text-zinc-300">Stylish</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-[11px] font-bold text-emerald-400">Aa</span>
+                  <span className="hidden sm:inline text-[11px] text-zinc-300">Normal</span>
+                </>
+              )}
+            </span>
+          </button>
+
+          {/* Vertical Divider */}
+          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 select-none mx-0.5" />
+
+          {/* GitHub: between '|' and ')' -> left square rounded, right fully rounded with sliding hover animation */}
           <a
             href="https://github.com/AdityaRoy999/StackPilot"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 h-8 px-3 rounded-l-md rounded-r-full bg-transparent hover:bg-[#242428] text-zinc-400 hover:text-white transition-all cursor-pointer select-none group"
+            onMouseEnter={() => setHoveredTab('github')}
+            className="relative inline-flex items-center gap-2 h-8 px-3 rounded-l-md rounded-r-full bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none group"
             title="View StackPilot on GitHub"
           >
-            <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
-            <span className="hidden sm:inline">GitHub</span>
-            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] text-zinc-300 border border-zinc-700/50">
-              <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
-              <span>{stars !== null ? stars : '1'}</span>
+            {hoveredTab === 'github' && (
+              <motion.div
+                layoutId="navbarHoverPill"
+                className="absolute inset-0 bg-[#26262a] rounded-l-md rounded-r-full"
+                transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+              />
+            )}
+            <span className="relative z-10 flex items-center gap-2">
+              <GithubIcon className="w-3.5 h-3.5 text-zinc-300 group-hover:text-white shrink-0 transition-colors" />
+              <span className="hidden sm:inline">GitHub</span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] text-zinc-300 border border-zinc-700/50">
+                <StarIcon className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                <span>{stars !== null ? stars : '1'}</span>
+              </span>
             </span>
           </a>
         </div>

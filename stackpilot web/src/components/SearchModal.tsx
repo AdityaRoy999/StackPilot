@@ -225,7 +225,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ type: 'spring', stiffness: 450, damping: 30 }}
             data-lenis-prevent
-            className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 font-sans my-auto"
+            className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 my-auto"
           >
             {/* Search Input Bar */}
             <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 border-b border-zinc-800/80 bg-[#1a1a1e]">
