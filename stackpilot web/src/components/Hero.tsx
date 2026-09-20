@@ -72,8 +72,11 @@ export const Hero: React.FC = () => {
   return (
     <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
       {/* Main Title with BlurText animation, Fuzzy Bubbles bold, & Caveat Brush bold on the morphing word */}
-      <div className="w-full max-w-5xl mx-auto mb-4 flex flex-col items-center justify-center select-none font-bubbles">
-        <h1 className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.06] text-center font-bubbles">
+      <div className="w-full max-w-5xl mx-auto mb-3 flex flex-col items-center justify-center select-none">
+        <h1
+          style={{ fontFamily: "'Fuzzy Bubbles', cursive, sans-serif" }}
+          className="text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.04] text-center"
+        >
           <BlurText
             text="Autonomous AI"
             as="span"
@@ -81,12 +84,12 @@ export const Hero: React.FC = () => {
             animateBy="letters"
             direction="top"
             stepDuration={0.25}
-            className="justify-center text-center text-zinc-50 font-bold font-bubbles block"
+            className="justify-center text-center text-zinc-50 font-bold block"
           />
           <motion.span
             layout
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="inline-flex items-center justify-center gap-1 sm:gap-1.5 mt-0 sm:mt-0.5"
+            className="inline-flex items-center justify-center gap-1 sm:gap-1.5 mt-0"
           >
             <span className="relative inline-flex items-center justify-center">
               <AnimatePresence mode="wait" initial={false}>
@@ -98,8 +101,9 @@ export const Hero: React.FC = () => {
                     filter: 'blur(8px)',
                     transition: { duration: 0.22, ease: 'easeIn' }
                   }}
-                  className="inline-flex items-center font-caveat font-bold text-[1.18em] sm:text-[1.22em] tracking-normal"
+                  className="inline-flex items-center font-bold text-[1.18em] sm:text-[1.22em] tracking-normal"
                   style={{
+                    fontFamily: "'Caveat Brush', cursive, sans-serif",
                     filter: `drop-shadow(0 0 24px ${currentWord.glow})`,
                     WebkitTextStroke: '0.6px currentColor',
                   }}
@@ -132,13 +136,21 @@ export const Hero: React.FC = () => {
                 </motion.span>
               </AnimatePresence>
             </span>
-            <span className="text-zinc-50 font-bold font-bubbles">Platform</span>
+            <span
+              style={{ fontFamily: "'Fuzzy Bubbles', cursive, sans-serif" }}
+              className="text-zinc-50 font-bold ml-0.5"
+            >
+              Platform
+            </span>
           </motion.span>
         </h1>
       </div>
 
       {/* Subtitle in Fuzzy Bubbles normal text */}
-      <p className="mt-3 text-base sm:text-lg md:text-xl text-zinc-400 max-w-3xl mx-auto leading-relaxed font-normal font-bubbles">
+      <p
+        style={{ fontFamily: "'Fuzzy Bubbles', cursive, sans-serif" }}
+        className="mt-3 text-base sm:text-lg md:text-xl text-zinc-300 max-w-3xl mx-auto leading-relaxed font-normal"
+      >
         Deploy any web application, repository, or full-stack project 100% free for
         instant autonomous testing. Connect your codebase—our self-healing AI
         platform auto-provisions isolated sandboxes, audits browser workflows at

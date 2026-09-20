@@ -1,4 +1,29 @@
 @import url('https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Fuzzy+Bubbles:wght@400;700&display=swap');
+
+@font-face {
+  font-family: 'Fuzzy Bubbles';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/fuzzybubbles/v9/6qLGKZMbrgv9pwtjPEVNV0F2NnM.ttf) format('truetype');
+}
+
+@font-face {
+  font-family: 'Fuzzy Bubbles';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/fuzzybubbles/v9/6qLbKZMbrgv9pwtjPEVNV0F2Ds_WQxM.ttf) format('truetype');
+}
+
+@font-face {
+  font-family: 'Caveat Brush';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(https://fonts.gstatic.com/s/caveatbrush/v12/EYq0maZfwr9S9-ETZc3fKXtMWw.ttf) format('truetype');
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -12,9 +37,8 @@
   body {
     background-color: #000000;
     color: #f4f4f5;
-    font-family: 'Fuzzy Bubbles', cursive, sans-serif;
+    font-family: 'Fuzzy Bubbles', cursive, sans-serif !important;
     font-weight: 400;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
 
