@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Copy, Check } from 'lucide-react';
-import { SCRIPTS } from '../config/scripts';
+import { SCRIPTS, ScriptTab } from '../config/scripts';
 import { useScript } from '../context/ScriptContext';
 import { BlurText } from './reactbits/BlurText';
 
 export const ScriptBox: React.FC = () => {
   const { activeTab, setActiveTab, activeScript } = useScript();
   const [copied, setCopied] = useState(false);
+  const [hoveredTab, setHoveredTab] = useState<ScriptTab | null>(null);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(activeScript.command);
@@ -19,8 +20,11 @@ export const ScriptBox: React.FC = () => {
     <div className="w-full max-w-[650px] mx-auto mt-8 flex justify-center px-4 sm:px-0">
       {/* Unified Bento Grid Card - Stable fixed width so tab switching never resizes the card */}
       <div className="w-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all shadow-2xl">
-        {/* Top Bento Row: Platform Options switcher (left-aligned flush with command well below) */}
-        <div className="flex items-center gap-1 sm:gap-1.5 px-0 py-0.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs font-mono select-none">
+        {/* Top Bento Row: Platform Options switcher with sliding active & hover tab physics */}
+        <div
+          onMouseLeave={() => setHoveredTab(null)}
+          className="flex items-center gap-1 sm:gap-1.5 px-0 py-0.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
+        >
           {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
             // Exact corner radii: ( and | is rounded-l-full rounded-r-md; | and | is rounded-md; | and ) is rounded-l-md rounded-r-full
@@ -42,14 +46,24 @@ export const ScriptBox: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setActiveTab(script.id)}
-                  className={`relative px-3.5 py-1.5 ${cornerClass} text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  onMouseEnter={() => setHoveredTab(script.id)}
+                  className={`relative px-3.5 py-1.5 ${cornerClass} text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
                     isActive
                       ? 'text-zinc-950 font-semibold'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#242428]'
+                      : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                   title={`Switch to ${script.label}`}
                 >
-                  {/* Smooth sliding pill animation */}
+                  {/* Smooth sliding hover pill across inactive tabs */}
+                  {hoveredTab === script.id && !isActive && (
+                    <motion.div
+                      layoutId="scriptTabHoverPill"
+                      className={`absolute inset-0 bg-[#26262a] ${cornerClass}`}
+                      transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                    />
+                  )}
+
+                  {/* Smooth sliding active tab pill */}
                   {isActive && (
                     <motion.div
                       layoutId="activeTabSelection"

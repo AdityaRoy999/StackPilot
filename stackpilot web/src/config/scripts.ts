@@ -6,16 +6,19 @@ export interface ScriptOption {
   command: string;
 }
 
+// Hosted directly on Vercel / domain instead of raw GitHub
+const BASE_HOST = 'https://stackpilot.vercel.app';
+
 export const SCRIPTS: ScriptOption[] = [
   {
     id: 'bash',
     label: 'Linux / macOS',
-    command: 'curl -fsSL https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.sh | bash',
+    command: `curl -fsSL ${BASE_HOST}/install.sh | bash`,
   },
   {
     id: 'powershell',
     label: 'Windows',
-    command: 'irm https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.ps1 | iex',
+    command: `irm ${BASE_HOST}/install.ps1 | iex`,
   },
   {
     id: 'docker',
@@ -25,7 +28,7 @@ export const SCRIPTS: ScriptOption[] = [
   {
     id: 'core',
     label: 'Core QA (1.5GB RAM)',
-    command: 'curl -fsSL https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.sh | bash -s -- --profile core',
+    command: `curl -fsSL ${BASE_HOST}/install.sh | bash -s -- --profile core`,
   },
   {
     id: 'cli',

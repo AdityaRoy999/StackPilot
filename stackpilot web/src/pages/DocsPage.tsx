@@ -499,10 +499,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                     <span className="text-xs font-mono text-zinc-400 font-semibold">Linux VPS &amp; macOS (Bash / Zsh)</span>
                     <div className="relative group rounded-2xl border border-zinc-800 bg-[#18181b] p-4 font-mono text-xs text-zinc-200 flex items-center justify-between gap-4">
                       <code className="text-zinc-200 break-all">
-                        curl -fsSL https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.sh | bash
+                        curl -fsSL https://stackpilot.vercel.app/install.sh | bash
                       </code>
                       <button
-                        onClick={() => copyCode('curl -fsSL https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.sh | bash', 'inst-sh')}
+                        onClick={() => copyCode('curl -fsSL https://stackpilot.vercel.app/install.sh | bash', 'inst-sh')}
                         className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shrink-0 border-0 cursor-pointer transition-colors"
                         title="Copy command"
                       >
@@ -516,10 +516,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                     <span className="text-xs font-mono text-zinc-400 font-semibold">Windows (PowerShell)</span>
                     <div className="relative group rounded-2xl border border-zinc-800 bg-[#18181b] p-4 font-mono text-xs text-zinc-200 flex items-center justify-between gap-4">
                       <code className="text-zinc-200 break-all">
-                        iwr -useb https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.ps1 | iex
+                        irm https://stackpilot.vercel.app/install.ps1 | iex
                       </code>
                       <button
-                        onClick={() => copyCode('iwr -useb https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.ps1 | iex', 'inst-ps1')}
+                        onClick={() => copyCode('irm https://stackpilot.vercel.app/install.ps1 | iex', 'inst-ps1')}
                         className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shrink-0 border-0 cursor-pointer transition-colors"
                         title="Copy command"
                       >

@@ -33,9 +33,9 @@ export const ScriptCopyHub: React.FC = () => {
 
     switch (activeTab) {
       case 'bash':
-        return `curl -fsSL https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.sh | bash -s --${profileFlag}`;
+        return `curl -fsSL https://stackpilot.vercel.app/install.sh | bash -s --${profileFlag}`;
       case 'powershell':
-        return `powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/AdityaRoy999/StackPilot/main/scripts/install.ps1 | iex"`;
+        return `powershell -ExecutionPolicy Bypass -c "irm https://stackpilot.vercel.app/install.ps1 | iex"`;
       case 'docker':
         return `git clone https://github.com/AdityaRoy999/StackPilot.git && cd StackPilot && docker compose${profileFlag} up -d`;
       case 'cli':
