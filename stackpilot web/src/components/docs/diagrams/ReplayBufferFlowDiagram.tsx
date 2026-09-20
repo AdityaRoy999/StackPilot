@@ -80,7 +80,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
   const secondsAgo = ((700 - simulatedFrame) * (11.6 / 700)).toFixed(1);
 
   return (
-    <div className="my-8 rounded-2xl border border-zinc-800/90 bg-[#18181b]/90 p-5 sm:p-6 shadow-xl space-y-6">
+    <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-6">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
         <div className="space-y-1">
@@ -95,18 +95,6 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
           <p className="text-xs text-zinc-400">
             Zero-leak circular memory pipeline for instant 60 FPS visual session rewinds.
           </p>
-        </div>
-
-        {/* Status badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Activity className="w-3 h-3 text-white" />
-            <span>Capacity: 700 Frames (~24MB)</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Zap className="w-3 h-3 text-white" />
-            <span>~11.6s Time-Travel</span>
-          </span>
         </div>
       </div>
 
@@ -126,8 +114,8 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
                 onClick={() => setSelectedStage(stage)}
                 className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800 text-white shadow-md'
-                    : 'bg-zinc-900/70 hover:bg-zinc-800/50'
+                    ? 'bg-[#222228] text-white shadow-md'
+                    : 'bg-[#18181c]/80 hover:bg-[#202026]'
                 }`}
               >
                 <div className="flex items-center justify-between">
@@ -155,7 +143,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
       {/* Decision Flow Breakdown - Direct Flat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Gate 1 */}
-        <div className="p-4 rounded-xl bg-zinc-900/80 border-0 space-y-3">
+        <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-3">
           <div className="flex items-center justify-between pb-2">
             <span className="text-xs font-mono font-bold text-white flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
@@ -176,7 +164,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
         </div>
 
         {/* Gate 2 */}
-        <div className="p-4 rounded-xl bg-zinc-900/80 border-0 space-y-3">
+        <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-3">
           <div className="flex items-center justify-between pb-2">
             <span className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
               <Database className="w-3.5 h-3.5 text-white" />
@@ -202,7 +190,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
       </div>
 
       {/* Interactive Time-Travel Scrubber Simulator */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-4">
+      <div className="p-4 sm:p-5 rounded-xl bg-[#141416] border-0 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
@@ -218,7 +206,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
+            <span className="text-[11px] font-mono text-zinc-400 bg-[#18181c] px-2 py-1 rounded border-0">
               Seek: <span className="text-white font-bold">{simulatedFrame} / 700</span>
             </span>
           </div>
@@ -242,7 +230,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
       </div>
 
       {/* Selected Stage Detail Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+      <div className="p-4 sm:p-5 rounded-xl bg-[#0a0a0c] border-0 space-y-3">
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">

@@ -20,14 +20,22 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
         aria-hidden="true"
       />
 
-      {/* Giant Chronicle-Style Wordmark: Clean, Monolithic Typography Fading into Background */}
-      <div className="w-full overflow-visible flex items-center justify-center my-6 sm:my-10 px-4 sm:px-8 relative">
-        <div className="relative select-none pointer-events-none">
+      {/* Giant Chronicle-Style Wordmark: Clean, Monolithic Typography Fading Smoothly into Background */}
+      <div className="w-full overflow-hidden flex items-center justify-center mt-6 sm:mt-10 mb-2 sm:mb-4 px-4 sm:px-8 relative">
+        <div
+          className="relative select-none pointer-events-none pb-4"
+          style={{
+            maskImage:
+              'linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.85) 35%, rgba(0, 0, 0, 0.35) 65%, rgba(0, 0, 0, 0.06) 85%, transparent 100%)',
+            WebkitMaskImage:
+              'linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.85) 35%, rgba(0, 0, 0, 0.35) 65%, rgba(0, 0, 0, 0.06) 85%, transparent 100%)',
+          }}
+        >
           <h2
-            className="font-headline text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.02em] sm:tracking-[0.01em] uppercase leading-[1.1] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
+            className="font-headline text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.02em] sm:tracking-[0.01em] uppercase leading-[1.15] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
             style={{
               backgroundImage:
-                'linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.55) 28%, rgba(255, 255, 255, 0.18) 65%, rgba(255, 255, 255, 0.03) 88%, transparent 100%)',
+                'linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.55) 30%, rgba(255, 255, 255, 0.2) 62%, rgba(255, 255, 255, 0.04) 86%, transparent 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
             }}
@@ -37,8 +45,8 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
         </div>
       </div>
 
-      {/* Clean Bottom Navigation & Metadata Bar with Floating Capsule Bubble */}
-      <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 pt-8 border-t border-zinc-800/70 flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-zinc-400">
+      {/* Clean Bottom Navigation & Metadata Bar with Floating Capsule Bubble (Without harsh border line) */}
+      <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 pt-4 sm:pt-6 flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-zinc-400">
         {/* Left: Brand & Engine tagline */}
         <div className="flex items-center gap-2 text-zinc-400 text-xs">
           <span className="font-bold text-zinc-200">StackPilot</span>

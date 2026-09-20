@@ -71,24 +71,34 @@ export const App: React.FC = () => {
         <ScriptProvider>
           <SmoothScroll>
             <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-hidden">
+              {/* Rich Vibrant Bluish & Indigo Atmospheric Ambient Gradients */}
+              <div
+                className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none"
+                aria-hidden="true"
+              />
+              <div
+                className="fixed top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] pointer-events-none z-0 rounded-full select-none"
+                aria-hidden="true"
+              />
+
               {/* Full-screen Global React Bits Lightfall Background */}
               <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none">
                 <Lightfall
-                  colors={['#A6C8FF', '#5227FF', '#FF9FFC']}
+                  colors={['#60a5fa', '#3b82f6', '#4f46e5', '#818cf8', '#93c5fd', '#38bdf8']}
                   backgroundColor="#000000"
-                  speed={0.35}
-                  streakCount={2}
-                  streakWidth={0.8}
-                  streakLength={0.8}
-                  glow={0.6}
-                  density={0.12}
+                  speed={0.42}
+                  streakCount={5}
+                  streakWidth={0.9}
+                  streakLength={1.1}
+                  glow={0.8}
+                  density={0.32}
                   twinkle={0.5}
                   zoom={1.5}
-                  backgroundGlow={0.15}
-                  opacity={0.4}
+                  backgroundGlow={0.25}
+                  opacity={0.65}
                   mouseInteraction={true}
-                  mouseStrength={0.5}
-                  mouseRadius={0.4}
+                  mouseStrength={0.6}
+                  mouseRadius={0.45}
                 />
               </div>
 

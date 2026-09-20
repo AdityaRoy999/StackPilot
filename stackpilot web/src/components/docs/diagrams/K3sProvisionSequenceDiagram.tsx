@@ -121,7 +121,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
   const [selectedStep, setSelectedStep] = useState<ProvisionStep>(STEPS[3]); // default to firewall step
 
   return (
-    <div className="my-8 rounded-2xl border border-zinc-800/90 bg-[#18181b]/90 p-5 sm:p-6 shadow-xl space-y-6">
+    <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-6">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
         <div className="space-y-1">
@@ -137,18 +137,6 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
             One-click remote SSH provisioning with multi-distro adaptation and AES-256 encrypted kubeconfig.
           </p>
         </div>
-
-        {/* Status badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Shield className="w-3 h-3 text-white" />
-            <span>AES-256 Kubeconfig</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Radio className="w-3 h-3 text-white" />
-            <span>Zero Ingress Bloat</span>
-          </span>
-        </div>
       </div>
 
       {/* Required Firewall Holes Badges - Direct Flat Cards without nested border container */}
@@ -163,21 +151,21 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 text-xs space-y-1 hover:bg-zinc-800/80 transition-colors">
+          <div className="p-3 rounded-xl bg-[#18181c]/80 border-0 text-xs space-y-1 hover:bg-[#202026] transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 6443/tcp</span>
               <span className="text-[10px] text-zinc-400 font-normal">TCP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Kubernetes API Server communication and kubectl proxy.</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 text-xs space-y-1 hover:bg-zinc-800/80 transition-colors">
+          <div className="p-3 rounded-xl bg-[#18181c]/80 border-0 text-xs space-y-1 hover:bg-[#202026] transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 10250/tcp</span>
               <span className="text-[10px] text-zinc-400 font-normal">TCP</span>
             </div>
             <p className="text-[11px] text-zinc-400">Kubelet API for pod metrics, logs, and exec telemetry.</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 text-xs space-y-1 hover:bg-zinc-800/80 transition-colors">
+          <div className="p-3 rounded-xl bg-[#18181c]/80 border-0 text-xs space-y-1 hover:bg-[#202026] transition-colors">
             <div className="font-mono font-bold text-white flex items-center justify-between">
               <span>Port 8472/udp</span>
               <span className="text-[10px] text-zinc-400 font-normal">UDP</span>
@@ -198,7 +186,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className="p-3 rounded-xl bg-zinc-900/80 border-0 flex flex-col gap-1.5 transition-all hover:bg-zinc-800/80"
+                className="p-3 rounded-xl bg-[#18181c]/80 border-0 flex flex-col gap-1.5 transition-all hover:bg-[#202026]"
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
@@ -233,8 +221,8 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
                 onClick={() => setSelectedStep(step)}
                 className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800 text-white shadow-md'
-                    : 'bg-zinc-900/60 hover:bg-zinc-800/50'
+                    ? 'bg-[#222228] text-white shadow-md'
+                    : 'bg-[#18181c]/60 hover:bg-[#202026]/80'
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3">
@@ -254,7 +242,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
                       {step.ports && (
                         <div className="flex items-center gap-1">
                           {step.ports.map((pt, i) => (
-                            <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border-0">
+                            <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#202026] text-zinc-300 border-0">
                               {pt}
                             </span>
                           ))}
@@ -270,8 +258,8 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded border-0">
-                    <Zap className="w-2.5 h-2.5 text-white" />
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-500">
+                    <Zap className="w-3 h-3 text-zinc-400" />
                     {step.latency}
                   </span>
                 </div>
@@ -282,7 +270,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
       </div>
 
       {/* Selected Step Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+      <div className="p-4 sm:p-5 rounded-xl bg-[#0a0a0c] border-0 space-y-3">
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">

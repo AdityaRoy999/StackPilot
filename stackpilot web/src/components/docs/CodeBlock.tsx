@@ -125,10 +125,10 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
 
   return (
     <div
-      className={`my-5 rounded-2xl border-0 bg-[#18181b] overflow-hidden shadow-2xl group transition-all duration-300 ${className}`}
+      className={`my-5 rounded-2xl border-0 bg-[#121214] overflow-hidden shadow-2xl group transition-all duration-300 ${className}`}
     >
       {/* Code Block Header with Mac Traffic Lights */}
-      <div className="px-4 py-3 bg-[#18181b] flex items-center justify-between border-0">
+      <div className="px-4 py-3 bg-[#121214] flex items-center justify-between border-0">
         <div className="flex items-center gap-3">
           {/* Authentic Mac Window Buttons */}
           <MacTrafficLights
@@ -143,7 +143,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
           />
 
           {/* Language Tag */}
-          <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-300 font-semibold px-2 py-0.5 rounded-md bg-zinc-800/80 border-0">
+          <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold px-2 py-0.5 rounded-md bg-[#1c1c20] border-0">
             {lang || 'text'}
           </span>
         </div>
@@ -155,7 +155,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
           className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border-0 flex items-center justify-center shrink-0 transition-all duration-300 active:scale-90 cursor-pointer ${
             copied
               ? 'bg-emerald-500/20 text-emerald-400'
-              : 'bg-[#222226] hover:bg-[#2e2e34] text-zinc-300 hover:text-white'
+              : 'bg-[#1c1c20] hover:bg-[#28282c] text-zinc-300 hover:text-white'
           }`}
           title="Copy code snippet to clipboard"
           aria-label="Copy code snippet"
@@ -196,7 +196,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
             onClick={() => setIsMinimized(false)}
-            className="px-4 py-2.5 bg-[#18181b] text-xs font-mono text-zinc-400 flex items-center justify-between cursor-pointer hover:bg-zinc-800/50 transition-colors border-0 select-none"
+            className="px-4 py-2.5 bg-[#121214] text-xs font-mono text-zinc-400 flex items-center justify-between cursor-pointer hover:bg-[#1a1a1e] transition-colors border-0 select-none"
           >
             <span className="italic">Code snippet collapsed ({code.split('\n').length} lines)</span>
             <span className="text-[11px] text-sky-400 font-semibold flex items-center gap-1">
@@ -210,10 +210,10 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden bg-[#18181b]"
+            className="overflow-hidden bg-[#121214]"
           >
             <div
-              className={`p-4 bg-[#18181b] overflow-x-auto transition-all ${
+              className={`p-4 bg-[#121214] overflow-x-auto transition-all ${
                 isMaximized ? 'max-h-none' : 'max-h-[560px]'
               }`}
             >

@@ -120,7 +120,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
   const storage = NODES.filter((n) => n.category === 'storage');
 
   return (
-    <div className="my-8 rounded-2xl border border-zinc-800/90 bg-[#18181b]/90 p-5 sm:p-6 shadow-xl space-y-6">
+    <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-6">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
         <div className="space-y-1">
@@ -135,18 +135,6 @@ export const ObservabilityFlowDiagram: React.FC = () => {
           <p className="text-xs text-zinc-400">
             End-to-end metrics, cgroup v2 container telemetry, and structured log streaming to Loki and Grafana.
           </p>
-        </div>
-
-        {/* Status badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Activity className="w-3 h-3 text-white" />
-            <span>15s Scrape Cadence</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Radio className="w-3 h-3 text-white" />
-            <span>PromQL &amp; LogQL</span>
-          </span>
         </div>
       </div>
 
@@ -172,8 +160,8 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   onClick={() => setSelectedNode(node)}
                   className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col gap-1.5 ${
                     isSelected
-                      ? 'bg-zinc-800 text-white shadow-md'
-                      : 'bg-zinc-900/70 hover:bg-zinc-800/50'
+                      ? 'bg-[#222228] text-white shadow-md'
+                      : 'bg-[#18181c]/80 hover:bg-[#202026]'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -217,8 +205,8 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   onClick={() => setSelectedNode(node)}
                   className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col gap-1.5 ${
                     isSelected
-                      ? 'bg-zinc-800 text-white shadow-md'
-                      : 'bg-zinc-900/70 hover:bg-zinc-800/50'
+                      ? 'bg-[#222228] text-white shadow-md'
+                      : 'bg-[#18181c]/80 hover:bg-[#202026]'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -262,8 +250,8 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   onClick={() => setSelectedNode(node)}
                   className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col gap-1.5 ${
                     isSelected
-                      ? 'bg-zinc-800 text-white shadow-md'
-                      : 'bg-zinc-900/70 hover:bg-zinc-800/50'
+                      ? 'bg-[#222228] text-white shadow-md'
+                      : 'bg-[#18181c]/80 hover:bg-[#202026]'
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -289,7 +277,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
       </div>
 
       {/* Selected Node Details Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+      <div className="p-4 sm:p-5 rounded-xl bg-[#0a0a0c] border-0 space-y-3">
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">

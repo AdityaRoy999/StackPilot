@@ -94,7 +94,7 @@ export const DocDiagramDispatcher: React.FC<DocDiagramDispatcherProps> = ({
     default:
       // Fallback clean bento placeholder if unspecified
       return (
-        <div className="my-8 rounded-2xl border border-zinc-800/90 bg-[#18181b]/90 p-5 sm:p-6 shadow-xl space-y-4">
+        <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-4">
           <div className="flex items-center gap-2 pb-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
               <Terminal className="w-4 h-4 text-white" />

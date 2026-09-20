@@ -124,7 +124,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
     : CLUSTERS.filter((c) => c.id === selectedCluster);
 
   return (
-    <div className="my-8 rounded-2xl border border-zinc-800/90 bg-[#18181b]/90 p-5 sm:p-6 shadow-xl space-y-6">
+    <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-6">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
         <div className="space-y-1">
@@ -140,22 +140,10 @@ export const OverviewArchitectureDiagram: React.FC = () => {
             Multi-engine control plane connecting compiled C++ core, AI multi-agent swarm, visual sandbox, and hybrid compute runtimes.
           </p>
         </div>
-
-        {/* Status badges */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Cpu className="w-3 h-3 text-white" />
-            <span>&lt; 30MB C++ Core</span>
-          </span>
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-300">
-            <Sparkles className="w-3 h-3 text-white" />
-            <span>Multi-Agent Swarm</span>
-          </span>
-        </div>
       </div>
 
       {/* Domain Navigation Filter Tabs */}
-      <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-black/60 border border-zinc-800 text-xs font-mono">
+      <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-black/60 border border-zinc-800/60 text-xs font-mono">
         <button
           type="button"
           onClick={() => setSelectedCluster('all')}
@@ -188,7 +176,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
         {visibleClusters.map((cluster) => (
           <div
             key={cluster.id}
-            className="p-4 rounded-xl bg-zinc-900/60 border-0 space-y-3 flex flex-col justify-between"
+            className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-3 flex flex-col justify-between"
           >
             <div>
               <div className="flex items-center justify-between pb-1">
@@ -248,7 +236,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
 
       {/* Selected Microservice Inspection Drawer */}
       {inspectService && (
-        <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+        <div className="p-4 sm:p-5 rounded-xl bg-[#0a0a0c] border-0 space-y-3">
           <div className="flex items-start justify-between gap-4 pb-2">
             <div className="flex items-center gap-2">
               <span className="p-1 rounded bg-zinc-800 text-white">
@@ -264,10 +252,10 @@ export const OverviewArchitectureDiagram: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
+              <span className="text-[11px] font-mono text-zinc-400 bg-[#18181c] px-2 py-1 rounded border-0">
                 Port: <span className="text-white font-bold">{inspectService.port}</span>
               </span>
-              <span className="text-[11px] font-mono text-zinc-400 bg-zinc-900 px-2 py-1 rounded border-0">
+              <span className="text-[11px] font-mono text-zinc-400 bg-[#18181c] px-2 py-1 rounded border-0">
                 Memory: <span className="text-emerald-400 font-bold">{inspectService.ram}</span>
               </span>
             </div>
@@ -286,15 +274,15 @@ export const OverviewArchitectureDiagram: React.FC = () => {
           <span>Core End-to-End Control Plane Pathways</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-zinc-300 font-mono">
-          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 space-y-1 hover:bg-zinc-800/80 transition-colors">
+          <div className="p-3 rounded-xl bg-[#18181c]/80 border-0 space-y-1 hover:bg-[#202026] transition-colors">
             <div className="text-white font-bold text-[11px]">1. Ingress &rarr; Control Plane</div>
             <p className="text-[10px] text-zinc-400">Client/Webhook &rarr; Caddy 2.8 &rarr; Drogon API (:8090) &rarr; PostgreSQL 16</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 space-y-1 hover:bg-zinc-800/80 transition-colors">
+          <div className="p-3 rounded-xl bg-[#18181c]/80 border-0 space-y-1 hover:bg-[#202026] transition-colors">
             <div className="text-white font-bold text-[11px]">2. Queue &rarr; Deployment</div>
             <p className="text-[10px] text-zinc-400">Drogon &rarr; Redis 7 FIFO &rarr; JobQueueWorker &rarr; Docker / k3s</p>
           </div>
-          <div className="p-3 rounded-xl bg-zinc-900/80 border-0 space-y-1 hover:bg-zinc-800/80 transition-colors">
+          <div className="p-3 rounded-xl bg-[#18181c]/80 border-0 space-y-1 hover:bg-[#202026] transition-colors">
             <div className="text-white font-bold text-[11px]">3. AI &rarr; Visual Sandbox</div>
             <p className="text-[10px] text-zinc-400">FastAPI Swarm (:8010) &rarr; Chromium CDP &rarr; H.264 Streamer (:8099) &rarr; Canvas</p>
           </div>

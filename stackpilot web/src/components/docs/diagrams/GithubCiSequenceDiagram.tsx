@@ -128,7 +128,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
   });
 
   return (
-    <div className="my-8 rounded-2xl border border-zinc-800/90 bg-[#18181b]/90 p-5 sm:p-6 shadow-xl space-y-6">
+    <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-6">
       {/* Header bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2">
         <div className="space-y-1">
@@ -146,7 +146,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
         </div>
 
         {/* CI Mode Switcher */}
-        <div className="flex items-center gap-2 p-1 rounded-full bg-black/60 border border-zinc-800 text-[11px] font-mono">
+        <div className="flex items-center gap-2 p-1 rounded-full bg-black/60 border border-zinc-800/60 text-[11px] font-mono">
           <button
             type="button"
             onClick={() => setCiGatedMode(true)}
@@ -183,7 +183,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
             return (
               <div
                 key={p.id}
-                className="p-3 rounded-xl bg-zinc-900/80 border-0 flex flex-col gap-1.5 transition-all hover:bg-zinc-800/60"
+                className="p-3 rounded-xl bg-[#18181c]/80 border-0 flex flex-col gap-1.5 transition-all hover:bg-[#202026]"
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
@@ -223,8 +223,8 @@ export const GithubCiSequenceDiagram: React.FC = () => {
                 onClick={() => setSelectedStep(step)}
                 className={`p-3.5 rounded-xl border-0 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                   isSelected
-                    ? 'bg-zinc-800 text-white shadow-md'
-                    : 'bg-zinc-900/60 hover:bg-zinc-800/40'
+                    ? 'bg-[#222228] text-white shadow-md'
+                    : 'bg-[#18181c]/60 hover:bg-[#202026]/80'
                 }`}
               >
                 <div className="flex items-start sm:items-center gap-3">
@@ -256,8 +256,8 @@ export const GithubCiSequenceDiagram: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded">
-                    <Zap className="w-2.5 h-2.5 text-white" />
+                  <span className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-500">
+                    <Zap className="w-3 h-3 text-zinc-400" />
                     {step.latency}
                   </span>
                 </div>
@@ -268,7 +268,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
       </div>
 
       {/* Selected Step Drawer */}
-      <div className="p-4 sm:p-5 rounded-xl bg-black/60 border-0 space-y-3">
+      <div className="p-4 sm:p-5 rounded-xl bg-[#0a0a0c] border-0 space-y-3">
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">

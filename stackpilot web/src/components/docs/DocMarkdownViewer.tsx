@@ -179,12 +179,12 @@ export const DocMarkdownViewer: React.FC<DocMarkdownViewerProps> = ({ content, d
           blocks.push(
             <div
               key={`table-${blockKey++}`}
-              className="my-6 rounded-2xl border border-zinc-800 bg-[#161619] overflow-hidden shadow-md"
+              className="my-6 rounded-2xl border border-zinc-800/60 bg-[#121214] overflow-hidden shadow-md"
             >
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs text-zinc-300 border-collapse">
                   <thead>
-                    <tr className="border-b border-zinc-800 bg-[#1a1a1e]">
+                    <tr className="border-b border-zinc-800/60 bg-[#161619]">
                       {headers.map((h, idx) => (
                         <th
                           key={`th-${idx}`}
@@ -273,7 +273,7 @@ export const DocMarkdownViewer: React.FC<DocMarkdownViewerProps> = ({ content, d
         blocks.push(
           <div
             key={`bq-${blockKey++}`}
-            className="my-4 p-4 rounded-2xl border border-zinc-800 bg-[#18181b]/90 border-l-4 border-l-white text-xs text-zinc-300 space-y-1.5"
+            className="my-4 p-4 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 border-l-4 border-l-white text-xs text-zinc-300 space-y-1.5"
           >
             {quoteLines.map((ql, qIdx) => (
               <p key={`ql-${qIdx}`} className="leading-relaxed">
