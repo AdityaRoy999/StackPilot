@@ -14,6 +14,7 @@ export type BlurTextProps = {
   easing?: Easing | Easing[];
   onAnimationComplete?: () => void;
   stepDuration?: number;
+  as?: 'p' | 'span' | 'div';
 };
 
 const buildKeyframes = (
@@ -41,11 +42,12 @@ export const BlurText: React.FC<BlurTextProps> = ({
   animationTo,
   easing = (t: number) => t,
   onAnimationComplete,
-  stepDuration = 0.35
+  stepDuration = 0.35,
+  as: Component = 'p'
 }) => {
   const elements = animateBy === 'words' ? text.split(' ') : text.split('');
   const [inView, setInView] = useState(false);
-  const ref = useRef<HTMLParagraphElement>(null);
+  const ref = useRef<any>(null);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -88,7 +90,7 @@ export const BlurText: React.FC<BlurTextProps> = ({
   const times = Array.from({ length: stepCount }, (_, i) => (stepCount === 1 ? 0 : i / (stepCount - 1)));
 
   return (
-    <p ref={ref} className={`blur-text flex ${className}`}>
+    <Component ref={ref} className={`blur-text flex ${className}`}>
       {elements.map((segment, index) => {
         const animateKeyframes = buildKeyframes(fromSnapshot, toSnapshots);
 
@@ -116,7 +118,7 @@ export const BlurText: React.FC<BlurTextProps> = ({
           </motion.span>
         );
       })}
-    </p>
+    </Component>
   );
 };
 
