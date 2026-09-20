@@ -18,6 +18,7 @@ import { GithubIcon } from '../components/icons/GithubIcon';
 import { StarIcon } from '../components/icons/StarIcon';
 import { MailIcon } from '../components/icons/MailIcon';
 import { SearchModal } from '../components/SearchModal';
+import { SystemTopologyDiagram } from '../components/SystemTopologyDiagram';
 import { useFont } from '../context/FontContext';
 
 interface DocsPageProps {
@@ -373,26 +374,8 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-zinc-800 bg-[#18181b]/90 p-5 space-y-3">
-                    <h3 className="text-sm font-semibold text-zinc-200 font-mono flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-zinc-300" />
-                      <span>End-to-End System Topology</span>
-                    </h3>
-                    <div className="p-4 rounded-xl bg-black font-mono text-xs text-zinc-300 leading-relaxed overflow-x-auto border border-zinc-800">
-                      <pre>{`[ Operator / IDE Agent ]  --->  [ Caddy Reverse Proxy (:80/:443) ]
-                                            |
-              +-----------------------------+-----------------------------+
-              |                                                           |
-      [ Next.js Dashboard ]                                   [ C++ Drogon API (:8090) ]
-        (Port :3000)                                                      |
-                                            +-----------------------------+-----------------------------+
-                                            |                             |                             |
-                                  [ PostgreSQL + pgvector ]           [ Redis ]            [ Python AI Service (:8010) ]
-                                    (Database & Memory)             (Job Queues)             (Model Gateway & CDP QA)
-                                                                          |                             |
-                                                             [ Docker Compose / K8s ]        [ Sandboxed Chromium ]`}</pre>
-                    </div>
-                  </div>
+                  {/* End-to-End System Topology: Interactive Cards & Real SVG Connecting Lines */}
+                  <SystemTopologyDiagram />
                 </article>
               )}
 
