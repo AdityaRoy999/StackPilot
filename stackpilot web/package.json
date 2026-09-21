@@ -27,6 +27,7 @@
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",
     "@types/matter-js": "^0.20.2",
+    "@types/node": "^26.6.2",
     "@types/prismjs": "^1.26.6",
     "@types/react": "^19.1.9",
     "@types/react-dom": "^19.1.7",

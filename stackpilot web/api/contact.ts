@@ -1,4 +1,6 @@
 // Vercel Serverless Function for Brevo Transactional Email Integration
+declare const process: { env: Record<string, string | undefined> };
+
 export default async function handler(req: any, res: any) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Credentials', 'true');
