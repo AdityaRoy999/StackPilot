@@ -1,7 +1,5 @@
 // Vercel Serverless Function for Brevo Transactional Email Integration
-declare const process: { env: Record<string, string | undefined> };
-
-export default async function handler(req: any, res: any) {
+export default async function handler(req, res) {
   // CORS configuration
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -38,7 +36,7 @@ export default async function handler(req: any, res: any) {
     if (!brevoApiKey) {
       console.error('[Brevo Error] BREVO_API_KEY environment variable is not set');
       return res.status(500).json({
-        error: 'Email backend is not configured yet. Please set the BREVO_API_KEY environment variable.'
+        error: 'Email backend is not configured yet. Please set the BREVO_API_KEY environment variable in Vercel settings.'
       });
     }
 
@@ -121,15 +119,15 @@ export default async function handler(req: any, res: any) {
     if (!brevoRes.ok) {
       console.error('[Brevo Error]', brevoRes.status, brevoData);
       return res.status(brevoRes.status || 500).json({
-        error: (brevoData as any)?.message || 'Failed to send email through Brevo'
+        error: brevoData?.message || 'Failed to send email through Brevo'
       });
     }
 
     return res.status(200).json({
       success: true,
-      messageId: (brevoData as any)?.messageId
+      messageId: brevoData?.messageId
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('[Contact Error]', error);
     return res.status(500).json({ error: error.message || 'Internal server error' });
   }
