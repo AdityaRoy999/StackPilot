@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ChevronDown, HelpCircle } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { HelpCircleIcon, ArrowDown01Icon } from '@hugeicons/core-free-icons';
 import { SpotlightCard } from './reactbits/SpotlightCard';
 
 export const FAQ: React.FC = () => {
@@ -38,7 +39,7 @@ export const FAQ: React.FC = () => {
         {/* Header */}
         <div className="text-center mb-14">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-xs font-mono font-medium mb-4">
-            <HelpCircle className="w-3.5 h-3.5" />
+            <HugeiconsIcon icon={HelpCircleIcon} size={14} />
             <span>Got Questions?</span>
           </div>
           <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 dark:text-white tracking-tight">
@@ -66,7 +67,7 @@ export const FAQ: React.FC = () => {
                         isOpen ? 'rotate-180 text-cyan-500' : ''
                       }`}
                     >
-                      <ChevronDown className="w-4 h-4" />
+                      <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={2} />
                     </div>
                   </div>
 

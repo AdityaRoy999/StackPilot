@@ -70,31 +70,31 @@ export const Hero: React.FC = () => {
           >
             {/* Morphing Word without colored gradients - Pure crisp white matching the headline */}
             <span className="relative inline-flex items-center justify-center">
-              <AnimatePresence mode="wait" initial={false}>
+              <AnimatePresence mode="wait">
                 <motion.span
                   key={currentWord}
                   exit={{
                     opacity: 0,
                     y: 16,
                     filter: 'blur(8px)',
-                    transition: { duration: 0.22, ease: 'easeIn' },
+                    transition: { duration: 0.2, ease: 'easeIn' },
                   }}
                   className="inline-flex items-center font-bold tracking-normal text-zinc-50"
                 >
                   {currentWord.split('').map((char, idx) => (
                     <motion.span
                       key={idx}
-                      initial={{ filter: 'blur(10px)', opacity: 0, y: -45 }}
+                      initial={{ filter: 'blur(10px)', opacity: 0, y: hasLanded ? -24 : -45 }}
                       animate={{
                         filter: ['blur(10px)', 'blur(4px)', 'blur(0px)'],
                         opacity: [0, 0.5, 1],
-                        y: [-45, 5, 0],
+                        y: hasLanded ? [-24, 3, 0] : [-45, 5, 0],
                       }}
                       transition={{
-                        duration: 0.38,
+                        duration: hasLanded ? 0.32 : 0.38,
                         times: [0, 0.55, 1],
                         // If landing, stagger after line 1; during subsequent morphs, stagger from 0
-                        delay: hasLanded ? idx * 0.03 : (line1Chars.length + idx) * 0.025,
+                        delay: hasLanded ? idx * 0.025 : (line1Chars.length + idx) * 0.025,
                         ease: [0.22, 1, 0.36, 1],
                       }}
                       className="inline-block font-bold"

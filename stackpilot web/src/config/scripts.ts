@@ -7,7 +7,14 @@ export interface ScriptOption {
 }
 
 // Hosted directly on Vercel / domain instead of raw GitHub
-const BASE_HOST = 'https://stackpilot.vercel.app';
+export const getBaseHost = (): string => {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return 'https://stackpilot.vercel.app';
+};
+
+const BASE_HOST = getBaseHost();
 
 export const SCRIPTS: ScriptOption[] = [
   {

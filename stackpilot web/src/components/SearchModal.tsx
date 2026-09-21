@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, X, ArrowRight } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Search01Icon, Cancel01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
 import { AnimatedList } from './reactbits/AnimatedList';
 
 export interface SearchDocItem {
@@ -230,7 +231,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
           >
             {/* Search Input Bar - Seamless without dividing border line */}
             <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 bg-[#161619]">
-              <Search className="w-4 h-4 text-white shrink-0" />
+              <HugeiconsIcon icon={Search01Icon} size={16} strokeWidth={1.8} className="text-white shrink-0" />
               <input
                 ref={inputRef}
                 type="text"
@@ -250,13 +251,13 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
                   onClick={onClose}
                   className="w-6 h-6 rounded-full flex items-center justify-center text-white hover:bg-zinc-800/80 transition-colors border-0 cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5 text-white" />
+                  <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.8} className="text-white" />
                 </button>
               </div>
             </div>
 
-            {/* Results List - Animated with React Bits AnimatedList (No gradient line overlays) */}
-            <div data-lenis-prevent onWheel={(e) => e.stopPropagation()} className="px-2 pb-1">
+            {/* Results List - Animated with React Bits AnimatedList (No scrollbars, clean frictionless scrolling) */}
+            <div data-lenis-prevent onWheel={(e) => e.stopPropagation()} className="px-2 pb-1 overflow-hidden no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {filtered.length > 0 ? (
                 <AnimatedList<SearchDocItem>
                   items={filtered}
@@ -265,6 +266,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
                     onSelectDoc(item.id);
                     onClose();
                   }}
+                  displayScrollbar={false}
                   showGradients={false}
                   enableArrowNavigation={true}
                   maxHeight="420px"
@@ -293,7 +295,7 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
 
                       {isSelected && (
                         <div className="flex items-center gap-1 text-[10px] font-mono text-zinc-400 shrink-0 mt-1">
-                          <ArrowRight className="w-3.5 h-3.5 text-white" />
+                          <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} className="text-white" />
                         </div>
                       )}
                     </div>

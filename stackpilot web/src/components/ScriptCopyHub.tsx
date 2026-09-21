@@ -1,20 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
+import { HugeiconsIcon } from '@hugeicons/react';
 import { 
-  Terminal, 
-  Copy, 
-  Check, 
-  Play, 
-  RefreshCw, 
-  Sparkles, 
-  Sliders, 
-  ShieldCheck, 
-  Cpu, 
-  Server, 
-  Laptop, 
-  Code, 
-  GitBranch
-} from 'lucide-react';
+  ComputerTerminal01Icon, 
+  Copy01Icon, 
+  Tick01Icon, 
+  PlayIcon, 
+  ShieldCheckIcon, 
+  CpuIcon, 
+  ServerStack01Icon, 
+  LaptopIcon, 
+  CodeIcon, 
+  GitForkIcon
+} from '@hugeicons/core-free-icons';
 import { SpotlightCard } from './reactbits/SpotlightCard';
 import { MacTrafficLights } from './docs/CodeBlock';
 
@@ -29,13 +27,14 @@ export const ScriptCopyHub: React.FC = () => {
 
   // Generate the active command snippet based on tab and profile options
   const getScriptCommand = () => {
+    const host = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : 'https://stackpilot.vercel.app';
     const profileFlag = profile === 'core' ? ' --profile core' : profile === 'full' ? ' --profile full' : ' --profile monitoring';
 
     switch (activeTab) {
       case 'bash':
-        return `curl -fsSL https://stackpilot.vercel.app/install.sh | bash -s --${profileFlag}`;
+        return `curl -fsSL ${host}/install.sh | bash -s --${profileFlag}`;
       case 'powershell':
-        return `powershell -ExecutionPolicy Bypass -c "irm https://stackpilot.vercel.app/install.ps1 | iex"`;
+        return `powershell -ExecutionPolicy Bypass -c "irm ${host}/install.ps1 | iex"`;
       case 'docker':
         return `git clone https://github.com/AdityaRoy999/StackPilot.git && cd StackPilot && docker compose${profileFlag} up -d`;
       case 'cli':
@@ -129,7 +128,7 @@ jobs:
         {/* Section Header */}
         <div className="text-center max-w-3xl mx-auto mb-12">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-xs font-mono font-medium mb-4">
-            <Terminal className="w-3.5 h-3.5" />
+            <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} />
             <span>Interactive Script Delivery Hub</span>
           </div>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
@@ -153,7 +152,7 @@ jobs:
             <div className="flex items-center gap-2">
               <MacTrafficLights onClose={handleCopy} />
               <span className="ml-3 text-xs font-mono text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5 text-cyan-500" />
+                <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} className="text-cyan-500" />
                 stackpilot-quickstart.sh
               </span>
             </div>
@@ -207,7 +206,7 @@ jobs:
                   : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Laptop className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={LaptopIcon} size={14} />
               <span>Linux / macOS (Bash)</span>
             </button>
             <button
@@ -218,7 +217,7 @@ jobs:
                   : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Server className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={ServerStack01Icon} size={14} />
               <span>Windows (PowerShell)</span>
             </button>
             <button
@@ -229,7 +228,7 @@ jobs:
                   : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Cpu className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={CpuIcon} size={14} />
               <span>Docker Compose</span>
             </button>
             <button
@@ -240,7 +239,7 @@ jobs:
                   : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Terminal className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={ComputerTerminal01Icon} size={14} />
               <span>Python CLI (`stackpilot`)</span>
             </button>
             <button
@@ -251,7 +250,7 @@ jobs:
                   : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <GitBranch className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={GitForkIcon} size={14} />
               <span>GitHub Actions CI</span>
             </button>
             <button
@@ -262,7 +261,7 @@ jobs:
                   : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Code className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={CodeIcon} size={14} />
               <span>Embed QA Webhook</span>
             </button>
           </div>
@@ -278,7 +277,7 @@ jobs:
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-mono transition-colors disabled:opacity-50"
                   title="Simulate script execution animation"
                 >
-                  <Play className={`w-3.5 h-3.5 ${isSimulating ? 'animate-spin' : ''}`} />
+                  <HugeiconsIcon icon={PlayIcon} size={14} className={isSimulating ? 'animate-spin' : ''} />
                   <span>{isSimulating ? 'Simulating...' : 'Simulate Run ▶'}</span>
                 </button>
 
@@ -288,12 +287,12 @@ jobs:
                 >
                   {copied ? (
                     <>
-                      <Check className="w-3.5 h-3.5" />
+                      <HugeiconsIcon icon={Tick01Icon} size={14} strokeWidth={2.2} />
                       <span>Copied! ✓</span>
                     </>
                   ) : (
                     <>
-                      <Copy className="w-3.5 h-3.5" />
+                      <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={1.8} />
                       <span>Copy Script</span>
                     </>
                   )}
@@ -309,7 +308,7 @@ jobs:
             {/* Quick Helper Notes */}
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400 font-mono">
               <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                <HugeiconsIcon icon={ShieldCheckIcon} size={16} className="text-emerald-500" />
                 <span>100% Self-Hosted • No telemetry • Docker & Docker Compose auto-detected</span>
               </div>
               <div className="flex items-center gap-3">

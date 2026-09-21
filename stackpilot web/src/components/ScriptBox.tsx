@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, Check } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Copy01Icon, Tick01Icon } from '@hugeicons/core-free-icons';
 import confetti from 'canvas-confetti';
 import { SCRIPTS, ScriptTab } from '../config/scripts';
 import { useScript } from '../context/ScriptContext';
@@ -36,7 +37,7 @@ export const ScriptBox: React.FC = () => {
     <div className="w-full max-w-[650px] mx-auto mt-8 flex justify-center px-4 sm:px-0">
       {/* Unified Bento Grid Card */}
       <div className="w-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all shadow-2xl">
-        {/* Top Bento Row: Platform Options switcher with segmented corner geometry and dividers */}
+        {/* Top Bento Row: Platform Options switcher with signature | ) style and section dividers */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
           className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
@@ -136,7 +137,7 @@ export const ScriptBox: React.FC = () => {
                   exit={{ scale: 0.4, opacity: 0, rotate: 20 }}
                   transition={{ type: 'spring', stiffness: 500, damping: 25 }}
                 >
-                  <Check className="w-3.5 h-3.5" />
+                  <HugeiconsIcon icon={Tick01Icon} size={15} strokeWidth={2.2} />
                 </motion.div>
               ) : (
                 <motion.div
@@ -146,7 +147,7 @@ export const ScriptBox: React.FC = () => {
                   exit={{ scale: 0.4, opacity: 0 }}
                   transition={{ duration: 0.15 }}
                 >
-                  <Copy className="w-3.5 h-3.5" />
+                  <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={1.8} />
                 </motion.div>
               )}
             </AnimatePresence>

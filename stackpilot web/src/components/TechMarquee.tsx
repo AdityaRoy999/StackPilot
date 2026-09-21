@@ -1,30 +1,31 @@
 import React from 'react';
-import { Marquee } from './reactbits/Marquee';
+import { HugeiconsIcon } from '@hugeicons/react';
 import { 
-  Box, 
-  Cpu, 
-  Database, 
-  Globe, 
-  Layers, 
-  Radio, 
-  Server, 
-  ShieldCheck, 
-  Terminal, 
-  Zap 
-} from 'lucide-react';
+  PackageIcon, 
+  CpuIcon, 
+  DatabaseIcon, 
+  Globe02Icon, 
+  Layers01Icon, 
+  RadioIcon, 
+  ServerStack01Icon, 
+  ShieldCheckIcon, 
+  ComputerTerminal01Icon, 
+  FlashIcon 
+} from '@hugeicons/core-free-icons';
+import { Marquee } from './reactbits/Marquee';
 
 export const TechMarquee: React.FC = () => {
   const techs = [
-    { name: 'Docker Compose v2', icon: <Box className="w-4 h-4 text-cyan-400" /> },
-    { name: 'Chromium Sandbox', icon: <Globe className="w-4 h-4 text-amber-400" /> },
-    { name: 'WebCodecs H.264', icon: <Radio className="w-4 h-4 text-purple-400" /> },
-    { name: 'Drogon C++20 Core', icon: <Cpu className="w-4 h-4 text-emerald-400" /> },
-    { name: 'Next.js 16 Cockpit', icon: <Layers className="w-4 h-4 text-blue-400" /> },
-    { name: 'PostgreSQL + pgvector', icon: <Database className="w-4 h-4 text-indigo-400" /> },
-    { name: 'Redis Job Queue', icon: <Server className="w-4 h-4 text-rose-400" /> },
-    { name: 'FastAPI AI Gateway', icon: <Zap className="w-4 h-4 text-teal-400" /> },
-    { name: 'Kubernetes Ready', icon: <ShieldCheck className="w-4 h-4 text-cyan-300" /> },
-    { name: 'Terminal CLI (`stackpilot`)', icon: <Terminal className="w-4 h-4 text-green-400" /> },
+    { name: 'Docker Compose v2', icon: <HugeiconsIcon icon={PackageIcon} size={16} className="text-cyan-400" /> },
+    { name: 'Chromium Sandbox', icon: <HugeiconsIcon icon={Globe02Icon} size={16} className="text-amber-400" /> },
+    { name: 'WebCodecs H.264', icon: <HugeiconsIcon icon={RadioIcon} size={16} className="text-purple-400" /> },
+    { name: 'Drogon C++20 Core', icon: <HugeiconsIcon icon={CpuIcon} size={16} className="text-emerald-400" /> },
+    { name: 'Next.js 16 Cockpit', icon: <HugeiconsIcon icon={Layers01Icon} size={16} className="text-blue-400" /> },
+    { name: 'PostgreSQL + pgvector', icon: <HugeiconsIcon icon={DatabaseIcon} size={16} className="text-indigo-400" /> },
+    { name: 'Redis Job Queue', icon: <HugeiconsIcon icon={ServerStack01Icon} size={16} className="text-rose-400" /> },
+    { name: 'FastAPI AI Gateway', icon: <HugeiconsIcon icon={FlashIcon} size={16} className="text-teal-400" /> },
+    { name: 'Kubernetes Ready', icon: <HugeiconsIcon icon={ShieldCheckIcon} size={16} className="text-cyan-300" /> },
+    { name: 'Terminal CLI (`stackpilot`)', icon: <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} className="text-green-400" /> },
   ];
 
   return (

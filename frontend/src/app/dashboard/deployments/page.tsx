@@ -1065,6 +1065,18 @@ export default function DeploymentsPage() {
                             {displayName}
                           </div>
                         )}
+                        {liveUrl?.includes("trycloudflare.com") && (
+                          <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px] px-1.5 py-0 flex items-center gap-1">
+                            <AppIcon name="zap" fallback={Zap} className="h-2.5 w-2.5 text-amber-400" />
+                            Cloudflare
+                          </Badge>
+                        )}
+                        {liveUrl?.includes(".localhost") && (
+                          <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-300 text-[10px] px-1.5 py-0 flex items-center gap-1">
+                            <AppIcon name="globe" fallback={Globe} className="h-2.5 w-2.5 text-blue-400" />
+                            Portless
+                          </Badge>
+                        )}
                         {dep.runtime_snapshot?.archetype === "native_ios" && (
                           <Badge variant="outline" className="border-rose-500/40 bg-rose-500/10 text-rose-400 text-[10px] px-1.5 py-0">iOS Xcode</Badge>
                         )}
@@ -1513,6 +1525,12 @@ function DeploymentLogsDialog({
       return res.data;
     },
     enabled: !!deploymentId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.deployment?.status;
+      return (status === "running" || status === "failed" || status === "built" || status === "canceled")
+        ? false
+        : 2000;
+    },
   });
 
   useEffect(() => {
@@ -1524,8 +1542,13 @@ function DeploymentLogsDialog({
 
   useEffect(() => {
     const historicalLogs = initialData?.deployment?.logs;
-    if (historicalLogs && !hasReceivedWsLog.current) {
-      setLogs(historicalLogs);
+    if (historicalLogs) {
+      setLogs((currentLogs) => {
+        if (!currentLogs || historicalLogs.length > currentLogs.length) {
+          return historicalLogs;
+        }
+        return currentLogs;
+      });
     }
   }, [initialData]);
 
@@ -1652,11 +1675,17 @@ function DeploymentLogsDialog({
       const token = getAuthToken();
       const wsUrl = `${wsBaseUrl}/ws/logs?deploymentId=${deploymentId}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
       const socket = new WebSocket(wsUrl);
+      let pingTimer: NodeJS.Timeout | null = null;
       
       socket.onopen = () => {
         if (isActive) {
           setIsWsConnected(true);
           setIsWsConnecting(false);
+          pingTimer = setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: "ping" }));
+            }
+          }, 15000);
         }
       };
 
@@ -1678,6 +1707,7 @@ function DeploymentLogsDialog({
       };
 
       socket.onclose = () => {
+        if (pingTimer) clearInterval(pingTimer);
         if (isActive) {
           setIsWsConnected(false);
           const currentStatus = displayStatusRef.current;
@@ -1691,6 +1721,7 @@ function DeploymentLogsDialog({
       };
 
       socket.onerror = () => {
+        if (pingTimer) clearInterval(pingTimer);
         if (isActive) {
           setIsWsConnected(false);
         }
@@ -2129,7 +2160,8 @@ function RuntimeDialog({
   });
 
   const runtime: KubernetesRuntime | undefined = runtimeQuery.data?.runtime;
-  const liveRuntimeUrl = deploymentRuntimeUrl(deployment, runtime);
+  const [activeRuntimeUrl, setActiveRuntimeUrl] = useState<string | null>(null);
+  const liveRuntimeUrl = activeRuntimeUrl || deploymentRuntimeUrl(deployment, runtime);
   const isRemoteDocker =
     runtime?.provider === "remote_docker" ||
     deployment.runtime_provider === "remote_docker" ||
@@ -2138,6 +2170,8 @@ function RuntimeDialog({
     runtime?.provider === "local_docker" ||
     deployment.runtime_provider === "local_docker" ||
     deployment.runtime_exposure === "local_docker" ||
+    deployment.runtime_exposure === "portless_local" ||
+    deployment.runtime_exposure === "cloudflare_tunnel" ||
     wantsLocalDocker;
   const isPaused = Boolean(
     runtime?.paused ||
@@ -2202,6 +2236,56 @@ function RuntimeDialog({
   const commitSha = realCommitSha(deployment);
   const commitUrl = githubCommitUrl(deployment);
 
+  const [localExposureMode, setLocalExposureMode] = useState<"direct" | "portless" | "cloudflare_tunnel">(() => {
+    if (deployment.runtime_exposure === "cloudflare_tunnel" || deployment.runtime_url?.includes("trycloudflare.com")) {
+      return "cloudflare_tunnel";
+    }
+    if (deployment.runtime_exposure === "portless_local" || deployment.runtime_url?.includes(".localhost")) {
+      return "portless";
+    }
+    return "direct";
+  });
+  const [tunnelToken, setTunnelToken] = useState("");
+  const [isUpdatingExposure, setIsUpdatingExposure] = useState(false);
+
+  const updateExposureMutation = useMutation({
+    mutationFn: async (mode: "direct" | "portless" | "cloudflare_tunnel") => {
+      setIsUpdatingExposure(true);
+      try {
+        const res = await api.post(`/deployments/${deployment.id}/exposure`, {
+          exposure_mode: mode,
+          tunnel_token: tunnelToken,
+          project_name: deployment.project_name,
+          port: Number.parseInt(portInput, 10) || 3000,
+        });
+        return res.data as { runtime_url: string; runtime_exposure: string };
+      } finally {
+        setIsUpdatingExposure(false);
+      }
+    },
+    onSuccess: (data) => {
+      if (data?.runtime_url) {
+        setActiveRuntimeUrl(data.runtime_url);
+      }
+      toast.success("Exposure mode updated", {
+        description: `Deployment is now available at ${data.runtime_url}`,
+        action: {
+          label: "Copy URL",
+          onClick: () => {
+            navigator.clipboard.writeText(data.runtime_url);
+            toast.info("Copied to clipboard");
+          },
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      runtimeQuery.refetch();
+      onChanged();
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || "Failed to update exposure mode");
+    },
+  });
+
   const runtimeQueryRef = useRef(runtimeQuery);
   runtimeQueryRef.current = runtimeQuery;
 
@@ -2258,6 +2342,130 @@ function RuntimeDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {isLocalDocker && (
+            <div className="space-y-4 rounded-xl border border-border/80 bg-muted/20 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Local URL & Public Ingress
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Switch exposure anytime without restarting or rebuilding the container.
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] uppercase font-semibold",
+                    localExposureMode === "cloudflare_tunnel"
+                      ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                      : localExposureMode === "portless"
+                      ? "border-blue-500/40 bg-blue-500/10 text-blue-300"
+                      : "border-border text-muted-foreground"
+                  )}
+                >
+                  {localExposureMode === "cloudflare_tunnel"
+                    ? "Cloudflare Tunnel"
+                    : localExposureMode === "portless"
+                    ? "Portless Local"
+                    : "Direct Port"}
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-1">
+                <Button
+                  type="button"
+                  variant={localExposureMode === "direct" ? "default" : "ghost"}
+                  className="rounded-lg text-xs justify-center"
+                  onClick={() => {
+                    setLocalExposureMode("direct");
+                    updateExposureMutation.mutate("direct");
+                  }}
+                  disabled={isUpdatingExposure}
+                >
+                  <AppIcon name="server" fallback={Server} className="mr-1.5 h-3.5 w-3.5" />
+                  Direct Port
+                </Button>
+                <Button
+                  type="button"
+                  variant={localExposureMode === "portless" ? "default" : "ghost"}
+                  className="rounded-lg text-xs justify-center"
+                  onClick={() => {
+                    setLocalExposureMode("portless");
+                    updateExposureMutation.mutate("portless");
+                  }}
+                  disabled={isUpdatingExposure}
+                >
+                  <AppIcon name="globe" fallback={Globe} className="mr-1.5 h-3.5 w-3.5" />
+                  Portless Local
+                </Button>
+                <Button
+                  type="button"
+                  variant={localExposureMode === "cloudflare_tunnel" ? "default" : "ghost"}
+                  className="rounded-lg text-xs justify-center"
+                  onClick={() => {
+                    setLocalExposureMode("cloudflare_tunnel");
+                    updateExposureMutation.mutate("cloudflare_tunnel");
+                  }}
+                  disabled={isUpdatingExposure}
+                >
+                  <AppIcon name="zap" fallback={Zap} className="mr-1.5 h-3.5 w-3.5 text-amber-400" />
+                  Cloudflare Tunnel
+                </Button>
+              </div>
+
+              {localExposureMode === "direct" && (
+                <div className="rounded-lg border border-border bg-background/50 p-2.5 text-xs text-muted-foreground">
+                  <strong>Direct Port (localhost)</strong>: Container publishes directly to loopback address (e.g. <code>http://localhost:18080</code>).
+                </div>
+              )}
+
+              {localExposureMode === "portless" && (
+                <div className="rounded-lg border border-border bg-background/50 p-2.5 text-xs text-muted-foreground space-y-1">
+                  <div>
+                    <strong>Portless Domain</strong>: Clean loopback hostname (e.g. <code>http://{deployment.project_name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.localhost</code>) via RFC 6761 loopback.
+                  </div>
+                  <p className="text-[11px] text-muted-foreground/80">
+                    Accessible locally without needing to specify or remember port numbers.
+                  </p>
+                </div>
+              )}
+
+              {localExposureMode === "cloudflare_tunnel" && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 space-y-2 text-xs">
+                  <div className="flex items-center gap-2 text-amber-400 font-medium">
+                    <AppIcon name="zap" fallback={Zap} className="h-4 w-4" />
+                    Public HTTPS URL (Cloudflare Quick Tunnel)
+                  </div>
+                  <p className="text-muted-foreground">
+                    Exposes your local deployment publicly to the internet with HTTPS without opening firewall ports.
+                  </p>
+                  <div className="flex gap-2 items-center pt-1">
+                    <Input
+                      value={tunnelToken}
+                      onChange={(e) => setTunnelToken(e.target.value)}
+                      placeholder="Custom Tunnel Token (optional, leave empty for free Quick Tunnel)"
+                      className="h-8 bg-muted/40 text-xs"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={isUpdatingExposure}
+                      onClick={() => updateExposureMutation.mutate("cloudflare_tunnel")}
+                      className="shrink-0 h-8"
+                    >
+                      {isUpdatingExposure ? (
+                        <AppIcon name="refresh-cw" fallback={RefreshCw} className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                      ) : null}
+                      Re-Tunnel
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {!isRemoteDocker && !isLocalDocker && (
             <div className="space-y-3 rounded-xl border border-border/70 bg-muted/20 p-4">
               <div className="grid gap-3 md:grid-cols-3">
@@ -2426,7 +2634,7 @@ function RuntimeDialog({
                     <span className="text-muted-foreground">{isRemoteDocker ? "Runtime provider" : "Exposure"}</span>
                     <div className="flex items-center gap-2 text-foreground">
                       <AppIcon name="globe" fallback={Globe} className="h-3.5 w-3.5 text-primary"  />
-                      {formatRuntimeStatus(isRemoteDocker ? "remote_docker" : isLocalDocker ? "local_docker" : activeExposureMode)}
+                      {formatRuntimeStatus(isRemoteDocker ? "remote_docker" : isLocalDocker ? (localExposureMode === "cloudflare_tunnel" ? "cloudflare_tunnel" : localExposureMode === "portless" ? "portless_local" : "local_docker") : activeExposureMode)}
                     </div>
                   </div>
                   {!isRemoteDocker && !isLocalDocker && (

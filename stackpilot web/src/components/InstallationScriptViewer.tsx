@@ -1,23 +1,12 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
-import { 
-  Copy, 
-  Check, 
-  Terminal, 
-  Cpu, 
-  Server, 
-  Laptop, 
-  Sparkles, 
-  Layers, 
-  Sliders, 
-  Play, 
-  RefreshCw,
-  GitBranch,
-  Code,
-  ShieldAlert,
-  HelpCircle
-} from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import {
+  Copy01Icon,
+  Tick01Icon,
+  ComputerTerminal01Icon
+} from '@hugeicons/core-free-icons';
 import { MacTrafficLights } from './docs/CodeBlock';
 import { highlightCode } from '../utils/syntaxHighlight';
 
@@ -44,6 +33,13 @@ interface ScriptMetadata {
 }
 
 const BASE_HOST = 'https://stackpilot.vercel.app';
+
+const getOrigin = (): string => {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return BASE_HOST;
+};
 
 export const ALL_INSTALL_SCRIPTS: ScriptMetadata[] = [
   {
@@ -205,22 +201,68 @@ export const InstallationScriptViewer: React.FC = () => {
 
   // Dynamic command generator based on active tab and profile
   const getComputedCommand = () => {
+    const host = getOrigin();
     if (activeTab === 'bash') {
       const profileFlag = profile === 'core' ? ' --profile core' : profile === 'full' ? ' --profile full' : ' --profile monitoring';
-      return `curl -fsSL ${BASE_HOST}/install.sh | bash -s --${profileFlag}`;
+      return `curl -fsSL ${host}/install.sh | bash -s --${profileFlag}`;
     }
     if (activeTab === 'powershell') {
       const profileFlag = profile === 'core' ? ' -Profile Core' : profile === 'full' ? ' -Profile Full' : ' -Profile Monitoring';
-      return `powershell -ExecutionPolicy Bypass -c "irm ${BASE_HOST}/install.ps1 | iex"${profile === 'full' ? '' : profileFlag}`;
+      return `powershell -ExecutionPolicy Bypass -c "irm ${host}/install.ps1 | iex"${profile === 'full' ? '' : profileFlag}`;
     }
     if (activeTab === 'docker') {
       const profileFlag = profile === 'core' ? ' --profile core' : profile === 'full' ? '' : ' --profile monitoring';
       return `git clone https://github.com/AdityaRoy999/StackPilot.git && cd StackPilot && docker compose${profileFlag} up -d`;
     }
-    return selectedScript.command;
+    return selectedScript.command.replace(BASE_HOST, host);
   };
 
   const currentCommand = getComputedCommand();
+  const isMultiLine = currentCommand.includes('\n');
+
+  const getBadgeLabel = () => {
+    switch (selectedScript.id) {
+      case 'powershell': return 'POWERSHELL';
+      case 'docker': return 'DOCKER COMPOSE';
+      case 'core': return 'BASH (CORE VPS)';
+      case 'cli': return 'PYTHON CLI';
+      case 'github-actions': return 'GITHUB ACTIONS (YAML)';
+      case 'embed': return 'HTML EMBED';
+      case 'drogon': return 'C++ CMAKE';
+      case 'uninstall': return 'BASH (PURGE)';
+      default: return 'BASH (SHELL)';
+    }
+  };
+
+  const getSubtitle = () => {
+    switch (selectedScript.id) {
+      case 'bash':
+      case 'powershell':
+      case 'core':
+        return 'One-Click Installer';
+      case 'docker':
+        return 'Compose Orchestration';
+      case 'cli':
+        return 'Workstation CLI Tool';
+      case 'github-actions':
+        return 'CI/CD Automation Pipeline';
+      case 'embed':
+        return 'Diagnostic Beacon Script';
+      case 'drogon':
+        return 'Native C++ Engine Build';
+      case 'uninstall':
+        return 'System Purge Utility';
+      default:
+        return 'Production Script';
+    }
+  };
+
+  const getSyntaxLang = () => {
+    if (selectedScript.id === 'powershell') return 'bash';
+    if (selectedScript.id === 'docker' || selectedScript.id === 'github-actions') return 'yaml';
+    if (selectedScript.id === 'embed') return 'html';
+    return 'bash';
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(currentCommand);
@@ -240,7 +282,7 @@ export const InstallationScriptViewer: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Top Bento Selection Container with Sliding Tab Physics */}
+      {/* Top Bento Selection Container with Capsule Navigation */}
       <div className="w-full rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl p-4 sm:p-5 flex flex-col gap-4">
         {/* Row 1: Profile Pills & Mode Switcher */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-zinc-800/80">
@@ -252,58 +294,74 @@ export const InstallationScriptViewer: React.FC = () => {
           </div>
 
           {(activeTab === 'bash' || activeTab === 'powershell' || activeTab === 'docker') && (
-            <div className="flex items-center gap-1.5 bg-[#1f1f23] p-1 rounded-xl text-xs font-mono border border-zinc-800">
-              <span className="px-2 text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Profile:</span>
-              <button
-                onClick={() => setProfile('core')}
-                className={`px-2.5 py-1 rounded-lg transition-all text-xs cursor-pointer border-0 ${
-                  profile === 'core'
-                    ? 'bg-white text-zinc-900 font-bold shadow'
-                    : 'bg-transparent text-zinc-400 hover:text-white'
-                }`}
-                title="Low memory (1.5GB): FastAPI + Chromium + Next.js"
-              >
-                Core (1.5GB)
-              </button>
-              <button
-                onClick={() => setProfile('full')}
-                className={`px-2.5 py-1 rounded-lg transition-all text-xs cursor-pointer border-0 ${
-                  profile === 'full'
-                    ? 'bg-white text-zinc-900 font-bold shadow'
-                    : 'bg-transparent text-zinc-400 hover:text-white'
-                }`}
-                title="Full Enterprise: Drogon C++ Engine + Redis + pgvector"
-              >
-                Full Platform
-              </button>
-              <button
-                onClick={() => setProfile('monitoring')}
-                className={`px-2.5 py-1 rounded-lg transition-all text-xs cursor-pointer border-0 ${
-                  profile === 'monitoring'
-                    ? 'bg-white text-zinc-900 font-bold shadow'
-                    : 'bg-transparent text-zinc-400 hover:text-white'
-                }`}
-                title="Full Stack + Prometheus & Grafana Dashboards"
-              >
-                + Observability
-              </button>
+            <div className="flex items-center gap-1 bg-[#1c1c20] p-1 rounded-full text-xs font-mono border border-zinc-800 select-none">
+              <span className="px-2 text-[10px] text-zinc-400 font-bold uppercase tracking-wider select-none">Profile:</span>
+              {[
+                { id: 'core' as const, label: 'Core (1.5GB)', title: 'Low memory (1.5GB): FastAPI + Chromium + Next.js' },
+                { id: 'full' as const, label: 'Full Platform', title: 'Full Enterprise: Drogon C++ Engine + Redis + pgvector' },
+                { id: 'monitoring' as const, label: '+ Observability', title: 'Full Stack + Prometheus & Grafana Dashboards' },
+              ].map((p, idx, arr) => {
+                const isActive = profile === p.id;
+                const cornerClass =
+                  idx === 0
+                    ? 'rounded-l-full rounded-r-md'
+                    : idx === arr.length - 1
+                    ? 'rounded-l-md rounded-r-full'
+                    : 'rounded-md';
+
+                return (
+                  <React.Fragment key={p.id}>
+                    {idx > 0 && (
+                      <span
+                        className="h-3.5 w-[1px] bg-zinc-800 shrink-0 pointer-events-none mx-0.5 select-none"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setProfile(p.id)}
+                      className={`relative px-2.5 py-1 ${cornerClass} text-xs font-medium transition-colors cursor-pointer border-0 bg-transparent ${
+                        isActive
+                          ? 'text-zinc-950 font-bold'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                      title={p.title}
+                    >
+                      {isActive && (
+                        <motion.div
+                          layoutId="installProfilePill"
+                          className={`absolute inset-0 bg-white ${cornerClass} shadow`}
+                          transition={{ type: 'spring', stiffness: 450, damping: 35 }}
+                        />
+                      )}
+                      <span className="relative z-10">{p.label}</span>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
             </div>
           )}
         </div>
 
-        {/* Row 2: Sliding Script Tab Navigation Capsule */}
+        {/* Row 2: Sliding Script Tab Navigation Capsule with signature | ) style */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
           className="flex items-center gap-1 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden p-1 rounded-full bg-[#1c1c20] border border-zinc-800/90 text-xs select-none relative"
         >
           {ALL_INSTALL_SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
+            const cornerClass =
+              idx === 0
+                ? 'rounded-l-full rounded-r-md'
+                : idx === ALL_INSTALL_SCRIPTS.length - 1
+                ? 'rounded-l-md rounded-r-full'
+                : 'rounded-md';
 
             return (
               <React.Fragment key={script.id}>
                 {idx > 0 && (
                   <span
-                    className="h-3 w-[1px] bg-zinc-800/80 shrink-0 pointer-events-none mx-0.5 select-none"
+                    className="h-3.5 w-[1px] bg-zinc-800 shrink-0 pointer-events-none mx-0.5 select-none"
                     aria-hidden="true"
                   />
                 )}
@@ -311,7 +369,7 @@ export const InstallationScriptViewer: React.FC = () => {
                   type="button"
                   onClick={() => setActiveTab(script.id)}
                   onMouseEnter={() => setHoveredTab(script.id)}
-                  className={`relative px-3.5 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
+                  className={`relative px-3.5 py-1.5 ${cornerClass} text-xs font-medium transition-colors cursor-pointer whitespace-nowrap shrink-0 border-0 bg-transparent ${
                     isActive
                       ? 'text-zinc-950 font-bold'
                       : 'text-zinc-400 hover:text-zinc-100'
@@ -322,7 +380,7 @@ export const InstallationScriptViewer: React.FC = () => {
                   {isActive && (
                     <motion.div
                       layoutId="installScriptTabPill"
-                      className="absolute inset-0 bg-white rounded-full shadow-md"
+                      className={`absolute inset-0 bg-white ${cornerClass} shadow-md`}
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}
@@ -331,7 +389,7 @@ export const InstallationScriptViewer: React.FC = () => {
                   {hoveredTab === script.id && !isActive && (
                     <motion.div
                       layoutId="installScriptHoverPill"
-                      className="absolute inset-0 bg-[#2b2b30] rounded-full"
+                      className={`absolute inset-0 bg-[#2b2b30] ${cornerClass}`}
                       transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                     />
                   )}
@@ -345,99 +403,138 @@ export const InstallationScriptViewer: React.FC = () => {
           })}
         </div>
 
-        {/* Row 3: Command Code Display Box with Mac Traffic Lights & Syntax Highlighting */}
-        <div className="relative group rounded-2xl border border-zinc-800/90 bg-[#0c0c0e] overflow-hidden shadow-xl">
-          <div className="px-4 py-2.5 bg-[#161619] border-b border-zinc-800/70 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <MacTrafficLights onClose={handleCopy} />
-              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-300 font-semibold px-2 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40">
-                {selectedScript.id === 'powershell' ? 'POWERSHELL' : selectedScript.id === 'docker' ? 'DOCKER COMPOSE' : 'BASH'}
-              </span>
-            </div>
-            <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1.5">
-              <Terminal className="w-3 h-3 text-white" />
-              <span>One-Click Installer</span>
-            </span>
-          </div>
+        {/* Dynamic Animated Content Container for Active Tab */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab + (activeTab === 'bash' || activeTab === 'powershell' || activeTab === 'docker' ? `-${profile}` : '')}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+            className="flex flex-col gap-4"
+          >
+            {/* Row 3: Command Code Display Box with Mac Traffic Lights & Syntax Highlighting */}
+            <div className="relative group rounded-2xl border border-zinc-800/90 bg-[#0c0c0e] overflow-hidden shadow-xl">
+              <div className="px-4 py-2.5 bg-[#161619] border-b border-zinc-800/70 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <MacTrafficLights onClose={handleCopy} />
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-300 font-semibold px-2 py-0.5 rounded bg-zinc-800/60 border border-zinc-700/40">
+                    {getBadgeLabel()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] font-mono text-zinc-400 flex items-center gap-1.5">
+                    <HugeiconsIcon icon={ComputerTerminal01Icon} size={13} strokeWidth={1.8} className="text-white" />
+                    <span>{getSubtitle()}</span>
+                  </span>
+                  {isMultiLine && (
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-mono border-0 transition-all cursor-pointer ${
+                        copied
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white'
+                      }`}
+                      title="Copy script to clipboard"
+                    >
+                      <HugeiconsIcon icon={copied ? Tick01Icon : Copy01Icon} size={13} strokeWidth={2} />
+                      <span>{copied ? 'Copied!' : 'Copy'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
 
-          <div className="p-4 sm:p-5 font-mono text-xs flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <span className="text-emerald-400 select-none font-bold text-sm">$</span>
-              <pre className="font-mono text-xs leading-relaxed selection:bg-zinc-800 selection:text-white m-0 p-0 overflow-x-auto">
-                <code
-                  dangerouslySetInnerHTML={{
-                    __html: highlightCode(
-                      currentCommand,
-                      selectedScript.id === 'powershell' ? 'bash' : selectedScript.id === 'docker' ? 'yaml' : 'bash'
-                    )
-                  }}
-                  className="break-all leading-relaxed select-all"
-                />
-              </pre>
-            </div>
+              {isMultiLine ? (
+                <div className="p-4 sm:p-5 font-mono text-xs overflow-x-auto">
+                  <pre className="font-mono text-xs leading-relaxed selection:bg-zinc-800 selection:text-white m-0 p-0 overflow-x-auto">
+                    <code
+                      dangerouslySetInnerHTML={{
+                        __html: highlightCode(currentCommand, getSyntaxLang())
+                      }}
+                      className="leading-relaxed select-all block whitespace-pre font-mono"
+                    />
+                  </pre>
+                </div>
+              ) : (
+                <div className="p-4 sm:p-5 font-mono text-xs flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3 min-w-0 flex-1 overflow-x-auto no-scrollbar">
+                    <span className="text-emerald-400 select-none font-bold text-sm shrink-0">$</span>
+                    <pre className="font-mono text-xs leading-relaxed selection:bg-zinc-800 selection:text-white m-0 p-0 overflow-x-auto">
+                      <code
+                        dangerouslySetInnerHTML={{
+                          __html: highlightCode(currentCommand, getSyntaxLang())
+                        }}
+                        className="whitespace-nowrap leading-relaxed select-all"
+                      />
+                    </pre>
+                  </div>
 
-            {/* Circular Copy Button: smooth emerald transition and checkmark spring pop matching ScriptBox */}
-            <button
-              type="button"
-              onClick={handleCopy}
-              className={`w-8 h-8 rounded-full border-0 flex items-center justify-center shrink-0 transition-all duration-300 active:scale-90 cursor-pointer ${
-                copied
-                  ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'bg-[#222226] hover:bg-[#2e2e34] text-zinc-300 hover:text-white'
-              }`}
-              title="Copy command to clipboard"
-              aria-label="Copy command"
-            >
-              <AnimatePresence mode="wait" initial={false}>
-                {copied ? (
-                  <motion.div
-                    key="check"
-                    initial={{ scale: 0.4, opacity: 0, rotate: -20 }}
-                    animate={{ scale: 1, opacity: 1, rotate: 0 }}
-                    exit={{ scale: 0.4, opacity: 0, rotate: 20 }}
-                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                  {/* Circular Copy Button */}
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    className={`w-8 h-8 rounded-full border-0 flex items-center justify-center shrink-0 transition-all duration-300 active:scale-90 cursor-pointer ${
+                      copied
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-[#222226] hover:bg-[#2e2e34] text-zinc-300 hover:text-white'
+                    }`}
+                    title="Copy command to clipboard"
+                    aria-label="Copy command"
                   >
-                    <Check className="w-3.5 h-3.5" />
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="copy"
-                    initial={{ scale: 0.4, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.4, opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </button>
-          </div>
-        </div>
+                    <AnimatePresence mode="wait" initial={false}>
+                      {copied ? (
+                        <motion.div
+                          key="check"
+                          initial={{ scale: 0.4, opacity: 0, rotate: -20 }}
+                          animate={{ scale: 1, opacity: 1, rotate: 0 }}
+                          exit={{ scale: 0.4, opacity: 0, rotate: 20 }}
+                          transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                        >
+                          <HugeiconsIcon icon={Tick01Icon} size={15} strokeWidth={2.2} />
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="copy"
+                          initial={{ scale: 0.4, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          exit={{ scale: 0.4, opacity: 0 }}
+                          transition={{ duration: 0.15 }}
+                        >
+                          <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={1.8} />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </button>
+                </div>
+              )}
+            </div>
 
-        {/* Row 4: Script Metadata, OS Targets & Estimated Execution Time */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 text-xs">
-          <div className="p-3 rounded-xl bg-[#1a1a1e] border border-zinc-800/70 space-y-1">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 font-bold">Target Environment</span>
-            <p className="text-zinc-300 text-[11px] leading-relaxed">{selectedScript.os}</p>
-          </div>
+            {/* Row 4: Script Metadata, OS Targets & Estimated Execution Time */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-xs">
+              <div className="p-3 rounded-xl bg-[#1a1a1e] border border-zinc-800/70 space-y-1">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 font-bold">Target Environment</span>
+                <p className="text-zinc-300 text-[11px] leading-relaxed">{selectedScript.os}</p>
+              </div>
 
-          <div className="p-3 rounded-xl bg-[#1a1a1e] border border-zinc-800/70 space-y-1">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 font-bold">Estimated Time</span>
-            <p className="text-zinc-300 text-[11px] font-mono leading-relaxed">{selectedScript.expectedTime}</p>
-          </div>
+              <div className="p-3 rounded-xl bg-[#1a1a1e] border border-zinc-800/70 space-y-1">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 font-bold">Estimated Time</span>
+                <p className="text-zinc-300 text-[11px] font-mono leading-relaxed">{selectedScript.expectedTime}</p>
+              </div>
 
-          <div className="p-3 rounded-xl bg-[#1a1a1e] border border-zinc-800/70 space-y-1">
-            <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 font-bold">Primary Action</span>
-            <p className="text-zinc-300 text-[11px] leading-relaxed line-clamp-2">{selectedScript.description}</p>
-          </div>
-        </div>
+              <div className="p-3 rounded-xl bg-[#1a1a1e] border border-zinc-800/70 space-y-1">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 font-bold">Primary Action</span>
+                <p className="text-zinc-300 text-[11px] leading-relaxed line-clamp-2">{selectedScript.description}</p>
+              </div>
+            </div>
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {/* Deep-Dive Specifications for All Scripts */}
       <div className="rounded-2xl border border-zinc-800 bg-[#161619] p-5 sm:p-6 space-y-4">
         <h3 className="text-sm sm:text-base font-semibold text-white font-mono flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-white" />
+          <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} strokeWidth={1.8} className="text-white" />
           <span>Script Flags &amp; Parameter Reference</span>
         </h3>
 

@@ -1,20 +1,20 @@
 import React, { isValidElement, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
   CursorPointer01Icon,
   Download04Icon,
   Layers01Icon,
-  Notification03Icon,
-  PaintBoardIcon,
+  Notification01Icon,
+  ColorsIcon,
   Rocket01Icon,
   Settings02Icon,
-  TextFontIcon
+  TextIcon
 } from '@hugeicons/core-free-icons';
 
 export interface BranchedMenuChild {
   value: string;
   label: string;
-  icon?: ReactNode | IconSvgElement;
+  icon?: any;
 }
 
 export interface BranchedMenuItem {
@@ -53,16 +53,16 @@ const DEFAULT_ITEMS: BranchedMenuItem[] = [
       { value: 'install', label: 'Installation', icon: Download04Icon },
       { value: 'quick', label: 'Quick start', icon: Rocket01Icon },
       { value: 'config', label: 'Configuration', icon: Settings02Icon },
-      { value: 'theming', label: 'Theming', icon: PaintBoardIcon }
+      { value: 'theming', label: 'Theming', icon: ColorsIcon }
     ]
   },
   {
     label: 'Components',
     children: [
       { value: 'buttons', label: 'Buttons', icon: CursorPointer01Icon },
-      { value: 'typography', label: 'Typography', icon: TextFontIcon },
+      { value: 'typography', label: 'Typography', icon: TextIcon },
       { value: 'overlays', label: 'Overlays', icon: Layers01Icon },
-      { value: 'toasts', label: 'Toasts', icon: Notification03Icon }
+      { value: 'toasts', label: 'Toasts', icon: Notification01Icon }
     ]
   }
 ];
@@ -70,8 +70,15 @@ const DEFAULT_ITEMS: BranchedMenuItem[] = [
 const PAD = 6;
 const MARK = 16;
 
-const renderIcon = (icon: ReactNode | IconSvgElement) =>
-  isValidElement(icon) ? icon : <HugeiconsIcon icon={icon as IconSvgElement} size={16} strokeWidth={1.8} />;
+const renderIcon = (icon: any) => {
+  if (!icon) return null;
+  if (isValidElement(icon)) return icon;
+  if (typeof icon === 'function') {
+    const IconComp = icon;
+    return <IconComp className="w-4 h-4 shrink-0" strokeWidth={1.8} />;
+  }
+  return <HugeiconsIcon icon={icon} size={15} strokeWidth={1.8} className="shrink-0" />;
+};
 const toSet = (open: number | number[]) => new Set(Array.isArray(open) ? open : open >= 0 ? [open] : []);
 
 export const BranchedMenu: React.FC<BranchedMenuProps> = ({

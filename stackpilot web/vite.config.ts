@@ -7,6 +7,26 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [
+      {
+        name: 'fix-hugeicons-case',
+        enforce: 'pre',
+        resolveId(source, importer) {
+          if (importer && importer.includes('@hugeicons/core-free-icons')) {
+            const mismatches: Record<string, string> = {
+              './Grid2x2CheckIcon.js': './Grid2X2CheckIcon.js',
+              './Grid2x2PlusIcon.js': './Grid2X2PlusIcon.js',
+              './Grid2x2Icon.js': './Grid2X2Icon.js',
+              './Grid2x2XIcon.js': './Grid2X2XIcon.js',
+              './Grid3x2Icon.js': './Grid3X2Icon.js',
+              './Grid3x3Icon.js': './Grid3X3Icon.js',
+            };
+            if (mismatches[source]) {
+              return this.resolve(mismatches[source], importer, { skipSelf: true });
+            }
+          }
+          return null;
+        },
+      },
       react(),
       {
         name: 'brevo-contact-dev-server',
@@ -136,12 +156,39 @@ export default defineConfig(({ mode }) => {
               }
             });
           });
+
+          server.middlewares.use('/api/stars', async (_req, res) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+            res.setHeader('Content-Type', 'application/json');
+
+            try {
+              const unghRes = await fetch('https://ungh.cc/repos/AdityaRoy999/StackPilot');
+              if (unghRes.ok) {
+                const data = (await unghRes.json()) as any;
+                if (typeof data?.repo?.stars === 'number') {
+                  res.writeHead(200);
+                  res.end(JSON.stringify({ stars: data.repo.stars }));
+                  return;
+                }
+              }
+            } catch {
+              // fallback
+            }
+
+            res.writeHead(200);
+            res.end(JSON.stringify({ stars: 4 }));
+          });
         },
       },
     ],
     server: {
       port: 3005,
       host: '127.0.0.1',
+      allowedHosts: [
+        'roman-angeles-maker-identified.trycloudflare.com',
+        '.trycloudflare.com',
+      ],
     },
     resolve: {
       alias: {

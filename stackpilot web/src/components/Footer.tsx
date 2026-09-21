@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { BookOpen } from 'lucide-react';
-import { MailIcon } from './icons/MailIcon';
-import { GithubIcon } from './icons/GithubIcon';
+import { HugeiconsIcon } from '@hugeicons/react';
+import {
+  BookOpen01Icon,
+  Mail01Icon,
+  GithubIcon,
+  Tag01Icon
+} from '@hugeicons/core-free-icons';
 
 interface FooterProps {
   onNavigateDocs?: () => void;
@@ -79,7 +83,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-white shrink-0" />
+                <HugeiconsIcon icon={BookOpen01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
                 <span className="hidden sm:inline">Documentation</span>
                 <span className="sm:hidden">Docs</span>
               </span>
@@ -107,7 +111,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                <MailIcon className="w-3.5 h-3.5 text-white shrink-0" />
+                <HugeiconsIcon icon={Mail01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
                 <span>Contact</span>
               </span>
             </a>
@@ -132,7 +136,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                <GithubIcon className="w-3.5 h-3.5 text-white shrink-0" />
+                <HugeiconsIcon icon={GithubIcon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
                 <span>GitHub</span>
               </span>
             </a>
@@ -157,19 +161,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                <svg
-                  className="w-3.5 h-3.5 text-white shrink-0"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" />
-                  <circle cx="7.5" cy="7.5" r=".5" fill="currentColor" />
-                </svg>
+                <HugeiconsIcon icon={Tag01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
                 <span>Releases</span>
               </span>
             </a>

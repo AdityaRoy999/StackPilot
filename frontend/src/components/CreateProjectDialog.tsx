@@ -29,25 +29,35 @@ import {
 import { toast } from "sonner";
 import {
   Boxes,
+  Check,
   CheckCircle2,
   ChevronRight,
+  Copy,
+  Database,
+  Eye,
+  EyeOff,
   FolderTree,
   GitBranch,
+  Globe,
   HardDrive,
   Info,
+  Key,
   Link2,
   Plus,
   RefreshCw,
   Server,
   ShieldCheck,
+  Sparkles,
   Terminal,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
 import { ProjectEnvEditor, ProjectEnvVar } from "@/components/ProjectEnvEditor";
 import { RemoteSshTerminal } from "@/components/RemoteSshTerminal";
+import { DockerTagSelector } from "@/components/DockerTagSelector";
 import { AppIcon } from "@/lib/custom-icons";
 
 interface GitHubRepo {
@@ -145,6 +155,7 @@ interface ApplicationField {
   defaultValue: string;
   required?: boolean;
   secret?: boolean;
+  helpText?: string;
 }
 
 export interface DockerHubItem {
@@ -181,6 +192,123 @@ function guessPortForImage(imageName: string): number {
   if (lower.includes("vault")) return 8200;
   if (lower.includes("minio")) return 9000;
   return 80;
+}
+
+interface ServiceCredentialPreset {
+  detectedType: string;
+  defaultPort: number;
+  description: string;
+  fields: ApplicationField[];
+}
+
+function detectServiceCredentials(imageName: string): ServiceCredentialPreset {
+  const lower = imageName.toLowerCase();
+
+  if (lower.includes("mysql") || lower.includes("mariadb")) {
+    return {
+      detectedType: lower.includes("mariadb") ? "MariaDB Database" : "MySQL Database",
+      defaultPort: 3306,
+      description: "Official MySQL/MariaDB images require a root password to initialize the database storage engine.",
+      fields: [
+        { id: "root_password", label: "Root Password", envKey: "MYSQL_ROOT_PASSWORD", type: "password", defaultValue: "", secret: true, required: true, helpText: "Superuser root password (required on first container start)" },
+        { id: "database", label: "Initial Database", envKey: "MYSQL_DATABASE", type: "text", defaultValue: "app", required: false, helpText: "Database created on startup" },
+        { id: "username", label: "Application User", envKey: "MYSQL_USER", type: "text", defaultValue: "app", required: false, helpText: "Standard application username" },
+        { id: "password", label: "User Password", envKey: "MYSQL_PASSWORD", type: "password", defaultValue: "", secret: true, required: false, helpText: "Password for the application user" },
+      ],
+    };
+  }
+
+  if (lower.includes("postgres") || lower.includes("timescale") || lower.includes("postgis") || lower.includes("supabase")) {
+    return {
+      detectedType: "PostgreSQL Database",
+      defaultPort: 5432,
+      description: "Official PostgreSQL images require a password for the superuser to initialize data.",
+      fields: [
+        { id: "password", label: "Superuser Password", envKey: "POSTGRES_PASSWORD", type: "password", defaultValue: "", secret: true, required: true, helpText: "Superuser password for postgres" },
+        { id: "username", label: "Superuser Name", envKey: "POSTGRES_USER", type: "text", defaultValue: "postgres", required: true, helpText: "Database superuser username" },
+        { id: "database", label: "Initial Database", envKey: "POSTGRES_DB", type: "text", defaultValue: "app", required: false, helpText: "Database created on startup" },
+      ],
+    };
+  }
+
+  if (lower.includes("mongo")) {
+    return {
+      detectedType: "MongoDB Database",
+      defaultPort: 27017,
+      description: "Official MongoDB images require root administrative credentials to initialize authentication.",
+      fields: [
+        { id: "password", label: "Root Password", envKey: "MONGO_INITDB_ROOT_PASSWORD", type: "password", defaultValue: "", secret: true, required: true, helpText: "Administrative root password" },
+        { id: "username", label: "Root Username", envKey: "MONGO_INITDB_ROOT_USERNAME", type: "text", defaultValue: "admin", required: true, helpText: "Administrative root username" },
+        { id: "database", label: "Initial Database", envKey: "MONGO_INITDB_DATABASE", type: "text", defaultValue: "app", required: false, helpText: "Initial database" },
+      ],
+    };
+  }
+
+  if (lower.includes("redis") || lower.includes("keydb")) {
+    return {
+      detectedType: "Redis Cache",
+      defaultPort: 6379,
+      description: "In-memory key-value cache with optional requirepass authentication.",
+      fields: [
+        { id: "password", label: "Requirepass Password", envKey: "REDIS_PASSWORD", type: "password", defaultValue: "", secret: true, required: false, helpText: "Optional password for redis AUTH" },
+      ],
+    };
+  }
+
+  if (lower.includes("rabbitmq")) {
+    return {
+      detectedType: "RabbitMQ Broker",
+      defaultPort: 5672,
+      description: "Message broker with AMQP protocol and web management dashboard.",
+      fields: [
+        { id: "username", label: "Management User", envKey: "RABBITMQ_DEFAULT_USER", type: "text", defaultValue: "admin", required: true, helpText: "Web management & AMQP username" },
+        { id: "password", label: "Management Password", envKey: "RABBITMQ_DEFAULT_PASS", type: "password", defaultValue: "", secret: true, required: true, helpText: "Web management & AMQP password" },
+      ],
+    };
+  }
+
+  if (lower.includes("minio")) {
+    return {
+      detectedType: "MinIO S3 Storage",
+      defaultPort: 9000,
+      description: "S3 compatible object storage with browser console UI.",
+      fields: [
+        { id: "username", label: "Root Access Key", envKey: "MINIO_ROOT_USER", type: "text", defaultValue: "minioadmin", required: true, helpText: "S3 access key / dashboard username" },
+        { id: "password", label: "Root Secret Key", envKey: "MINIO_ROOT_PASSWORD", type: "password", defaultValue: "", secret: true, required: true, helpText: "S3 secret key (min 8 chars)" },
+      ],
+    };
+  }
+
+  if (lower.includes("clickhouse")) {
+    return {
+      detectedType: "ClickHouse Database",
+      defaultPort: 8123,
+      description: "High-performance real-time analytical columnar database.",
+      fields: [
+        { id: "username", label: "User", envKey: "CLICKHOUSE_USER", type: "text", defaultValue: "default", required: true },
+        { id: "password", label: "Password", envKey: "CLICKHOUSE_PASSWORD", type: "password", defaultValue: "", secret: true, required: true },
+        { id: "database", label: "Database", envKey: "CLICKHOUSE_DB", type: "text", defaultValue: "default", required: false },
+      ],
+    };
+  }
+
+  if (lower.includes("neo4j")) {
+    return {
+      detectedType: "Neo4j Graph DB",
+      defaultPort: 7474,
+      description: "Graph database management system.",
+      fields: [
+        { id: "password", label: "Auth (neo4j/password)", envKey: "NEO4J_AUTH", type: "password", defaultValue: "", secret: true, required: true, helpText: "Format: neo4j/<password>" },
+      ],
+    };
+  }
+
+  return {
+    detectedType: "Generic Container",
+    defaultPort: guessPortForImage(imageName),
+    description: "General container image from Docker Hub.",
+    fields: [],
+  };
 }
 
 interface ApplicationTemplate {
@@ -462,6 +590,8 @@ export function CreateProjectDialog() {
   const [remoteK8sExposure, setRemoteK8sExposure] = useState<RemoteK8sExposure>("nodeport");
   const [runtimeScheme, setRuntimeScheme] = useState<RuntimeScheme>("http");
   const [, setLocalHttpsEnabled] = useState(false);
+  const [localExposureMode, setLocalExposureMode] = useState<"direct" | "portless" | "cloudflare_tunnel">("direct");
+  const [cloudflareTunnelToken, setCloudflareTunnelToken] = useState("");
   const [localSourcePath, setLocalSourcePath] = useState("");
   const [localBrowsePath, setLocalBrowsePath] = useState("");
   const [localRoots, setLocalRoots] = useState<LocalBrowseResponse["roots"]>([]);
@@ -475,6 +605,11 @@ export function CreateProjectDialog() {
   const [dockerHubResults, setDockerHubResults] = useState<DockerHubItem[]>([]);
   const [isSearchingDockerHub, setIsSearchingDockerHub] = useState(false);
   const [selectedDockerHubImage, setSelectedDockerHubImage] = useState<DockerHubItem | null>(null);
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+  const [copiedFieldId, setCopiedFieldId] = useState<string | null>(null);
+  const [newCustomKey, setNewCustomKey] = useState("");
+  const [newCustomVal, setNewCustomVal] = useState("");
+  const [newCustomIsSecret, setNewCustomIsSecret] = useState(true);
   const [applicationConfig, setApplicationConfig] = useState<Record<string, string>>(() =>
     initialApplicationConfig(APPLICATION_TEMPLATES[0])
   );
@@ -554,18 +689,44 @@ export function CreateProjectDialog() {
   const selectedApplicationTemplate = useMemo(() => {
     if (isDockerHubSelected) {
       const imageName = applicationConfig.image || selectedDockerHubImage?.name || "custom-image:latest";
+      const preset = detectServiceCredentials(imageName);
+      const port = parseInt(applicationConfig.container_port || String(preset.defaultPort), 10) || preset.defaultPort;
+
+      const baseFields: ApplicationField[] = [
+        { id: "image", label: "Docker Image Tag", envKey: "APP_IMAGE", type: "text" as const, defaultValue: imageName, required: true },
+        { id: "container_port", label: "Container Port", envKey: "CONTAINER_PORT", type: "port" as const, defaultValue: String(port), required: true },
+        { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port" as const, defaultValue: applicationConfig.public_port || String(10000 + port), required: true },
+      ];
+
+      const knownKeys = new Set([...baseFields.map((f) => f.id), ...preset.fields.map((f) => f.id), ...preset.fields.map((f) => f.envKey)]);
+      const dynamicFields: ApplicationField[] = [];
+      Object.keys(applicationConfig).forEach((k) => {
+        if (!["image", "name", "container_port", "public_port", "template_id"].includes(k) && !knownKeys.has(k)) {
+          const isSecret =
+            k.toLowerCase().includes("pass") ||
+            k.toLowerCase().includes("secret") ||
+            k.toLowerCase().includes("key") ||
+            k.toLowerCase().includes("auth");
+          dynamicFields.push({
+            id: k,
+            label: k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+            envKey: k,
+            type: isSecret ? "password" : "text",
+            defaultValue: "",
+            secret: isSecret,
+            required: false,
+          });
+        }
+      });
+
       return {
         id: "dockerhub",
         name: applicationConfig.name || selectedDockerHubImage?.name || imageName,
-        category: "Docker Hub",
+        category: preset.detectedType !== "Generic Container" ? preset.detectedType : "Docker Hub",
         image: imageName,
-        description: selectedDockerHubImage?.description || "Docker container image running on demand from Docker Hub.",
-        primaryPort: parseInt(applicationConfig.container_port || "80", 10) || 80,
-        fields: [
-          { id: "image", label: "Docker Image Tag", envKey: "APP_IMAGE", type: "text" as const, defaultValue: imageName, required: true },
-          { id: "container_port", label: "Container Port", envKey: "CONTAINER_PORT", type: "port" as const, defaultValue: applicationConfig.container_port || "80", required: true },
-          { id: "public_port", label: "Public Port", envKey: "APP_PUBLIC_PORT", type: "port" as const, defaultValue: applicationConfig.public_port || "18080", required: true },
-        ],
+        description: selectedDockerHubImage?.description || preset.description,
+        primaryPort: port,
+        fields: [...baseFields, ...preset.fields, ...dynamicFields],
       };
     }
     return (
@@ -703,6 +864,8 @@ export function CreateProjectDialog() {
         remote_runtime_type: remoteRuntimeType,
         remote_k8s_exposure: effectiveRemoteK8sExposure,
         runtime_scheme: effectiveRuntimeScheme,
+        local_exposure_mode: executionMode === "local" ? localExposureMode : undefined,
+        cloudflare_tunnel_token: executionMode === "local" && localExposureMode === "cloudflare_tunnel" ? cloudflareTunnelToken : undefined,
       }));
       const payload =
         sourceType === "ssh"
@@ -719,6 +882,8 @@ export function CreateProjectDialog() {
               remote_k8s_exposure: effectiveRemoteK8sExposure,
               runtime_scheme: effectiveRuntimeScheme,
               local_https_enabled: effectiveLocalHttpsEnabled,
+              local_exposure_mode: executionMode === "local" ? localExposureMode : undefined,
+              cloudflare_tunnel_token: executionMode === "local" && localExposureMode === "cloudflare_tunnel" ? cloudflareTunnelToken : undefined,
             }
           : sourceType === "local"
           ? {
@@ -732,15 +897,33 @@ export function CreateProjectDialog() {
               remote_k8s_exposure: effectiveRemoteK8sExposure,
               runtime_scheme: effectiveRuntimeScheme,
               local_https_enabled: effectiveLocalHttpsEnabled,
+              local_exposure_mode: localExposureMode,
+              cloudflare_tunnel_token: localExposureMode === "cloudflare_tunnel" ? cloudflareTunnelToken : undefined,
             }
           : sourceType === "application"
           ? {
               name,
               description,
-              env_vars: envVars,
+              env_vars: [
+                ...envVars,
+                ...selectedApplicationTemplate.fields
+                  .filter((f) => !["image", "container_port", "public_port"].includes(f.id) && applicationConfig[f.id])
+                  .map((f) => ({
+                    key: f.envKey,
+                    value: applicationConfig[f.id],
+                    is_secret: f.secret ?? false,
+                  })),
+              ],
               source_type: "application",
               application_template_id: applicationTemplateId,
-              application_config: applicationConfig,
+              application_config: {
+                ...applicationConfig,
+                ...Object.fromEntries(
+                  selectedApplicationTemplate.fields
+                    .filter((f) => applicationConfig[f.id])
+                    .map((f) => [f.envKey, applicationConfig[f.id]])
+                ),
+              },
               source_path: executionMode === "remote_host" ? githubRemoteWorkspacePath || "/tmp" : "",
               execution_mode: executionMode,
               remote_connection_id: executionMode === "remote_host" ? sshConnectionId : "",
@@ -748,6 +931,8 @@ export function CreateProjectDialog() {
               remote_k8s_exposure: effectiveRemoteK8sExposure,
               runtime_scheme: effectiveRuntimeScheme,
               local_https_enabled: effectiveLocalHttpsEnabled,
+              local_exposure_mode: executionMode === "local" ? localExposureMode : undefined,
+              cloudflare_tunnel_token: executionMode === "local" && localExposureMode === "cloudflare_tunnel" ? cloudflareTunnelToken : undefined,
             }
           : {
               name,
@@ -763,6 +948,8 @@ export function CreateProjectDialog() {
               remote_k8s_exposure: effectiveRemoteK8sExposure,
               runtime_scheme: effectiveRuntimeScheme,
               local_https_enabled: effectiveLocalHttpsEnabled,
+              local_exposure_mode: executionMode === "local" ? localExposureMode : undefined,
+              cloudflare_tunnel_token: executionMode === "local" && localExposureMode === "cloudflare_tunnel" ? cloudflareTunnelToken : undefined,
             };
       const res = await api.post("/projects", {
         ...payload,
@@ -860,31 +1047,49 @@ export function CreateProjectDialog() {
   const handleDockerHubSelect = (item: DockerHubItem) => {
     setSelectedDockerHubImage(item);
     setApplicationTemplateId("dockerhub");
-    const defaultPort = guessPortForImage(item.name);
+    const preset = detectServiceCredentials(item.name);
+    const defaultPort = preset.defaultPort;
     const parts = item.name.split("/");
     const simpleName = parts[parts.length - 1];
     const capitalized = simpleName.charAt(0).toUpperCase() + simpleName.slice(1);
     const shouldReplaceName = isGeneratedApplicationProjectName(name) || !name.trim();
 
-    setApplicationConfig({
+    const newConfig: Record<string, string> = {
       image: item.name.includes(":") ? item.name : `${item.name}:latest`,
       name: capitalized,
       container_port: defaultPort.toString(),
       public_port: (10000 + defaultPort).toString(),
+    };
+
+    preset.fields.forEach((f) => {
+      if (f.secret) {
+        const pass = randomSecret(20);
+        newConfig[f.id] = pass;
+        newConfig[f.envKey] = pass;
+      } else if (f.defaultValue) {
+        newConfig[f.id] = f.defaultValue;
+        newConfig[f.envKey] = f.defaultValue;
+      }
     });
+
+    setApplicationConfig(newConfig);
 
     if (shouldReplaceName) {
       setName(capitalized);
     }
     if (!description.trim()) {
-      setDescription(item.description || `Docker Hub image ${item.name}`);
+      setDescription(item.description || preset.description || `Docker Hub image ${item.name}`);
+    }
+    if (preset.detectedType !== "Generic Container") {
+      toast.success(`Detected ${preset.detectedType}: credentials and default port ${defaultPort} auto-configured`);
     }
   };
 
   const handleCustomImageSelect = (customImage: string) => {
     const trimmed = customImage.trim();
     if (!trimmed) return;
-    const defaultPort = guessPortForImage(trimmed);
+    const preset = detectServiceCredentials(trimmed);
+    const defaultPort = preset.defaultPort;
     const rawName = trimmed.split(":")[0];
     const parts = rawName.split("/");
     const simpleName = parts[parts.length - 1];
@@ -899,18 +1104,35 @@ export function CreateProjectDialog() {
     };
     setSelectedDockerHubImage(item);
     setApplicationTemplateId("dockerhub");
-    setApplicationConfig({
+
+    const newConfig: Record<string, string> = {
       image: trimmed.includes(":") ? trimmed : `${trimmed}:latest`,
       name: capitalized,
       container_port: defaultPort.toString(),
       public_port: (10000 + defaultPort).toString(),
+    };
+
+    preset.fields.forEach((f) => {
+      if (f.secret) {
+        const pass = randomSecret(20);
+        newConfig[f.id] = pass;
+        newConfig[f.envKey] = pass;
+      } else if (f.defaultValue) {
+        newConfig[f.id] = f.defaultValue;
+        newConfig[f.envKey] = f.defaultValue;
+      }
     });
+
+    setApplicationConfig(newConfig);
 
     if (isGeneratedApplicationProjectName(name) || !name.trim()) {
       setName(capitalized);
     }
     if (!description.trim()) {
       setDescription(`Custom Docker image ${trimmed}`);
+    }
+    if (preset.detectedType !== "Generic Container") {
+      toast.success(`Detected ${preset.detectedType}: credentials and default port ${defaultPort} auto-configured`);
     }
   };
 
@@ -1224,12 +1446,7 @@ export function CreateProjectDialog() {
               Remote Docker can use HTTPS when the server reverse proxy terminates TLS.
             </p>
           </div>
-        ) : (
-          <p className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            Local Docker publishes a container port directly and uses HTTP. Remote Docker or a prepared remote
-            Kubernetes ingress should handle public HTTPS.
-          </p>
-        )}
+        ) : null}
       </div>
     );
   };
@@ -2008,46 +2225,317 @@ export function CreateProjectDialog() {
                         </div>
                       </div>
 
+                      {/* Database & Credentials Guidance Banner */}
+                      {selectedApplicationTemplate.fields.some((f) => f.secret) && (
+                        <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-3 text-xs">
+                          <div className="flex items-start gap-2.5">
+                            <AppIcon name="database" fallback={Database} className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-foreground">
+                                  Database Credentials &amp; Passwords
+                                </span>
+                                <span className="rounded-full bg-primary/10 border border-primary/20 px-2 py-0.2 text-[10px] font-mono font-medium text-primary">
+                                  Auto-Configured &amp; Encrypted
+                                </span>
+                              </div>
+                              <p className="text-muted-foreground text-[11px] leading-relaxed">
+                                Docker Hub database images require specific environment variables (such as <code className="text-primary font-mono">MYSQL_ROOT_PASSWORD</code> or <code className="text-primary font-mono">POSTGRES_PASSWORD</code>) to initialize storage on first run. StackPilot has pre-populated and generated secure passwords below. You can view, copy, or regenerate them at any time.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="mt-4 grid gap-3 md:grid-cols-2">
                         {selectedApplicationTemplate.fields.map((field) => (
-                          <div key={field.id} className="space-y-2">
-                            <Label
-                              htmlFor={`application-${field.id}`}
-                              className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-                            >
-                              {field.label}
-                            </Label>
-                            <div className="flex gap-2">
-                              <Input
-                                id={`application-${field.id}`}
-                                type={field.type === "password" ? "password" : field.type === "port" ? "number" : "text"}
-                                value={applicationConfig[field.id] || ""}
-                                min={field.type === "port" ? 1 : undefined}
-                                max={field.type === "port" ? 65535 : undefined}
-                                onChange={(event) =>
-                                  setApplicationConfig((current) => ({ ...current, [field.id]: event.target.value }))
-                                }
-                                placeholder={field.defaultValue || field.envKey}
-                                autoComplete="off"
-                                className="bg-muted/40"
-                              />
-                              {field.secret ? (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setApplicationConfig((current) => ({ ...current, [field.id]: randomSecret() }))
-                                  }
-                                  className="shrink-0"
-                                >
-                                  Generate
-                                </Button>
-                              ) : null}
+                          <div key={field.id} className="space-y-1.5 rounded-lg border border-border/60 bg-muted/20 p-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <Label
+                                htmlFor={`application-${field.id}`}
+                                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"
+                              >
+                                {field.secret && <AppIcon name="key" fallback={Key} className="h-3 w-3 text-primary" />}
+                                {field.label}
+                              </Label>
+                              <span className="font-mono text-[10px] text-muted-foreground/80">{field.envKey}</span>
                             </div>
-                            <p className="font-mono text-[11px] text-muted-foreground">{field.envKey}</p>
+
+                            {field.id === "image" ? (
+                              <DockerTagSelector
+                                imageName={
+                                  applicationConfig.image ||
+                                  selectedDockerHubImage?.name ||
+                                  selectedApplicationTemplate.image ||
+                                  "custom-image"
+                                }
+                                value={applicationConfig[field.id] || field.defaultValue || "latest"}
+                                onChange={(_tag, fullImage) => {
+                                  setApplicationConfig((current) => ({
+                                    ...current,
+                                    image: fullImage,
+                                    [field.id]: fullImage,
+                                  }));
+                                }}
+                              />
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <div className="relative flex-1">
+                                  <Input
+                                    id={`application-${field.id}`}
+                                    type={
+                                      field.type === "password" || field.secret
+                                        ? visiblePasswords[field.id]
+                                          ? "text"
+                                          : "password"
+                                        : field.type === "port"
+                                        ? "number"
+                                        : "text"
+                                    }
+                                    value={applicationConfig[field.id] ?? ""}
+                                    min={field.type === "port" ? 1 : undefined}
+                                    max={field.type === "port" ? 65535 : undefined}
+                                    onChange={(event) => {
+                                      const val = event.target.value;
+                                      setApplicationConfig((current) => ({
+                                        ...current,
+                                        [field.id]: val,
+                                        [field.envKey]: val,
+                                      }));
+                                    }}
+                                    placeholder={field.defaultValue || field.envKey}
+                                    autoComplete="off"
+                                    className="bg-background text-xs font-mono pr-16"
+                                  />
+                                  {(field.secret || field.type === "password") && (
+                                    <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() =>
+                                          setVisiblePasswords((prev) => ({
+                                            ...prev,
+                                            [field.id]: !prev[field.id],
+                                          }))
+                                        }
+                                        className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                                        title={visiblePasswords[field.id] ? "Hide password" : "Show password"}
+                                      >
+                                        {visiblePasswords[field.id] ? (
+                                          <AppIcon name="eye-off" fallback={EyeOff} className="h-3.5 w-3.5" />
+                                        ) : (
+                                          <AppIcon name="eye" fallback={Eye} className="h-3.5 w-3.5" />
+                                        )}
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          const val = applicationConfig[field.id] || "";
+                                          if (val) {
+                                            navigator.clipboard.writeText(val);
+                                            setCopiedFieldId(field.id);
+                                            setTimeout(() => setCopiedFieldId(null), 2000);
+                                            toast.success(`Copied ${field.label} to clipboard`);
+                                          }
+                                        }}
+                                        className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                                        title="Copy to clipboard"
+                                      >
+                                        {copiedFieldId === field.id ? (
+                                          <AppIcon name="check" fallback={Check} className="h-3.5 w-3.5 text-emerald-400" />
+                                        ) : (
+                                          <AppIcon name="copy" fallback={Copy} className="h-3.5 w-3.5" />
+                                        )}
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {field.secret && (
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      const secret = randomSecret(20);
+                                      setApplicationConfig((current) => ({
+                                        ...current,
+                                        [field.id]: secret,
+                                        [field.envKey]: secret,
+                                      }));
+                                      toast.success(`Generated new ${field.label}`);
+                                    }}
+                                    className="shrink-0 h-9 px-2 text-xs"
+                                    title="Generate new random secure password"
+                                  >
+                                    <AppIcon name="sparkles" fallback={Sparkles} className="h-3.5 w-3.5 text-primary mr-1" />
+                                    Generate
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+
+                            {field.helpText && (
+                              <p className="text-[10px] text-muted-foreground/80 leading-normal">{field.helpText}</p>
+                            )}
                           </div>
                         ))}
+                      </div>
+
+                      {/* Quick Credential Presets Bar */}
+                      <div className="mt-4 space-y-2 border-t border-border/60 pt-3">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                            Credential Presets &amp; Custom Variables
+                          </Label>
+                          <span className="text-[10px] text-muted-foreground">Click to quick-add credentials</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              const rootPass = randomSecret(20);
+                              const userPass = randomSecret(20);
+                              setApplicationConfig((prev) => ({
+                                ...prev,
+                                container_port: "3306",
+                                public_port: prev.public_port || "13306",
+                                root_password: rootPass,
+                                MYSQL_ROOT_PASSWORD: rootPass,
+                                database: "app",
+                                MYSQL_DATABASE: "app",
+                                username: "app",
+                                MYSQL_USER: "app",
+                                password: userPass,
+                                MYSQL_PASSWORD: userPass,
+                              }));
+                              toast.success("Applied MySQL / MariaDB credentials preset with generated passwords");
+                            }}
+                          >
+                            + MySQL / MariaDB
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              const pass = randomSecret(20);
+                              setApplicationConfig((prev) => ({
+                                ...prev,
+                                container_port: "5432",
+                                public_port: prev.public_port || "15432",
+                                password: pass,
+                                POSTGRES_PASSWORD: pass,
+                                username: "postgres",
+                                POSTGRES_USER: "postgres",
+                                database: "app",
+                                POSTGRES_DB: "app",
+                              }));
+                              toast.success("Applied PostgreSQL credentials preset with generated password");
+                            }}
+                          >
+                            + PostgreSQL
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              const pass = randomSecret(20);
+                              setApplicationConfig((prev) => ({
+                                ...prev,
+                                container_port: "27017",
+                                public_port: prev.public_port || "27018",
+                                password: pass,
+                                MONGO_INITDB_ROOT_PASSWORD: pass,
+                                username: "admin",
+                                MONGO_INITDB_ROOT_USERNAME: "admin",
+                                database: "app",
+                                MONGO_INITDB_DATABASE: "app",
+                              }));
+                              toast.success("Applied MongoDB credentials preset with generated password");
+                            }}
+                          >
+                            + MongoDB
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              const pass = randomSecret(20);
+                              setApplicationConfig((prev) => ({
+                                ...prev,
+                                container_port: "6379",
+                                public_port: prev.public_port || "16379",
+                                password: pass,
+                                REDIS_PASSWORD: pass,
+                              }));
+                              toast.success("Applied Redis password preset");
+                            }}
+                          >
+                            + Redis Password
+                          </Button>
+                        </div>
+
+                        {/* Add Custom Env Var / Password Row */}
+                        <div className="flex flex-wrap items-center gap-2 pt-2">
+                          <Input
+                            value={newCustomKey}
+                            onChange={(e) => setNewCustomKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+                            placeholder="VARIABLE_NAME (e.g. AUTH_SECRET)"
+                            className="h-8 text-xs font-mono w-48 bg-muted/30"
+                          />
+                          <Input
+                            value={newCustomVal}
+                            onChange={(e) => setNewCustomVal(e.target.value)}
+                            placeholder="Value / Secret"
+                            type={newCustomIsSecret ? "password" : "text"}
+                            className="h-8 text-xs font-mono flex-1 min-w-[140px] bg-muted/30"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setNewCustomVal(randomSecret(20))}
+                            className="h-8 px-2 text-xs"
+                            title="Generate secret for this field"
+                          >
+                            <AppIcon name="sparkles" fallback={Sparkles} className="h-3 w-3 mr-1 text-primary" />
+                            Random
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              if (!newCustomKey.trim()) {
+                                toast.error("Please enter a variable name");
+                                return;
+                              }
+                              const k = newCustomKey.trim();
+                              setApplicationConfig((prev) => ({
+                                ...prev,
+                                [k]: newCustomVal,
+                              }));
+                              setNewCustomKey("");
+                              setNewCustomVal("");
+                              toast.success(`Added ${k} to configuration`);
+                            }}
+                            className="h-8 text-xs"
+                          >
+                            <AppIcon name="plus" fallback={Plus} className="h-3 w-3 mr-1" />
+                            Add
+                          </Button>
+                        </div>
                       </div>
                     </div>
 

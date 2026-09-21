@@ -1,24 +1,10 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Globe,
-  Cpu,
-  Layers,
-  Bot,
-  Video,
-  Server,
-  Activity,
-  ArrowRight,
-  Database,
-  Lock,
-  Box,
-  Terminal,
-  Search,
-  BarChart3,
-  Radio,
-  Zap,
-  CheckCircle2,
-  Sparkles
-} from 'lucide-react';
+  Layers01Icon,
+  ServerStack01Icon,
+  FlashIcon
+} from '@hugeicons/core-free-icons';
 
 interface SubsystemCluster {
   id: string;
@@ -130,7 +116,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Layers className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={Layers01Icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               How StackPilot Works
@@ -240,7 +226,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
           <div className="flex items-start justify-between gap-4 pb-2">
             <div className="flex items-center gap-2">
               <span className="p-1 rounded bg-zinc-800 text-white">
-                <Server className="w-4 h-4 text-white" />
+                <HugeiconsIcon icon={ServerStack01Icon} size={16} strokeWidth={1.8} className="text-white" />
               </span>
               <div>
                 <h4 className="text-sm font-semibold text-white">
@@ -270,7 +256,7 @@ export const OverviewArchitectureDiagram: React.FC = () => {
       {/* Architectural Flow Highlights - Direct Flat Grid without nested border container */}
       <div className="space-y-2.5">
         <div className="text-[11px] font-mono uppercase text-zinc-400 flex items-center gap-1.5 font-semibold">
-          <Zap className="w-3.5 h-3.5 text-white" />
+          <HugeiconsIcon icon={FlashIcon} size={14} strokeWidth={1.8} className="text-white" />
           <span>Core End-to-End Control Plane Pathways</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-zinc-300 font-mono">

@@ -425,11 +425,20 @@ std::vector<BuildEnvVar> ApplicationCatalog::envVarsForConfig(const std::string&
     if (isDockerHubTemplate(templateId)) {
         std::vector<BuildEnvVar> envVars;
         if (config.isObject()) {
-            if (config.isMember("public_port") && !config["public_port"].asString().empty()) {
-                envVars.push_back({"APP_PUBLIC_PORT", config["public_port"].asString()});
-            }
-            if (config.isMember("image") && !config["image"].asString().empty()) {
-                envVars.push_back({"APP_IMAGE", config["image"].asString()});
+            for (const auto& key : config.getMemberNames()) {
+                if (key == "name" || key == "template_id") continue;
+                std::string val = config[key].asString();
+                if (!val.empty()) {
+                    if (key == "public_port") {
+                        envVars.push_back({"APP_PUBLIC_PORT", val});
+                    } else if (key == "container_port") {
+                        envVars.push_back({"CONTAINER_PORT", val});
+                    } else if (key == "image") {
+                        envVars.push_back({"APP_IMAGE", val});
+                    } else {
+                        envVars.push_back({key, val});
+                    }
+                }
             }
         }
         return envVars;
@@ -451,7 +460,17 @@ std::vector<BuildEnvVar> ApplicationCatalog::envVarsForConfig(const std::string&
 
 std::vector<std::string> ApplicationCatalog::secretEnvKeys(const std::string& templateId) {
     if (isDockerHubTemplate(templateId)) {
-        return {};
+        return {
+            "MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD",
+            "POSTGRES_PASSWORD",
+            "MONGO_INITDB_ROOT_PASSWORD",
+            "REDIS_PASSWORD",
+            "RABBITMQ_DEFAULT_PASS",
+            "MINIO_ROOT_PASSWORD",
+            "CLICKHOUSE_PASSWORD",
+            "NEO4J_AUTH",
+            "PASSWORD", "SECRET_KEY", "AUTH_TOKEN"
+        };
     }
 
     std::vector<std::string> keys;

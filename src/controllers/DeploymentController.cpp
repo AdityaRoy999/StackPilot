@@ -2894,6 +2894,209 @@ void DeploymentController::setRuntimePausedState(
     }
 }
 
+void DeploymentController::updateDeploymentExposure(
+    const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+    const std::string& deploymentId
+) {
+    const std::string userId = extractUserId(req);
+    if (userId.empty()) {
+        Json::Value err;
+        err["error"] = "Unauthorized";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k401Unauthorized);
+        callback(resp);
+        return;
+    }
+
+    const auto jsonBody = req->getJsonObject();
+    const std::string exposureMode = jsonBody && jsonBody->isMember("exposure_mode")
+        ? (*jsonBody)["exposure_mode"].asString()
+        : "direct";
+    const std::string tunnelToken = jsonBody && jsonBody->isMember("tunnel_token")
+        ? (*jsonBody)["tunnel_token"].asString()
+        : "";
+
+    try {
+        auto& db = Database::getInstance();
+        auto conn = db.getConnection();
+        pqxx::work txn(*conn);
+        auto rows = txn.exec_params(
+            "SELECT d.id, d.status, d.runtime_provider, d.runtime_exposure, d.runtime_url, "
+            "d.image_name, d.remote_container_name, d.runtime_snapshot::text AS runtime_snapshot, "
+            "p.name AS project_name "
+            "FROM deployments d "
+            "JOIN projects p ON d.project_id = p.id "
+            "WHERE d.id = $1 AND has_project_access(p.id, $2, 'member')",
+            deploymentId, userId
+        );
+
+        if (rows.empty()) {
+            Json::Value err;
+            err["error"] = "Deployment not found";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k404NotFound);
+            callback(resp);
+            return;
+        }
+
+        const auto& row = rows[0];
+        const std::string currentRuntimeUrl = row["runtime_url"].is_null() ? "" : row["runtime_url"].as<std::string>();
+        const std::string projectName = row["project_name"].is_null() ? "app" : row["project_name"].as<std::string>();
+        const std::string deploymentContainerName = row["remote_container_name"].is_null() || row["remote_container_name"].as<std::string>().empty()
+            ? ("stackpilot-" + LocalDockerRuntime::sanitizeContainerName(deploymentId))
+            : row["remote_container_name"].as<std::string>();
+        const std::string tunnelContainerName = "stackpilot-tunnel-" + LocalDockerRuntime::sanitizeContainerName(deploymentId).substr(0, 12);
+
+        // Discover the true published host port for this deployment container
+        std::string hostPort;
+        std::string portOutput;
+        const int portExit = LocalDockerRuntime::run("docker port " + shellQuote(deploymentContainerName) + " 2>/dev/null", portOutput);
+        if (portExit == 0 && !portOutput.empty()) {
+            const auto colonPos = portOutput.rfind(':');
+            if (colonPos != std::string::npos) {
+                std::string parsed;
+                for (size_t i = colonPos + 1; i < portOutput.size() && std::isdigit(static_cast<unsigned char>(portOutput[i])); ++i) {
+                    parsed += portOutput[i];
+                }
+                if (!parsed.empty()) {
+                    hostPort = parsed;
+                }
+            }
+        }
+
+        // Fallback to extracting from currentRuntimeUrl if it was a localhost URL
+        if (hostPort.empty() && !currentRuntimeUrl.empty() && currentRuntimeUrl.find("localhost") != std::string::npos) {
+            const auto colonPos = currentRuntimeUrl.rfind(':');
+            if (colonPos != std::string::npos) {
+                const auto slashPos = currentRuntimeUrl.find('/', colonPos);
+                std::string parsed = slashPos == std::string::npos
+                    ? currentRuntimeUrl.substr(colonPos + 1)
+                    : currentRuntimeUrl.substr(colonPos + 1, slashPos - colonPos - 1);
+                if (!parsed.empty()) {
+                    hostPort = parsed;
+                }
+            }
+        }
+
+        // Fallback to request payload port or default 3000
+        if (hostPort.empty()) {
+            const int bodyPort = jsonBody && jsonBody->isMember("port") && (*jsonBody)["port"].isInt()
+                ? (*jsonBody)["port"].asInt()
+                : 3000;
+            hostPort = std::to_string(bodyPort > 0 ? bodyPort : 3000);
+        }
+
+        // Determine internal container port
+        const Json::Value runtimeSnapshotJson = parseJsonObject(
+            row["runtime_snapshot"].is_null() ? "" : row["runtime_snapshot"].as<std::string>()
+        );
+        int containerPort = 3000;
+        if (jsonBody && jsonBody->isMember("port") && (*jsonBody)["port"].isInt() && (*jsonBody)["port"].asInt() > 0) {
+            containerPort = (*jsonBody)["port"].asInt();
+        } else if (!runtimeSnapshotJson.isNull() && runtimeSnapshotJson.isMember("container_port") && runtimeSnapshotJson["container_port"].isInt()) {
+            containerPort = runtimeSnapshotJson["container_port"].asInt();
+        }
+
+        std::string newRuntimeUrl = "http://localhost:" + hostPort;
+        std::string newExposure = "local_docker";
+
+        if (exposureMode == "cloudflare_tunnel") {
+            newExposure = "cloudflare_tunnel";
+
+            // Verify that the deployment container is running
+            std::string runningOutput;
+            LocalDockerRuntime::run("docker inspect --format '{{.State.Running}}' " + shellQuote(deploymentContainerName) + " 2>/dev/null", runningOutput);
+            if (runningOutput.find("true") == std::string::npos) {
+                Json::Value err;
+                err["error"] = "Cannot create Cloudflare tunnel: deployment container is not running";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp);
+                return;
+            }
+
+            std::string tunnelCmd;
+            if (!tunnelToken.empty()) {
+                tunnelCmd = "docker rm -f " + shellQuote(tunnelContainerName) + " 2>/dev/null || true; "
+                            "docker run -d --restart unless-stopped --network=container:" + shellQuote(deploymentContainerName) +
+                            " --name " + shellQuote(tunnelContainerName) +
+                            " cloudflare/cloudflared:latest tunnel --no-autoupdate run --token " + shellQuote(tunnelToken);
+            } else {
+                tunnelCmd = "docker rm -f " + shellQuote(tunnelContainerName) + " 2>/dev/null || true; "
+                            "docker run -d --restart unless-stopped --network=container:" + shellQuote(deploymentContainerName) +
+                            " --name " + shellQuote(tunnelContainerName) +
+                            " cloudflare/cloudflared:latest tunnel --no-autoupdate --url http://localhost:" + std::to_string(containerPort);
+            }
+            std::string output;
+            LocalDockerRuntime::run("timeout 15s sh -lc " + shellQuote(tunnelCmd), output);
+
+            // Wait and inspect logs for trycloudflare URL (poll up to 10 seconds)
+            newRuntimeUrl = "";
+            for (int attempt = 0; attempt < 10; ++attempt) {
+                std::string sleepPrefix = attempt == 0 ? "sleep 2; " : "sleep 1; ";
+                std::string logsOutput;
+                LocalDockerRuntime::run(sleepPrefix + "docker logs --tail 40 " + shellQuote(tunnelContainerName) + " 2>&1", logsOutput);
+                const std::string marker = ".trycloudflare.com";
+                const auto markerPos = logsOutput.find(marker);
+                if (markerPos != std::string::npos) {
+                    const auto startPos = logsOutput.rfind("https://", markerPos);
+                    if (startPos != std::string::npos) {
+                        const size_t urlLen = (markerPos + marker.length()) - startPos;
+                        newRuntimeUrl = logsOutput.substr(startPos, urlLen);
+                        break;
+                    }
+                }
+            }
+            if (newRuntimeUrl.empty()) {
+                Json::Value err;
+                err["error"] = "Cloudflare Quick Tunnel timed out or could not negotiate with Cloudflare edge. Check docker logs " + tunnelContainerName;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k502BadGateway);
+                callback(resp);
+                return;
+            }
+        } else if (exposureMode == "portless") {
+            newExposure = "portless_local";
+            std::string cleanSlug = LocalDockerRuntime::sanitizeContainerName(projectName);
+            newRuntimeUrl = "http://" + cleanSlug + ".localhost" + (hostPort != "80" && hostPort != "443" ? ":" + hostPort : "");
+            std::string rmOutput;
+            LocalDockerRuntime::run("docker rm -f " + shellQuote(tunnelContainerName) + " 2>/dev/null || true", rmOutput);
+        } else {
+            newExposure = "local_docker";
+            newRuntimeUrl = "http://localhost:" + hostPort;
+            std::string rmOutput;
+            LocalDockerRuntime::run("docker rm -f " + shellQuote(tunnelContainerName) + " 2>/dev/null || true", rmOutput);
+        }
+
+        txn.exec_params(
+            "UPDATE deployments "
+            "SET runtime_url = $1, runtime_exposure = $2, "
+            "runtime_snapshot = jsonb_set(COALESCE(runtime_snapshot, '{}'::jsonb), '{runtime_url}', to_jsonb($1::text), true), "
+            "updated_at = NOW() WHERE id = $3",
+            newRuntimeUrl, newExposure, deploymentId
+        );
+        txn.commit();
+
+        LogWebSocketController::broadcastStatus(deploymentId, "running");
+        DeploymentJournal::broadcastSummary(deploymentId);
+
+        Json::Value payload;
+        payload["message"] = "Deployment exposure updated";
+        payload["deployment_id"] = deploymentId;
+        payload["runtime_url"] = newRuntimeUrl;
+        payload["runtime_exposure"] = newExposure;
+        callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+    } catch (const std::exception& e) {
+        spdlog::error("Update deployment exposure error: {}", e.what());
+        Json::Value err;
+        err["error"] = "Internal server error updating exposure";
+        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+        resp->setStatusCode(drogon::k500InternalServerError);
+        callback(resp);
+    }
+}
+
 void DeploymentController::getDeploymentMetrics(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
@@ -3391,7 +3594,7 @@ void DeploymentController::getKubernetesStatus(
         if (isLocalDocker) {
             Json::Value payload;
             payload["runtime"]["provider"] = "local_docker";
-            payload["runtime"]["exposure_mode"] = "local_docker";
+            payload["runtime"]["exposure_mode"] = runtimeExposure.empty() ? "local_docker" : runtimeExposure;
             payload["runtime"]["desired_replicas"] = 1;
             payload["runtime"]["runtime_url"] = runtimeUrl;
             payload["runtime"]["runtime_scheme"] = "http";
@@ -3442,10 +3645,12 @@ void DeploymentController::getKubernetesStatus(
 
             auto connUpdate = db.getConnection();
             pqxx::work updateTxn(*connUpdate);
+            const std::string exposureToSave = runtimeExposure.empty() ? "local_docker" : runtimeExposure;
             updateTxn.exec_params(
-                "UPDATE deployments SET status = $1, runtime_provider = 'local_docker', runtime_exposure = 'local_docker', "
-                "runtime_url = $2, desired_replicas = 1, runtime_paused = $3, updated_at = NOW() WHERE id = $4",
+                "UPDATE deployments SET status = $1, runtime_provider = 'local_docker', runtime_exposure = $2, "
+                "runtime_url = $3, desired_replicas = 1, runtime_paused = $4, updated_at = NOW() WHERE id = $5",
                 paused ? "paused" : (running ? "running" : "built"),
+                exposureToSave,
                 runtimeUrl,
                 paused,
                 deploymentId

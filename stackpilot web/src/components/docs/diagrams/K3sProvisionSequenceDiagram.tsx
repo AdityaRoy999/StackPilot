@@ -1,18 +1,14 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Server,
-  Terminal,
-  Shield,
-  Layers,
-  CheckCircle2,
-  Lock,
-  ArrowRight,
-  Cpu,
-  Globe,
-  Radio,
-  Code2,
-  Zap
-} from 'lucide-react';
+  ServerStack01Icon,
+  ComputerTerminal01Icon,
+  LockIcon,
+  Layers01Icon,
+  ArrowRight01Icon,
+  CodeIcon,
+  FlashIcon
+} from '@hugeicons/core-free-icons';
 
 interface ProvisionStep {
   id: number;
@@ -26,10 +22,10 @@ interface ProvisionStep {
 }
 
 const PARTICIPANTS = [
-  { id: 'admin', name: 'Operator', role: 'Dashboard Admin', icon: Terminal, port: 'Browser HTTPS' },
-  { id: 'sp', name: 'StackPilot SshService', role: 'Drogon C++ libssh2', icon: Lock, port: 'Port 8090' },
-  { id: 'host', name: 'Remote VPS Host', role: 'Target Linux Node', icon: Server, port: 'Port 22 SSH' },
-  { id: 'k3s', name: 'k3s Engine', role: 'Kubernetes Control Plane', icon: Layers, port: 'Port 6443' }
+  { id: 'admin', name: 'Operator', role: 'Dashboard Admin', icon: ComputerTerminal01Icon, port: 'Browser HTTPS' },
+  { id: 'sp', name: 'StackPilot SshService', role: 'Drogon C++ libssh2', icon: LockIcon, port: 'Port 8090' },
+  { id: 'host', name: 'Remote VPS Host', role: 'Target Linux Node', icon: ServerStack01Icon, port: 'Port 22 SSH' },
+  { id: 'k3s', name: 'k3s Engine', role: 'Kubernetes Control Plane', icon: Layers01Icon, port: 'Port 6443' }
 ];
 
 const STEPS: ProvisionStep[] = [
@@ -127,7 +123,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Layers className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={Layers01Icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               Setting Up a Kubernetes (k3s) Cluster
@@ -143,7 +139,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
       <div className="space-y-2.5">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-mono uppercase text-zinc-400 flex items-center gap-1.5 font-semibold">
-            <Lock className="w-3.5 h-3.5 text-white" />
+            <HugeiconsIcon icon={LockIcon} size={14} strokeWidth={1.8} className="text-white" />
             <span>Automated Firewall Holes Provisioned by StackPilot</span>
           </span>
           <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full">
@@ -182,7 +178,6 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
           {PARTICIPANTS.map((p) => {
-            const Icon = p.icon;
             return (
               <div
                 key={p.id}
@@ -190,7 +185,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
-                    <Icon className="w-3.5 h-3.5 text-white" />
+                    <HugeiconsIcon icon={p.icon} size={14} strokeWidth={1.8} className="text-white" />
                   </div>
                   <span className="text-[10px] font-mono text-zinc-400">
                     {p.port}
@@ -251,7 +246,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
                       <span className="text-zinc-300 font-medium">{step.from}</span>
-                      <ArrowRight className="w-3 h-3 text-white shrink-0 inline" />
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white shrink-0 inline" />
                       <span className="text-zinc-300 font-medium">{step.to}</span>
                     </div>
                   </div>
@@ -259,7 +254,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
 
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                   <span className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-500">
-                    <Zap className="w-3 h-3 text-zinc-400" />
+                    <HugeiconsIcon icon={FlashIcon} size={12} strokeWidth={1.8} className="text-zinc-400" />
                     {step.latency}
                   </span>
                 </div>
@@ -274,7 +269,7 @@ export const K3sProvisionSequenceDiagram: React.FC = () => {
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
-              <Code2 className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={CodeIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white">

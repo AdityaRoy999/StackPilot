@@ -1,16 +1,13 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import { 
-  Layers, 
-  Cpu, 
-  Database, 
-  Terminal, 
-  Monitor, 
-  Workflow, 
-  ShieldCheck, 
-  BarChart, 
-  Radio, 
-  Server 
-} from 'lucide-react';
+  Layers01Icon, 
+  CpuIcon, 
+  DatabaseIcon, 
+  ComputerVideoIcon, 
+  Analytics01Icon, 
+  RadioIcon 
+} from '@hugeicons/core-free-icons';
 import { SpotlightCard } from './reactbits/SpotlightCard';
 
 export const ArchitectureDiagram: React.FC = () => {
@@ -23,7 +20,7 @@ export const ArchitectureDiagram: React.FC = () => {
       title: 'Developer Interface & Control Plane',
       badge: 'Tier 1',
       desc: 'Next.js 16 Dashboard on Port 3000, Python Terminal CLI (`stackpilot`), and Model Context Protocol (MCP) server for Claude Code & Cursor.',
-      icon: <Monitor className="w-5 h-5 text-cyan-400" />,
+      icon: <HugeiconsIcon icon={ComputerVideoIcon} size={20} className="text-cyan-400" />,
     },
     {
       id: 'sandbox',
@@ -31,7 +28,7 @@ export const ArchitectureDiagram: React.FC = () => {
       title: 'Browser Sandbox & 60 FPS Screencaster',
       badge: 'Tier 2 (QA)',
       desc: 'Alpine Chromium running in virtual Xvfb display, streaming hardware-accelerated H.264 NALUs on port 8099 with zero Base64 overhead.',
-      icon: <Radio className="w-5 h-5 text-purple-400" />,
+      icon: <HugeiconsIcon icon={RadioIcon} size={20} className="text-purple-400" />,
     },
     {
       id: 'drogon',
@@ -39,7 +36,7 @@ export const ArchitectureDiagram: React.FC = () => {
       title: 'Drogon C++20 Core Backend Engine',
       badge: 'Tier 3 (Core)',
       desc: 'Ultra-fast asynchronous HTTP/WebSocket server managing projects, build tasks, git webhooks, and container orchestration.',
-      icon: <Cpu className="w-5 h-5 text-emerald-400" />,
+      icon: <HugeiconsIcon icon={CpuIcon} size={20} className="text-emerald-400" />,
     },
     {
       id: 'data',
@@ -47,7 +44,7 @@ export const ArchitectureDiagram: React.FC = () => {
       title: 'PostgreSQL + pgvector & Redis Queue',
       badge: 'Tier 4 (Data)',
       desc: 'Stores Site Knowledge Graphs (SKG), user auth, test session logs, and vector embeddings for semantic page archetyping.',
-      icon: <Database className="w-5 h-5 text-amber-400" />,
+      icon: <HugeiconsIcon icon={DatabaseIcon} size={20} className="text-amber-400" />,
     },
     {
       id: 'observability',
@@ -55,7 +52,7 @@ export const ArchitectureDiagram: React.FC = () => {
       title: 'Enterprise Observability Stack',
       badge: 'Tier 5 (Metrics)',
       desc: 'Prometheus metrics collector, Grafana analytics dashboards, Loki log indexing, and cAdvisor container telemetry.',
-      icon: <BarChart className="w-5 h-5 text-rose-400" />,
+      icon: <HugeiconsIcon icon={Analytics01Icon} size={20} className="text-rose-400" />,
     },
   ];
 
@@ -67,7 +64,7 @@ export const ArchitectureDiagram: React.FC = () => {
         {/* Section Header */}
         <div className="text-center max-w-3xl mx-auto mb-14">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-xs font-mono font-medium mb-4">
-            <Layers className="w-3.5 h-3.5" />
+            <HugeiconsIcon icon={Layers01Icon} size={14} />
             <span>Under the Hood</span>
           </div>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">

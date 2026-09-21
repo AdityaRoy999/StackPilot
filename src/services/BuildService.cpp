@@ -2781,17 +2781,7 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
         return true;
     }
 
-    // 1. Pass the whole project to the AI Agent FIRST to develop the Dockerfile
-    appendLogLine(logFile, "🤖 [AI Agent Auto-Detect] No Dockerfile found in repository. Passing project tree to AI agent...", onLogLine);
-    std::string aiReason;
-    if (tryGenerateDockerfileWithAi(sourceDir, logFile, aiReason, onLogLine)) {
-        appendLogLine(logFile, "✅ [AI Agent Auto-Detect] Dockerfile developed and verified. Continuing deployment build...", onLogLine);
-        return true;
-    }
-
-    appendLogLine(logFile, "⚠️ AI Dockerfile generation could not complete (" + aiReason + "). Falling back to deterministic archetype engine...", onLogLine);
-
-    // 2. Run Archetype Pre-Flight Classification
+    // 1. Run Deterministic Archetype Pre-Flight Classification FIRST
     const RepositoryArchetype archetype = classifyRepositoryArchetype(sourceDir);
     if (!archetype.isDeployable) {
         appendLogLine(logFile, "============================================================", onLogLine);
@@ -3072,7 +3062,14 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
             "EXPOSE 3000\n"
             "CMD [\"/bin/sh\", \"-c\", \"jar=$(find . -path '*/target/*.jar' -o -path '*/build/libs/*.jar' -o -name '*.jar' | grep -v plain | head -n1); [ -n \\\"$jar\\\" ] || { echo 'No runnable jar found'; exit 1; }; exec java -jar \\\"$jar\\\"\"]\n";
     } else {
-        reason = "No Dockerfile found, AI generation failed (" + aiReason + "), and project type could not be auto-detected";
+        appendLogLine(logFile, "🤖 [AI Agent Auto-Detect] Project type could not be deterministically resolved. Passing project tree to AI agent...", onLogLine);
+        std::string aiReason;
+        if (tryGenerateDockerfileWithAi(sourceDir, logFile, aiReason, onLogLine)) {
+            appendLogLine(logFile, "✅ [AI Agent Auto-Detect] Dockerfile developed and verified by AI. Continuing deployment build...", onLogLine);
+            return true;
+        }
+
+        reason = "No Dockerfile found, deterministic engine could not detect project type, and AI generation failed (" + aiReason + ")";
         return false;
     }
 
@@ -3083,6 +3080,7 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
     }
 
     out << generated;
+    appendLogLine(logFile, "⚡ [Deterministic Engine] Dockerfile generated successfully for " + archetype.displayName + ".", onLogLine);
     return true;
 }
 

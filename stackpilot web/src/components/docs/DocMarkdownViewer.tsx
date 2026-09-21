@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Copy, Check, Terminal, ExternalLink } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { DocDiagramDispatcher } from './diagrams/DocDiagramDispatcher';
 import { CodeBlock } from './CodeBlock';
 
@@ -101,7 +102,7 @@ export const DocMarkdownViewer: React.FC<DocMarkdownViewerProps> = ({ content, d
               className="text-zinc-200 hover:text-white underline underline-offset-4 decoration-zinc-600 hover:decoration-white transition-colors inline-flex items-center gap-1"
             >
               <span>{firstMatch.match[1]}</span>
-              {isExternal && <ExternalLink className="w-3 h-3 text-white inline-block shrink-0" />}
+              {isExternal && <HugeiconsIcon icon={ArrowUpRight01Icon} size={12} strokeWidth={1.8} className="text-white inline-block shrink-0" />}
             </a>
           );
         } else if (firstMatch.type === 'bold') {

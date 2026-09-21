@@ -2,21 +2,28 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Download04Icon,
   Rocket01Icon,
-  Settings02Icon,
-  Layers01Icon,
   ComputerTerminal01Icon,
+  Download04Icon,
+  Layers01Icon,
+  PackageIcon,
   CpuIcon,
-  GitBranchIcon,
-  DashboardBrowsingIcon,
-  HelpCircleIcon
+  ComputerVideoIcon,
+  ServerStack01Icon,
+  PlayListIcon,
+  Settings02Icon,
+  GitForkIcon,
+  Activity01Icon,
+  HelpCircleIcon,
+  ArrowLeft01Icon,
+  Search01Icon,
+  Mail01Icon,
+  GithubIcon,
+  StarIcon,
+  Copy01Icon,
+  Tick01Icon,
 } from '@hugeicons/core-free-icons';
-import { Copy, Check, ArrowLeft, ExternalLink, Search, Terminal, Shield, Zap, RefreshCw, Cpu, Layers, BookOpen, Box, Globe, Server, CheckCircle2 } from 'lucide-react';
 import { BranchedMenu, BranchedMenuItem } from '../components/reactbits/BranchedMenu';
-import { GithubIcon } from '../components/icons/GithubIcon';
-import { StarIcon } from '../components/icons/StarIcon';
-import { MailIcon } from '../components/icons/MailIcon';
 import { SearchModal } from '../components/SearchModal';
 import { SystemTopologyDiagram } from '../components/SystemTopologyDiagram';
 import { InstallationScriptViewer } from '../components/InstallationScriptViewer';
@@ -37,16 +44,16 @@ const DOCS_MENU_ITEMS: BranchedMenuItem[] = [
       { value: 'quickstart', label: '60-Second Quickstart', icon: ComputerTerminal01Icon },
       { value: 'install', label: 'Installation Scripts', icon: Download04Icon },
       { value: 'architecture', label: 'System Architecture', icon: Layers01Icon },
-      { value: 'templates', label: 'Application Templates', icon: Settings02Icon }
+      { value: 'templates', label: 'Application Templates', icon: PackageIcon }
     ]
   },
   {
     label: 'AI & Autonomous QA',
     children: [
       { value: 'ai-agent', label: 'AI Operations Agent', icon: CpuIcon },
-      { value: 'screencast', label: 'Live Browser Stream', icon: DashboardBrowsingIcon },
-      { value: 'sandboxing', label: 'Chromium Sandboxing', icon: GitBranchIcon },
-      { value: 'replay', label: 'Video Session Replay', icon: HelpCircleIcon }
+      { value: 'screencast', label: 'Live Browser Stream', icon: ComputerVideoIcon },
+      { value: 'sandboxing', label: 'Chromium Sandboxing', icon: ServerStack01Icon },
+      { value: 'replay', label: 'Video Session Replay', icon: PlayListIcon }
     ]
   },
   {
@@ -55,35 +62,35 @@ const DOCS_MENU_ITEMS: BranchedMenuItem[] = [
       { value: 'docker', label: 'Docker Compose', icon: Settings02Icon },
       { value: 'kubernetes', label: 'Kubernetes Clusters', icon: Layers01Icon },
       { value: 'mcp', label: 'MCP for IDE Agents', icon: ComputerTerminal01Icon },
-      { value: 'cicd', label: 'CI/CD & GitHub App', icon: GitBranchIcon }
+      { value: 'cicd', label: 'CI/CD & GitHub App', icon: GitForkIcon }
     ]
   },
   {
     label: 'Configuration & Operations',
     children: [
       { value: 'env', label: 'Environment Variables', icon: Settings02Icon },
-      { value: 'observability', label: 'Observability & Metrics', icon: DashboardBrowsingIcon },
+      { value: 'observability', label: 'Observability & Metrics', icon: Activity01Icon },
       { value: 'troubleshooting', label: 'Troubleshooting Guide', icon: HelpCircleIcon }
     ]
   }
 ];
 
-const SECTION_ICONS: Record<string, any> = {
+const DOCS_SECTION_ICONS: Record<string, any> = {
   overview: Rocket01Icon,
   quickstart: ComputerTerminal01Icon,
   install: Download04Icon,
   architecture: Layers01Icon,
-  templates: Settings02Icon,
+  templates: PackageIcon,
   'ai-agent': CpuIcon,
-  screencast: DashboardBrowsingIcon,
-  sandboxing: GitBranchIcon,
-  replay: HelpCircleIcon,
+  screencast: ComputerVideoIcon,
+  sandboxing: ServerStack01Icon,
+  replay: PlayListIcon,
   docker: Settings02Icon,
   kubernetes: Layers01Icon,
   mcp: ComputerTerminal01Icon,
-  cicd: GitBranchIcon,
+  cicd: GitForkIcon,
   env: Settings02Icon,
-  observability: DashboardBrowsingIcon,
+  observability: Activity01Icon,
   troubleshooting: HelpCircleIcon,
 };
 
@@ -128,8 +135,8 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
         onSelectDoc={(id) => setActiveDoc(id)}
       />
 
-      {/* Top Header - Completely transparent, natural flow, no full-width overlay band */}
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-2 flex items-center justify-between gap-4">
+      {/* Top Header - Completely transparent, natural flow, wide viewport matching */}
+      <div className="w-full max-w-[1700px] mx-auto px-4 sm:px-6 lg:px-10 pt-6 pb-2 flex items-center justify-between gap-4">
         {/* Left: Brand & Back */}
         <div className="flex items-center gap-3 sm:gap-4">
           <div className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs font-mono text-zinc-300">
@@ -142,7 +149,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               className="inline-flex items-center gap-2 h-8 px-3.5 rounded-full bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0"
               title="Return to StackPilot Home"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
+              <HugeiconsIcon icon={ArrowLeft01Icon} size={14} strokeWidth={1.8} />
               <span>Home</span>
             </a>
           </div>
@@ -184,7 +191,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 />
               )}
               <span className="relative z-10 flex items-center gap-2.5">
-                <Search className="w-3.5 h-3.5 text-white shrink-0 transition-colors" />
+                <HugeiconsIcon icon={Search01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0 transition-colors" />
                 <span className="hidden sm:inline">Search docs...</span>
                 <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 bg-[#161618] rounded border border-zinc-700/60">
                   ⌘K
@@ -230,7 +237,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">
-                <MailIcon className="w-3.5 h-3.5 text-white shrink-0" />
+                <HugeiconsIcon icon={Mail01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
                 <span className="hidden sm:inline">Contact</span>
               </span>
             </a>
@@ -288,10 +295,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 />
               )}
               <span className="relative z-10 flex items-center gap-2">
-                <GithubIcon className="w-3.5 h-3.5 text-white shrink-0 transition-colors" />
+                <HugeiconsIcon icon={GithubIcon} size={14} strokeWidth={1.8} className="text-white shrink-0 transition-colors" />
                 <span className="hidden sm:inline">Repo</span>
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
-                  <StarIcon className="w-2.5 h-2.5 text-white shrink-0" />
+                  <HugeiconsIcon icon={StarIcon} size={12} strokeWidth={1.8} className="text-white shrink-0" />
                   <span>Star</span>
                 </span>
               </span>
@@ -301,7 +308,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
       </div>
 
       {/* Main Container with Sidebar + Content */}
-      <div className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex gap-8">
+      <div className="flex-1 max-w-[1700px] w-full mx-auto px-4 sm:px-6 lg:px-10 py-6 flex gap-8">
         {/* Left Sidebar: Greyish Bento Card containing the Tree */}
         <aside
           className={`lg:w-72 shrink-0 transition-all duration-300 z-30 ${
@@ -347,8 +354,8 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
           </div>
         </aside>
 
-        {/* Right Content View */}
-        <main className="flex-1 min-w-0 max-w-3xl pb-24">
+        {/* Right Content View - Stretches smoothly to fill the width */}
+        <main className="flex-1 min-w-0 w-full pb-24">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeDoc}
@@ -361,7 +368,10 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               {/* Top Section Breadcrumb & Actions Bar */}
               <div className="flex items-center justify-between gap-4 pb-2">
                 <div className="flex items-center gap-2 text-xs font-mono text-zinc-400">
-                  <HugeiconsIcon icon={SECTION_ICONS[activeDoc] || Rocket01Icon} size={16} className="text-white shrink-0" />
+                  {(() => {
+                    const icon = DOCS_SECTION_ICONS[activeDoc] || Rocket01Icon;
+                    return <HugeiconsIcon icon={icon} size={16} strokeWidth={1.8} className="text-white shrink-0" />;
+                  })()}
                   <span className="uppercase tracking-wider text-zinc-300 font-semibold">{DOCS_CONTENT[activeDoc]?.category || 'DOCUMENTATION'}</span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -373,12 +383,12 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                   >
                     {copiedSnippet === 'copy-page' ? (
                       <>
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <HugeiconsIcon icon={Tick01Icon} size={14} strokeWidth={2.2} className="text-emerald-400" />
                         <span className="text-emerald-400 text-[11px] font-medium">Copied Markdown!</span>
                       </>
                     ) : (
                       <>
-                        <Copy className="w-3.5 h-3.5 text-white" />
+                        <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={1.8} className="text-white" />
                         <span className="text-[11px]">Copy Markdown</span>
                       </>
                     )}

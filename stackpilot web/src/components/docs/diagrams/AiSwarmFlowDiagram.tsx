@@ -1,29 +1,28 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Bot,
-  Workflow,
-  Code2,
-  ShieldCheck,
-  Wrench,
-  Eye,
-  Terminal,
-  ArrowRight,
-  RotateCcw,
-  Sparkles,
-  Layers,
-  CheckCircle2,
-  ShieldAlert,
-  Play,
-  Cpu,
-  Monitor
-} from 'lucide-react';
+  BotIcon,
+  Flowchart01Icon,
+  CodeIcon,
+  ShieldCheckIcon,
+  Wrench01Icon,
+  EyeIcon,
+  ComputerTerminal01Icon,
+  ArrowRight01Icon,
+  RotateCcwIcon,
+  CheckmarkCircle01Icon,
+  ShieldAlertIcon,
+  PlayIcon,
+  CpuIcon,
+  ComputerVideoIcon
+} from '@hugeicons/core-free-icons';
 
 interface SwarmNode {
   id: string;
   name: string;
   role: string;
   category: 'input' | 'agent' | 'decision' | 'executor' | 'browser';
-  icon: React.ComponentType<{ className?: string }>;
+  icon: any;
   promptDesc: string;
   tools: string[];
   output: string;
@@ -36,7 +35,7 @@ const NODES: SwarmNode[] = [
     name: 'User Prompt / Webhook Trigger',
     role: 'Event Ingestion',
     category: 'input',
-    icon: Terminal,
+    icon: ComputerTerminal01Icon,
     promptDesc: 'Failing build alert, runtime crash signal, or natural language user instructions (e.g., "Fix broken Next.js route in deployment").',
     tools: ['POST /api/v1/ai/chat', 'Webhook Trigger'],
     output: 'Structured task envelope with project_id and deployment_id',
@@ -47,7 +46,7 @@ const NODES: SwarmNode[] = [
     name: 'SupervisorAgent',
     role: 'Router & Intent Classifier',
     category: 'agent',
-    icon: Bot,
+    icon: BotIcon,
     promptDesc: 'Evaluates the user intent and project health. Formulates execution graph and routes to Architect for multi-step diagnosis.',
     tools: ['get_deployment_status', 'get_deployment_logs', 'list_deployments', 'get_session_context'],
     output: 'Execution Plan, routing decision, and priority score',
@@ -58,7 +57,7 @@ const NODES: SwarmNode[] = [
     name: 'ArchitectAgent',
     role: 'Blueprint & Strategy Designer',
     category: 'agent',
-    icon: Workflow,
+    icon: Flowchart01Icon,
     promptDesc: 'Inspects project repository layout, AST dependencies, and configuration files to formulate a non-destructive remediation blueprint.',
     tools: ['workspace_list_files', 'workspace_read_file', 'web_search', 'web_fetch'],
     output: 'ArchitectBlueprint (files to modify, replacement strategy, dependency changes)',
@@ -69,7 +68,7 @@ const NODES: SwarmNode[] = [
     name: 'CoderAgent',
     role: 'Surgical Code Remediation',
     category: 'agent',
-    icon: Code2,
+    icon: CodeIcon,
     promptDesc: 'Executes surgical find-and-replace edits or writes updated files inside the project workspace without destroying unrelated code.',
     tools: ['workspace_edit_file', 'workspace_write_file', 'terminal_run_command'],
     output: 'Unified diff and workspace file modifications',
@@ -80,7 +79,7 @@ const NODES: SwarmNode[] = [
     name: 'VerifierAgent',
     role: 'Syntax Check & Build Test',
     category: 'agent',
-    icon: ShieldCheck,
+    icon: ShieldCheckIcon,
     promptDesc: 'Reviews code patches against syntax standards, lint checks, and triggers preliminary test compilation.',
     tools: ['terminal_run_command', 'workspace_read_file', 'wait_for_deployment'],
     output: 'Verification result (Pass / Fail reasons)',
@@ -91,7 +90,7 @@ const NODES: SwarmNode[] = [
     name: 'Verification Decision Gateway',
     role: 'State Machine Branching',
     category: 'decision',
-    icon: CheckCircle2,
+    icon: CheckmarkCircle01Icon,
     promptDesc: 'Determines whether the proposed changes passed all integrity checks. If broken syntax or regressions occur, loops back to Coder.',
     tools: ['LangGraph conditional edges'],
     output: 'Branch: Passed -> Executor | Failed -> Loop back to CoderAgent',
@@ -102,7 +101,7 @@ const NODES: SwarmNode[] = [
     name: 'Workspace Tools & Deployment',
     role: 'Build & Hot-Reload Execution',
     category: 'executor',
-    icon: Wrench,
+    icon: Wrench01Icon,
     promptDesc: 'Triggers local container rebuild from modified workspace, registers image, and executes zero-downtime rolling restart.',
     tools: ['workspace_trigger_rebuild', 'repair_deployment', 'scale_deployment'],
     output: 'Active container container_id and healthy HTTP endpoint',
@@ -113,7 +112,7 @@ const NODES: SwarmNode[] = [
     name: 'Visual QA & Browser Validation',
     role: 'Autonomous Visual Testing',
     category: 'browser',
-    icon: Eye,
+    icon: EyeIcon,
     promptDesc: 'Navigates headless Chromium inside Xvfb sandbox, verifies UI elements, asserts console error absence, and streams 60 FPS video.',
     tools: ['browser_navigate', 'browser_click', 'browser_screenshot', 'browser_extract_state'],
     output: 'Visual assertion pass, screenshot artifacts, and replay buffer',
@@ -132,7 +131,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Bot className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={BotIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               How the AI Agent Team Works
@@ -154,7 +153,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
                 : 'bg-[#18181c] border-zinc-800/80 text-zinc-400 hover:text-white'
             }`}
           >
-            <RotateCcw className="w-3 h-3 text-white" />
+            <HugeiconsIcon icon={RotateCcwIcon} size={12} strokeWidth={1.8} className="text-white" />
             <span>{simulatedLoop ? 'Simulating Error Loop' : 'Simulate Failure Loop'}</span>
           </button>
         </div>
@@ -169,7 +168,6 @@ export const AiSwarmFlowDiagram: React.FC = () => {
         {/* Step-by-Step Flow Nodes */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           {NODES.slice(0, 4).map((node, idx) => {
-            const Icon = node.icon;
             const isSelected = selectedNode.id === node.id;
             return (
               <div
@@ -183,7 +181,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
-                    <Icon className="w-4 h-4 text-white" />
+                    <HugeiconsIcon icon={node.icon} size={16} strokeWidth={1.8} className="text-white" />
                   </div>
                   <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-zinc-800/90 text-zinc-300">
                     Step {idx + 1} &bull; {node.badge}
@@ -195,7 +193,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
                 </div>
                 <div className="flex items-center justify-between pt-1 text-[10px] font-mono text-zinc-400">
                   <span>{node.tools.length} Tools</span>
-                  <ArrowRight className="w-3 h-3 text-white" />
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white" />
                 </div>
               </div>
             );
@@ -205,7 +203,6 @@ export const AiSwarmFlowDiagram: React.FC = () => {
         {/* Verification and Execution row */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           {NODES.slice(4, 8).map((node, idx) => {
-            const Icon = node.icon;
             const isSelected = selectedNode.id === node.id;
             const isDecision = node.id === 'decision';
             return (
@@ -222,7 +219,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
-                    <Icon className="w-4 h-4 text-white" />
+                    <HugeiconsIcon icon={node.icon} size={16} strokeWidth={1.8} className="text-white" />
                   </div>
                   <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-zinc-800/90 text-zinc-300">
                     Step {idx + 5} &bull; {node.badge}
@@ -236,11 +233,11 @@ export const AiSwarmFlowDiagram: React.FC = () => {
                   <span>{node.tools.length} Tools</span>
                   {node.id === 'decision' && simulatedLoop ? (
                     <span className="flex items-center gap-1 text-amber-300">
-                      <RotateCcw className="w-3 h-3 text-white" />
+                      <HugeiconsIcon icon={RotateCcwIcon} size={12} strokeWidth={1.8} className="text-white" />
                       <span>Looping</span>
                     </span>
                   ) : (
-                    <ArrowRight className="w-3 h-3 text-white" />
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white" />
                   )}
                 </div>
               </div>
@@ -253,7 +250,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
       <div className="p-4 rounded-xl bg-black/40 border-0 space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-mono uppercase text-zinc-400 flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+            <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} strokeWidth={1.8} className="text-white" />
             <span>Conditional Branching Decision Logic</span>
           </span>
           <span className="text-[10px] font-mono text-zinc-400">LangGraph State Graph</span>
@@ -264,7 +261,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
           <div className="p-3.5 rounded-lg bg-emerald-950/30 border-0 space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-emerald-400 font-mono flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-white" />
+                <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} strokeWidth={1.8} className="text-white" />
                 <span>Branch: PASSED (Syntax OK &amp; Tests Green)</span>
               </span>
               <span className="text-[10px] font-mono text-emerald-300">&rarr; Step 7: Workspace Tools</span>
@@ -284,7 +281,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-amber-300 font-mono flex items-center gap-1.5">
-                <RotateCcw className="w-3.5 h-3.5 text-white" />
+                <HugeiconsIcon icon={RotateCcwIcon} size={14} strokeWidth={1.8} className="text-white" />
                 <span>Branch: FAILED (Errors Detected)</span>
               </span>
               <span className="text-[10px] font-mono text-amber-300">&larr; Feedback Loop to Step 4</span>
@@ -301,7 +298,7 @@ export const AiSwarmFlowDiagram: React.FC = () => {
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
-              <selectedNode.icon className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={selectedNode.icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white flex items-center gap-2">

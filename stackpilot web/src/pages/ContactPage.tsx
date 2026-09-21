@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  CheckCircle2,
-  ArrowLeft,
-  BookOpen
-} from 'lucide-react';
-import { GithubIcon } from '../components/icons/GithubIcon';
-import { StarIcon } from '../components/icons/StarIcon';
-import { SendIcon } from '../components/icons/SendIcon';
+  CheckmarkCircle01Icon,
+  ArrowLeft01Icon,
+  BookOpen01Icon,
+  GithubIcon,
+  StarIcon,
+  SentIcon
+} from '@hugeicons/core-free-icons';
 import { useFont } from '../context/FontContext';
 
 interface ContactPageProps {
@@ -88,7 +89,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
               className="inline-flex items-center gap-2 h-8 px-3.5 rounded-full bg-transparent hover:bg-[#242428] text-zinc-300 hover:text-white transition-all cursor-pointer select-none border-0"
               title="Return to StackPilot Home"
             >
-              <ArrowLeft className="w-3.5 h-3.5 text-white" />
+              <HugeiconsIcon icon={ArrowLeft01Icon} size={14} strokeWidth={1.8} className="text-white" />
               <span>Home</span>
             </a>
           </div>
@@ -132,7 +133,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
               />
             )}
             <span className="relative z-10 flex items-center gap-1.5">
-              <BookOpen className="w-3.5 h-3.5 text-white shrink-0" />
+              <HugeiconsIcon icon={BookOpen01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
               <span>Docs</span>
             </span>
           </a>
@@ -190,10 +191,10 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
               />
             )}
             <span className="relative z-10 flex items-center gap-2">
-              <GithubIcon className="w-3.5 h-3.5 text-white shrink-0 transition-colors" />
+              <HugeiconsIcon icon={GithubIcon} size={14} strokeWidth={1.8} className="text-white shrink-0 transition-colors" />
               <span className="hidden sm:inline">Repo</span>
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
-                <StarIcon className="w-2.5 h-2.5 text-white shrink-0" />
+                <HugeiconsIcon icon={StarIcon} size={12} strokeWidth={1.8} className="text-white shrink-0" />
                 <span>Star</span>
               </span>
             </span>
@@ -215,7 +216,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
                 className="py-10 px-4 text-center space-y-4"
               >
                 <div className="w-14 h-14 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-7 h-7" />
+                  <HugeiconsIcon icon={CheckmarkCircle01Icon} size={28} strokeWidth={1.8} />
                 </div>
                 <h3 className="text-xl sm:text-2xl font-bold text-white">Message Sent</h3>
                 <p className="text-xs sm:text-sm text-zinc-400 max-w-sm mx-auto leading-relaxed">
@@ -344,7 +345,7 @@ export const ContactPage: React.FC<ContactPageProps> = ({ onNavigateHome, onNavi
                     </>
                   ) : (
                     <>
-                      <SendIcon className="w-3.5 h-3.5" />
+                      <HugeiconsIcon icon={SentIcon} size={14} strokeWidth={1.8} />
                       <span>Send Message</span>
                     </>
                   )}

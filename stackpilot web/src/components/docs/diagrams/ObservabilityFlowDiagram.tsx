@@ -1,24 +1,23 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Activity,
-  Server,
-  Layers,
-  Code,
-  Search,
-  Database,
-  ArrowRight,
-  Code2,
-  Radio,
-  Cpu,
-  BarChart3
-} from 'lucide-react';
+  Activity01Icon,
+  ServerStack01Icon,
+  Layers01Icon,
+  CodeIcon,
+  DatabaseIcon,
+  ArrowRight01Icon,
+  RadioIcon,
+  CpuIcon,
+  Analytics01Icon
+} from '@hugeicons/core-free-icons';
 
 interface TelemetryNode {
   id: string;
   name: string;
   category: 'targets' | 'scrapers' | 'storage';
   port: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: any;
   description: string;
   configOrMetrics: string[];
   protocol: string;
@@ -31,7 +30,7 @@ const NODES: TelemetryNode[] = [
     name: 'StackPilot Backend',
     category: 'targets',
     port: ':8090/metrics',
-    icon: Server,
+    icon: ServerStack01Icon,
     description: 'C++ Drogon core exposes native Prometheus metrics on active WebSocket connections, thread pool saturation, and DB latency.',
     configOrMetrics: ['stackpilot_http_requests_total', 'stackpilot_ws_active_connections', 'stackpilot_db_pool_wait_seconds'],
     protocol: 'HTTP Scrape'
@@ -41,7 +40,7 @@ const NODES: TelemetryNode[] = [
     name: 'Application Containers',
     category: 'targets',
     port: 'cgroup v2',
-    icon: Cpu,
+    icon: CpuIcon,
     description: 'Docker containers running user applications. Resource stats are read directly from Linux kernel cgroups v2 without agent overhead.',
     configOrMetrics: ['/sys/fs/cgroup/cpu.stat', '/sys/fs/cgroup/memory.current', 'memory.high throttle counters'],
     protocol: 'Kernel cgroups'
@@ -51,7 +50,7 @@ const NODES: TelemetryNode[] = [
     name: 'Docker Container Logs',
     category: 'targets',
     port: '/var/log/pods',
-    icon: Code,
+    icon: CodeIcon,
     description: 'Standard container stdout and stderr emitted in JSON format and rotated by Docker daemon with strict 100MB file limits.',
     configOrMetrics: ['/var/lib/docker/containers/*/*.log', 'Log-driver: json-file', 'Max-size: 50m, Max-file: 3'],
     protocol: 'FIFO Tail'
@@ -63,7 +62,7 @@ const NODES: TelemetryNode[] = [
     name: 'Prometheus TSDB',
     category: 'scrapers',
     port: ':9090',
-    icon: Activity,
+    icon: Activity01Icon,
     description: 'High-performance time-series database scraping metrics at 15-second intervals with 15-day local retention.',
     configOrMetrics: ['scrape_interval: 15s', 'evaluation_interval: 15s', 'tsdb retention: 15d'],
     protocol: 'PromQL'
@@ -73,7 +72,7 @@ const NODES: TelemetryNode[] = [
     name: 'cAdvisor Engine',
     category: 'scrapers',
     port: ':8081',
-    icon: Layers,
+    icon: Layers01Icon,
     description: 'Google cAdvisor daemon running as rootless container, measuring real-time CPU percentages, RSS memory, and network I/O per container.',
     configOrMetrics: ['container_cpu_usage_seconds_total', 'container_memory_working_set_bytes', 'container_network_receive_bytes_total'],
     protocol: 'cgroup Exporter'
@@ -83,7 +82,7 @@ const NODES: TelemetryNode[] = [
     name: 'Promtail Log Scraper',
     category: 'scrapers',
     port: ':9080',
-    icon: Radio,
+    icon: RadioIcon,
     description: 'Lightweight log forwarder that discovers active Docker containers, attaches project_id labels, and streams to Loki.',
     configOrMetrics: ['clients: [{url: "http://loki:3100/loki/api/v1/push"}]', 'pipeline_stages: [docker: {}]'],
     protocol: 'Push API'
@@ -95,7 +94,7 @@ const NODES: TelemetryNode[] = [
     name: 'Grafana Loki',
     category: 'storage',
     port: ':3100',
-    icon: Database,
+    icon: DatabaseIcon,
     description: 'Horizontal, multi-tenant log aggregation system indexing only labels (project_id, deployment_id) for minimal memory footprint.',
     configOrMetrics: ['auth_enabled: false', 'schema_config: v11', 'storage: filesystem'],
     protocol: 'LogQL'
@@ -105,7 +104,7 @@ const NODES: TelemetryNode[] = [
     name: 'Grafana Dashboards',
     category: 'storage',
     port: ':3001',
-    icon: BarChart3,
+    icon: Analytics01Icon,
     description: 'Single pane of glass visualizing unified CPU/memory utilization, container restart rates, and real-time streaming logs.',
     configOrMetrics: ['Provisioned Data Sources: Prometheus, Loki', 'Auto-provisioned Dashboards: System Overview, Host Health'],
     protocol: 'Web UI / API'
@@ -126,7 +125,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Activity className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={Activity01Icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               Monitoring, Metrics &amp; Logs
@@ -152,7 +151,6 @@ export const ObservabilityFlowDiagram: React.FC = () => {
 
           <div className="space-y-2.5">
             {targets.map((node) => {
-              const Icon = node.icon;
               const isSelected = selectedNode.id === node.id;
               return (
                 <div
@@ -167,7 +165,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded bg-zinc-800 flex items-center justify-center">
-                        <Icon className="w-3.5 h-3.5 text-white" />
+                        <HugeiconsIcon icon={node.icon} size={14} strokeWidth={1.8} className="text-white" />
                       </div>
                       <span className="text-xs font-bold text-white">{node.name}</span>
                     </div>
@@ -177,7 +175,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-1">
                     <span>{node.protocol}</span>
-                    <ArrowRight className="w-3 h-3 text-white" />
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white" />
                   </div>
                 </div>
               );
@@ -197,7 +195,6 @@ export const ObservabilityFlowDiagram: React.FC = () => {
 
           <div className="space-y-2.5">
             {scrapers.map((node) => {
-              const Icon = node.icon;
               const isSelected = selectedNode.id === node.id;
               return (
                 <div
@@ -212,7 +209,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded bg-zinc-800 flex items-center justify-center">
-                        <Icon className="w-3.5 h-3.5 text-white" />
+                        <HugeiconsIcon icon={node.icon} size={14} strokeWidth={1.8} className="text-white" />
                       </div>
                       <span className="text-xs font-bold text-white">{node.name}</span>
                     </div>
@@ -222,7 +219,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-1">
                     <span>{node.protocol}</span>
-                    <ArrowRight className="w-3 h-3 text-white" />
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white" />
                   </div>
                 </div>
               );
@@ -242,7 +239,6 @@ export const ObservabilityFlowDiagram: React.FC = () => {
 
           <div className="space-y-2.5">
             {storage.map((node) => {
-              const Icon = node.icon;
               const isSelected = selectedNode.id === node.id;
               return (
                 <div
@@ -257,7 +253,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded bg-zinc-800 flex items-center justify-center">
-                        <Icon className="w-3.5 h-3.5 text-white" />
+                        <HugeiconsIcon icon={node.icon} size={14} strokeWidth={1.8} className="text-white" />
                       </div>
                       <span className="text-xs font-bold text-white">{node.name}</span>
                     </div>
@@ -267,7 +263,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
                   </div>
                   <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-1">
                     <span>{node.protocol}</span>
-                    <ArrowRight className="w-3 h-3 text-white" />
+                    <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white" />
                   </div>
                 </div>
               );
@@ -281,7 +277,7 @@ export const ObservabilityFlowDiagram: React.FC = () => {
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
-              <selectedNode.icon className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={selectedNode.icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white">

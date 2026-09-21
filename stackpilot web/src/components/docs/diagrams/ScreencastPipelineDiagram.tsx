@@ -1,16 +1,6 @@
 import React, { useState } from 'react';
-import {
-  Video,
-  Monitor,
-  Cpu,
-  Layers,
-  Activity,
-  ArrowRight,
-  Zap,
-  Code2,
-  Radio,
-  Sparkles
-} from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ComputerVideoIcon } from '@hugeicons/core-free-icons';
 
 interface ScreencastStage {
   id: string;
@@ -94,7 +84,7 @@ export const ScreencastPipelineDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Video className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={ComputerVideoIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               Live Browser Video Stream
@@ -207,7 +197,7 @@ export const ScreencastPipelineDiagram: React.FC = () => {
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
-              <Monitor className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={ComputerVideoIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white">

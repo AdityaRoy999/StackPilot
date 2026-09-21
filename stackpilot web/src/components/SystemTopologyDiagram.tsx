@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import { 
-  Terminal, 
-  Shield, 
-  Monitor, 
-  Cpu, 
-  Database, 
-  Layers, 
-  Bot, 
-  Box, 
-  Globe,
-  Sparkles
-} from 'lucide-react';
+  ComputerTerminal01Icon, 
+  ShieldCheckIcon, 
+  ComputerVideoIcon, 
+  CpuIcon, 
+  DatabaseIcon, 
+  Layers01Icon, 
+  BotIcon, 
+  PackageIcon, 
+  Globe02Icon,
+  SparklesIcon
+} from '@hugeicons/core-free-icons';
 
 interface TopologyNode {
   id: string;
@@ -35,7 +36,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Operator / IDE Agent',
       badge: 'Client / CLI',
       subtitle: 'Developer Terminal & IDE Extension',
-      icon: <Terminal className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} className="text-white shrink-0" />,
       left: 40,
       top: 30,
       width: 215,
@@ -47,7 +48,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Caddy Reverse Proxy',
       badge: ':80 / :443',
       subtitle: 'TLS Termination & SSL Gateway',
-      icon: <Shield className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={ShieldCheckIcon} size={16} className="text-white shrink-0" />,
       left: 350,
       top: 30,
       width: 225,
@@ -61,7 +62,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Next.js Dashboard',
       badge: 'Port :3000',
       subtitle: 'Control Plane & Live Canvas',
-      icon: <Monitor className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={ComputerVideoIcon} size={16} className="text-white shrink-0" />,
       left: 40,
       top: 160,
       width: 230,
@@ -73,7 +74,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'C++ Drogon API',
       badge: 'Port :8090',
       subtitle: 'Ultra-Low Latency Core Backend',
-      icon: <Cpu className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={CpuIcon} size={16} className="text-white shrink-0" />,
       left: 480,
       top: 160,
       width: 240,
@@ -87,7 +88,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'PostgreSQL + pgvector',
       badge: 'Port :5432',
       subtitle: 'Knowledge Graph & Vector Memory',
-      icon: <Database className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={DatabaseIcon} size={16} className="text-white shrink-0" />,
       left: 40,
       top: 300,
       width: 230,
@@ -99,7 +100,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Redis',
       badge: 'Port :6379',
       subtitle: 'Job Queues & Realtime Pub/Sub',
-      icon: <Layers className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={Layers01Icon} size={16} className="text-white shrink-0" />,
       left: 315,
       top: 300,
       width: 220,
@@ -111,7 +112,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Python AI Service',
       badge: 'Port :8010',
       subtitle: 'Model Gateway & CDP Agent',
-      icon: <Bot className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={BotIcon} size={16} className="text-white shrink-0" />,
       left: 575,
       top: 300,
       width: 240,
@@ -125,7 +126,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Docker Compose / K8s',
       badge: 'Infra',
       subtitle: 'Container Orchestration Fleet',
-      icon: <Box className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={PackageIcon} size={16} className="text-white shrink-0" />,
       left: 315,
       top: 430,
       width: 220,
@@ -137,7 +138,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       title: 'Sandboxed Chromium',
       badge: 'Xvfb 60 FPS',
       subtitle: 'Hardware-Accelerated Browser Feed',
-      icon: <Globe className="w-4 h-4 text-white shrink-0" />,
+      icon: <HugeiconsIcon icon={Globe02Icon} size={16} className="text-white shrink-0" />,
       left: 575,
       top: 430,
       width: 240,
@@ -152,7 +153,7 @@ export const SystemTopologyDiagram: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-zinc-800/80">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center">
-            <Layers className="w-4 h-4 text-white" />
+            <HugeiconsIcon icon={Layers01Icon} size={16} className="text-white" />
           </div>
           <div>
             <h3 className="text-sm sm:text-base font-semibold text-zinc-100 font-mono tracking-tight">
@@ -368,7 +369,7 @@ export const SystemTopologyDiagram: React.FC = () => {
         <div className="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-700/80 flex items-start justify-between gap-3 text-xs animate-in fade-in duration-150">
           <div>
             <div className="flex items-center gap-2 font-semibold text-white mb-1">
-              <Sparkles className="w-3.5 h-3.5 text-white" />
+              <HugeiconsIcon icon={SparklesIcon} size={14} strokeWidth={1.8} className="text-white" />
               <span>{nodes.find((n) => n.id === selectedNode)?.title}</span>
               <span className="font-mono text-zinc-400 text-[11px]">
                 ({nodes.find((n) => n.id === selectedNode)?.badge})

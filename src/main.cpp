@@ -122,7 +122,7 @@ void reconcileLocalDockerRuntimeUrls() {
         auto conn = stackpilot::Database::getInstance().getConnection();
         pqxx::work txn(*conn);
         auto rows = txn.exec(
-            "SELECT id, remote_container_name, runtime_url "
+            "SELECT id, remote_container_name, runtime_url, runtime_exposure "
             "FROM deployments "
             "WHERE status = 'running' "
             "AND runtime_provider = 'local_docker' "
@@ -132,6 +132,7 @@ void reconcileLocalDockerRuntimeUrls() {
             const std::string deploymentId = row["id"].as<std::string>();
             const std::string containerName = row["remote_container_name"].as<std::string>();
             const std::string currentUrl = row["runtime_url"].is_null() ? "" : row["runtime_url"].as<std::string>();
+            const std::string exposure = row["runtime_exposure"].is_null() ? "" : row["runtime_exposure"].as<std::string>();
             const std::string running = trim(runCommandCapture(
                 "docker inspect --format '{{.State.Running}}' " + shellQuote(containerName) + " 2>/dev/null"
             ));
@@ -144,6 +145,11 @@ void reconcileLocalDockerRuntimeUrls() {
                     "WHERE id = $1",
                     deploymentId
                 );
+                continue;
+            }
+
+            if (exposure == "cloudflare_tunnel" || exposure == "portless_local") {
+                // Keep active Cloudflare tunnel or Portless domain URL
                 continue;
             }
 

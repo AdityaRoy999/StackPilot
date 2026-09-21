@@ -1,18 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import { 
-  Play, 
-  Pause, 
-  RotateCcw, 
-  ShieldAlert, 
-  CheckCircle2, 
-  Activity, 
-  Eye, 
-  MousePointer, 
-  Globe, 
-  Maximize2,
-  Sparkles,
-  Lock
-} from 'lucide-react';
+  PlayIcon, 
+  PauseIcon, 
+  CheckmarkCircle01Icon, 
+  Activity01Icon, 
+  CursorPointer01Icon, 
+  SparklesIcon,
+  LockIcon
+} from '@hugeicons/core-free-icons';
 import { SpotlightCard } from './reactbits/SpotlightCard';
 import { TiltedCard } from './reactbits/TiltedCard';
 import { MacTrafficLights } from './docs/CodeBlock';
@@ -76,7 +72,7 @@ export const LiveCockpitShowcase: React.FC = () => {
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-14">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-xs font-mono font-medium mb-4">
-            <Activity className="w-3.5 h-3.5" />
+            <HugeiconsIcon icon={Activity01Icon} size={14} />
             <span>Real-Time Autonomous Testing Engine</span>
           </div>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
@@ -101,7 +97,7 @@ export const LiveCockpitShowcase: React.FC = () => {
                   <div className="flex items-center gap-3 flex-1 max-w-lg">
                     <MacTrafficLights />
                     <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-slate-950 border border-slate-800 text-slate-300 flex-1 truncate">
-                      <Lock className="w-3 h-3 text-emerald-400 shrink-0" />
+                      <HugeiconsIcon icon={LockIcon} size={12} className="text-emerald-400 shrink-0" />
                       <span className="truncate">{step.url}</span>
                     </div>
                   </div>
@@ -117,7 +113,7 @@ export const LiveCockpitShowcase: React.FC = () => {
                       className="p-1.5 rounded-md hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
                       title={isPlaying ? 'Pause simulation' : 'Play simulation'}
                     >
-                      {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                      {isPlaying ? <HugeiconsIcon icon={PauseIcon} size={14} /> : <HugeiconsIcon icon={PlayIcon} size={14} />}
                     </button>
                   </div>
                 </div>
@@ -203,7 +199,7 @@ export const LiveCockpitShowcase: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-3 text-[11px] text-slate-500 font-mono">
                         <span className="flex items-center gap-1 text-emerald-400">
-                          <CheckCircle2 className="w-3 h-3" /> Same-Origin Locked
+                          <HugeiconsIcon icon={CheckmarkCircle01Icon} size={12} /> Same-Origin Locked
                         </span>
                         <span>External Links Blocked</span>
                       </div>
@@ -218,7 +214,7 @@ export const LiveCockpitShowcase: React.FC = () => {
                       top: step.cursorPos.y,
                     }}
                   >
-                    <MousePointer className="w-5 h-5 text-cyan-400 fill-cyan-400/30 drop-shadow-md animate-bounce" />
+                    <HugeiconsIcon icon={CursorPointer01Icon} size={20} className="text-cyan-400 drop-shadow-md animate-bounce" />
                     <span className="px-2 py-0.5 rounded-md bg-slate-900/90 border border-cyan-500/40 text-[10px] font-mono font-bold text-cyan-300 backdrop-blur-md shadow-lg">
                       AI Tester
                     </span>
@@ -235,7 +231,7 @@ export const LiveCockpitShowcase: React.FC = () => {
             <SpotlightCard className="p-5 border border-slate-300 dark:border-slate-800">
               <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4">
                 <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-cyan-500" />
+                  <HugeiconsIcon icon={Activity01Icon} size={16} className="text-cyan-500" />
                   <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-900 dark:text-white">
                     APV Perception Stream
                   </span>
@@ -274,7 +270,7 @@ export const LiveCockpitShowcase: React.FC = () => {
                 <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
                   <span>Domain Fence:</span>
                   <span className="text-emerald-500 font-semibold flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Strict Same-Origin
+                    <HugeiconsIcon icon={CheckmarkCircle01Icon} size={12} /> Strict Same-Origin
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
@@ -291,7 +287,7 @@ export const LiveCockpitShowcase: React.FC = () => {
             {/* Quick Test Trigger Card */}
             <div className="p-4 rounded-xl border border-slate-300/80 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/50 backdrop-blur-md">
               <div className="flex items-center gap-2 text-xs font-semibold text-slate-900 dark:text-white mb-2">
-                <Sparkles className="w-3.5 h-3.5 text-cyan-500" />
+                <HugeiconsIcon icon={SparklesIcon} size={14} className="text-cyan-500" />
                 <span>Test Your Own Web App Live</span>
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-3">

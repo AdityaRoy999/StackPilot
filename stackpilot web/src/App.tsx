@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
+import { BentoFeatures } from './components/BentoFeatures';
+import { OpenSourceBento } from './components/OpenSourceBento';
 import { Footer } from './components/Footer';
 import { SmoothScroll } from './components/SmoothScroll';
 import { Lightfall } from './components/reactbits/Lightfall';
@@ -70,7 +72,7 @@ export const App: React.FC = () => {
       {route === 'home' && (
         <ScriptProvider>
           <SmoothScroll>
-            <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-hidden">
+            <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-clip">
               {/* Rich Vibrant Bluish & Indigo Atmospheric Ambient Gradients */}
               <div
                 className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none"
@@ -108,9 +110,15 @@ export const App: React.FC = () => {
                 onNavigateContact={() => navigateTo('contact')}
               />
 
-              <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 lg:px-8 flex flex-col justify-center relative z-10">
+              <main className="flex-1 max-w-[1380px] w-full mx-auto px-4 sm:px-6 lg:px-8 flex flex-col relative z-10">
                 <Hero />
+                <BentoFeatures />
               </main>
+
+              {/* Full-width 100vw section for CircularGallery */}
+              <div className="w-full relative z-10 overflow-hidden">
+                <OpenSourceBento />
+              </div>
 
               <Footer
                 onNavigateDocs={() => navigateTo('docs')}

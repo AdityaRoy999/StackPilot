@@ -56,7 +56,7 @@ export const AnimatedList = <T,>({
   enableArrowNavigation = true,
   className = '',
   itemClassName = '',
-  displayScrollbar = true,
+  displayScrollbar = false,
   initialSelectedIndex = -1,
   maxHeight = '420px',
 }: AnimatedListProps<T>) => {
@@ -141,13 +141,14 @@ export const AnimatedList = <T,>({
         className={`overflow-y-auto p-2 sm:p-3 ${
           displayScrollbar
             ? '[&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-track]:bg-[#121214] [&::-webkit-scrollbar-thumb]:bg-[#27272a] [&::-webkit-scrollbar-thumb]:rounded-[4px]'
-            : 'scrollbar-hide'
+            : 'no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden'
         }`}
         onScroll={handleScroll}
         style={{
           maxHeight,
           scrollbarWidth: displayScrollbar ? 'thin' : 'none',
-          scrollbarColor: '#27272a #121214',
+          msOverflowStyle: displayScrollbar ? 'auto' : 'none',
+          scrollbarColor: displayScrollbar ? '#27272a #121214' : 'transparent transparent',
         }}
       >
         {items.map((item, index) => (

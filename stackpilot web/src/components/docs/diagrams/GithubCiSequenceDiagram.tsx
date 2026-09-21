@@ -1,19 +1,15 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  GitBranch,
-  Globe,
-  Cpu,
-  Layers,
-  Box,
-  ShieldCheck,
-  CheckCircle2,
-  ArrowRight,
-  Code2,
-  Lock,
-  Zap,
-  Activity,
-  Sliders
-} from 'lucide-react';
+  GitForkIcon,
+  Globe02Icon,
+  CpuIcon,
+  Layers01Icon,
+  PackageIcon,
+  ArrowRight01Icon,
+  FlashIcon,
+  CodeIcon
+} from '@hugeicons/core-free-icons';
 
 interface CiStep {
   id: number;
@@ -27,11 +23,11 @@ interface CiStep {
 }
 
 const PARTICIPANTS = [
-  { id: 'dev', name: 'Developer', role: 'Source Author', icon: Globe, port: 'Git CLI' },
-  { id: 'gh', name: 'GitHub Platform', role: 'Git Remote & Actions', icon: GitBranch, port: 'api.github.com' },
-  { id: 'sp', name: 'StackPilot WebhookController', role: 'C++ HMAC & Gating', icon: Cpu, port: 'Port 8090' },
-  { id: 'redis', name: 'Redis 7 Queue', role: 'FIFO Task Buffer', icon: Layers, port: 'Port 6379' },
-  { id: 'worker', name: 'Deployment Worker', role: 'BuildKit & Rolling Deploy', icon: Box, port: 'Worker Thread' }
+  { id: 'dev', name: 'Developer', role: 'Source Author', icon: Globe02Icon, port: 'Git CLI' },
+  { id: 'gh', name: 'GitHub Platform', role: 'Git Remote & Actions', icon: GitForkIcon, port: 'api.github.com' },
+  { id: 'sp', name: 'StackPilot WebhookController', role: 'C++ HMAC & Gating', icon: CpuIcon, port: 'Port 8090' },
+  { id: 'redis', name: 'Redis 7 Queue', role: 'FIFO Task Buffer', icon: Layers01Icon, port: 'Port 6379' },
+  { id: 'worker', name: 'Deployment Worker', role: 'BuildKit & Rolling Deploy', icon: PackageIcon, port: 'Worker Thread' }
 ];
 
 const STEPS: CiStep[] = [
@@ -134,7 +130,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <GitBranch className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={GitForkIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               Automatic Deployments from GitHub
@@ -179,7 +175,6 @@ export const GithubCiSequenceDiagram: React.FC = () => {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
           {PARTICIPANTS.map((p) => {
-            const Icon = p.icon;
             return (
               <div
                 key={p.id}
@@ -187,7 +182,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
-                    <Icon className="w-3.5 h-3.5 text-white" />
+                    <HugeiconsIcon icon={p.icon} size={14} strokeWidth={1.8} className="text-white" />
                   </div>
                   <span className="text-[10px] font-mono text-zinc-400">
                     {p.port}
@@ -249,7 +244,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
                       <span className="text-zinc-300 font-medium">{step.from}</span>
-                      <ArrowRight className="w-3 h-3 text-white shrink-0 inline" />
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white shrink-0 inline" />
                       <span className="text-zinc-300 font-medium">{step.to}</span>
                     </div>
                   </div>
@@ -257,7 +252,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
 
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                   <span className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-500">
-                    <Zap className="w-3 h-3 text-zinc-400" />
+                    <HugeiconsIcon icon={FlashIcon} size={12} strokeWidth={1.8} className="text-zinc-400" />
                     {step.latency}
                   </span>
                 </div>
@@ -272,7 +267,7 @@ export const GithubCiSequenceDiagram: React.FC = () => {
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
-              <Code2 className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={CodeIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white">

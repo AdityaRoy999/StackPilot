@@ -7,7 +7,8 @@ import { GithubCiSequenceDiagram } from './GithubCiSequenceDiagram';
 import { ObservabilityFlowDiagram } from './ObservabilityFlowDiagram';
 import { OverviewArchitectureDiagram } from './OverviewArchitectureDiagram';
 import { ScreencastPipelineDiagram } from './ScreencastPipelineDiagram';
-import { Terminal, Activity } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ComputerTerminal01Icon, Activity01Icon } from '@hugeicons/core-free-icons';
 
 export interface DocDiagramDispatcherProps {
   docId?: string;
@@ -97,7 +98,7 @@ export const DocDiagramDispatcher: React.FC<DocDiagramDispatcherProps> = ({
         <div className="my-8 rounded-2xl border border-zinc-800/60 bg-[#121214]/95 p-5 sm:p-6 shadow-xl space-y-4">
           <div className="flex items-center gap-2 pb-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Terminal className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={ComputerTerminal01Icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h3 className="text-base font-bold text-white tracking-tight">System Architecture Diagram</h3>
@@ -105,7 +106,7 @@ export const DocDiagramDispatcher: React.FC<DocDiagramDispatcherProps> = ({
             </div>
           </div>
           <div className="p-4 rounded-xl bg-zinc-950/80 border-0 flex items-center justify-center text-xs font-mono text-zinc-400">
-            <Activity className="w-4 h-4 text-white mr-2" />
+            <HugeiconsIcon icon={Activity01Icon} size={16} strokeWidth={1.8} className="text-white mr-2" />
             <span>Interactive diagram rendering active</span>
           </div>
         </div>

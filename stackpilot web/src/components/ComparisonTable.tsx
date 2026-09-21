@@ -1,5 +1,6 @@
 import React from 'react';
-import { Check, X, Sparkles, Shield, Zap } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Tick01Icon, Cancel01Icon, SparklesIcon, FlashIcon } from '@hugeicons/core-free-icons';
 import { SpotlightCard } from './reactbits/SpotlightCard';
 
 export const ComparisonTable: React.FC = () => {
@@ -61,7 +62,7 @@ export const ComparisonTable: React.FC = () => {
         {/* Header */}
         <div className="text-center max-w-3xl mx-auto mb-14">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-xs font-mono font-medium mb-4">
-            <Zap className="w-3.5 h-3.5" />
+            <HugeiconsIcon icon={FlashIcon} size={14} />
             <span>Competitive Matrix</span>
           </div>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-900 dark:text-white tracking-tight">
@@ -81,7 +82,7 @@ export const ComparisonTable: React.FC = () => {
                   <th className="p-5 text-sm font-bold text-slate-900 dark:text-white">Capability</th>
                   <th className="p-5 text-sm font-bold text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 border-x border-cyan-500/20 text-center">
                     <span className="flex items-center justify-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-cyan-500" />
+                      <HugeiconsIcon icon={SparklesIcon} size={16} className="text-cyan-500" />
                       StackPilot v2.0
                     </span>
                   </th>
@@ -103,24 +104,24 @@ export const ComparisonTable: React.FC = () => {
                     <td className="p-5 text-center bg-cyan-500/5 border-x border-cyan-500/20">
                       {f.sp ? (
                         <div className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 font-bold">
-                          <Check className="w-4 h-4" />
+                          <HugeiconsIcon icon={Tick01Icon} size={16} strokeWidth={2.2} />
                         </div>
                       ) : (
-                        <X className="w-4 h-4 text-slate-400 mx-auto" />
+                        <HugeiconsIcon icon={Cancel01Icon} size={16} className="text-slate-400 mx-auto" />
                       )}
                     </td>
                     <td className="p-5 text-center">
                       {f.cypress ? (
-                        <Check className="w-4 h-4 text-emerald-500 mx-auto" />
+                        <HugeiconsIcon icon={Tick01Icon} size={16} strokeWidth={2.2} className="text-emerald-500 mx-auto" />
                       ) : (
-                        <X className="w-4 h-4 text-slate-400 dark:text-slate-600 mx-auto" />
+                        <HugeiconsIcon icon={Cancel01Icon} size={16} className="text-slate-400 dark:text-slate-600 mx-auto" />
                       )}
                     </td>
                     <td className="p-5 text-center">
                       {f.coolify ? (
-                        <Check className="w-4 h-4 text-emerald-500 mx-auto" />
+                        <HugeiconsIcon icon={Tick01Icon} size={16} strokeWidth={2.2} className="text-emerald-500 mx-auto" />
                       ) : (
-                        <X className="w-4 h-4 text-slate-400 dark:text-slate-600 mx-auto" />
+                        <HugeiconsIcon icon={Cancel01Icon} size={16} className="text-slate-400 dark:text-slate-600 mx-auto" />
                       )}
                     </td>
                   </tr>

@@ -1,23 +1,19 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Video,
-  Layers,
-  CheckCircle2,
-  Database,
-  Sliders,
-  Play,
-  RotateCcw,
-  Sparkles,
-  ArrowRight,
-  Activity,
-  Zap
-} from 'lucide-react';
+  ComputerVideoIcon,
+  SlidersHorizontalIcon,
+  Layers01Icon,
+  DatabaseIcon,
+  RotateCcwIcon,
+  ArrowRight01Icon
+} from '@hugeicons/core-free-icons';
 
 interface BufferStage {
   id: string;
   name: string;
   subtitle: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: any;
   description: string;
   techDetails: string[];
   metrics: string;
@@ -28,7 +24,7 @@ const STAGES: BufferStage[] = [
     id: 'stream',
     name: '1. Receive video stream',
     subtitle: 'Live browser feed',
-    icon: Video,
+    icon: ComputerVideoIcon,
     description: 'Receives video frames from the browser session in real time as tests run.',
     techDetails: ['Smooth 60 frames per second', 'Lightweight video stream', 'Low delay under 35ms'],
     metrics: 'Live stream'
@@ -37,7 +33,7 @@ const STAGES: BufferStage[] = [
     id: 'filter',
     name: '2. Skip idle frames',
     subtitle: 'Save frames on change',
-    icon: Sliders,
+    icon: SlidersHorizontalIcon,
     description: 'Checks if anything changed on screen (clicks, scrolling, typing). When idle, it saves fewer frames to keep memory low.',
     techDetails: ['Captures every user interaction', 'Drops repeated static frames', 'Saves memory on longer runs'],
     metrics: 'Only on changes'
@@ -46,7 +42,7 @@ const STAGES: BufferStage[] = [
     id: 'push',
     name: '3. Save to memory',
     subtitle: 'Store in temporary list',
-    icon: Layers,
+    icon: Layers01Icon,
     description: 'Stores each video frame along with the time and mouse position in memory.',
     techDetails: ['Kept in browser memory', 'Very fast with zero re-rendering lag', 'Tracks mouse coordinates'],
     metrics: 'Saved to list'
@@ -55,7 +51,7 @@ const STAGES: BufferStage[] = [
     id: 'cap',
     name: '4. Check buffer size',
     subtitle: 'Up to 700 frames',
-    icon: Database,
+    icon: DatabaseIcon,
     description: 'Checks if the buffer has reached the 700-frame limit (about 12 to 45 seconds of video).',
     techDetails: ['Memory stays under 30 MB', 'Stops memory from growing infinitely', 'Runs smoothly for hours'],
     metrics: 'Max 700 frames'
@@ -64,7 +60,7 @@ const STAGES: BufferStage[] = [
     id: 'evict',
     name: '5. Keep newest frames',
     subtitle: 'Drop oldest frame',
-    icon: RotateCcw,
+    icon: RotateCcwIcon,
     description: 'When the buffer is full, the oldest frame is removed so you always have the most recent video ready to play.',
     techDetails: ['Oldest frame drops automatically', 'Rewind to any second instantly', 'Smooth playback at any speed'],
     metrics: 'Oldest removed'
@@ -82,7 +78,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <RotateCcw className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={RotateCcwIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               Video Replay Buffer (Last 700 Frames)
@@ -102,7 +98,6 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
           {STAGES.map((stage, idx) => {
-            const Icon = stage.icon;
             const isSelected = selectedStage.id === stage.id;
             return (
               <div
@@ -116,7 +111,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
-                    <Icon className="w-3.5 h-3.5 text-white" />
+                    <HugeiconsIcon icon={stage.icon} size={14} strokeWidth={1.8} className="text-white" />
                   </div>
                   <span className="text-[10px] font-mono text-zinc-400">
                     Step {idx + 1}
@@ -128,7 +123,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
                 </div>
                 <div className="pt-1 flex items-center justify-between text-[10px] font-mono text-zinc-400">
                   <span className="truncate">{stage.metrics}</span>
-                  <ArrowRight className="w-3 h-3 text-white shrink-0 ml-1" />
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white shrink-0 ml-1" />
                 </div>
               </div>
             );
@@ -167,7 +162,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
         <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-3">
           <div className="flex items-center justify-between pb-1">
             <span className="text-xs font-bold text-white font-mono flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5 text-white" />
+              <HugeiconsIcon icon={DatabaseIcon} size={14} strokeWidth={1.8} className="text-white" />
               <span>Memory limit check</span>
             </span>
             <span className="text-[10px] font-mono text-zinc-400">700 frames max</span>
@@ -195,7 +190,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
           <div className="space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="p-1 rounded bg-zinc-800 text-white">
-                <Sliders className="w-3.5 h-3.5 text-white" />
+                <HugeiconsIcon icon={SlidersHorizontalIcon} size={14} strokeWidth={1.8} className="text-white" />
               </span>
               <span className="text-xs font-bold text-white font-mono uppercase tracking-wider">
                 Interactive Replay Scrubber Preview
@@ -234,7 +229,7 @@ export const ReplayBufferFlowDiagram: React.FC = () => {
         <div className="flex items-start justify-between gap-4 pb-2">
           <div className="flex items-center gap-2">
             <span className="p-1 rounded bg-zinc-800 text-white">
-              <selectedStage.icon className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={selectedStage.icon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <div>
               <h4 className="text-sm font-semibold text-white">

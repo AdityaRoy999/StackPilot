@@ -1,73 +1,32 @@
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, Check } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Copy01Icon, Tick01Icon } from '@hugeicons/core-free-icons';
 import confetti from 'canvas-confetti';
 import { highlightCode } from '../../utils/syntaxHighlight';
 
 export interface MacTrafficLightsProps {
+  className?: string;
   onClose?: () => void;
   onMinimize?: () => void;
   onMaximize?: () => void;
-  isMinimized?: boolean;
-  isMaximized?: boolean;
 }
 
 export const MacTrafficLights: React.FC<MacTrafficLightsProps> = ({
-  onClose,
-  onMinimize,
-  onMaximize,
-  isMinimized = false,
-  isMaximized = false,
+  className = '',
+  onClose
 }) => {
   return (
-    <div className="flex items-center gap-2 group/traffic select-none">
-      {/* Red: Close / Cross */}
-      <button
-        type="button"
+    <div className={`flex items-center gap-2 select-none ${className}`} aria-hidden="true">
+      {/* Red */}
+      <div
         onClick={onClose}
-        title="Close / Copy snippet"
-        aria-label="Close"
-        className="w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e] flex items-center justify-center p-0 transition-transform active:scale-90 cursor-pointer shadow-sm hover:brightness-105"
-      >
-        <svg
-          viewBox="0 0 10 10"
-          className="w-1.5 h-1.5 stroke-[#4c0000] opacity-80 group-hover/traffic:opacity-100 transition-opacity stroke-[2.2] fill-none"
-        >
-          <path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" strokeLinecap="round" />
-        </svg>
-      </button>
-
-      {/* Yellow: Minimize / Dash */}
-      <button
-        type="button"
-        onClick={onMinimize}
-        title={isMinimized ? "Expand snippet" : "Minimize / Collapse"}
-        aria-label="Minimize"
-        className="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123] flex items-center justify-center p-0 transition-transform active:scale-90 cursor-pointer shadow-sm hover:brightness-105"
-      >
-        <svg
-          viewBox="0 0 10 10"
-          className="w-1.5 h-1.5 stroke-[#5c4400] opacity-80 group-hover/traffic:opacity-100 transition-opacity stroke-[2.2] fill-none"
-        >
-          <path d="M2 5 L8 5" strokeLinecap="round" />
-        </svg>
-      </button>
-
-      {/* Green: Expand / Zoom */}
-      <button
-        type="button"
-        onClick={onMaximize}
-        title={isMaximized ? "Restore standard height" : "Expand to full height"}
-        aria-label="Maximize"
-        className="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29] flex items-center justify-center p-0 transition-transform active:scale-90 cursor-pointer shadow-sm hover:brightness-105"
-      >
-        <svg
-          viewBox="0 0 10 10"
-          className="w-1.5 h-1.5 fill-[#004d11] opacity-80 group-hover/traffic:opacity-100 transition-opacity"
-        >
-          <path d="M2.5 7.5 L2.5 4.5 L4.5 4.5 L2.5 6.5 Z M7.5 2.5 L7.5 5.5 L5.5 5.5 L7.5 3.5 Z" />
-        </svg>
-      </button>
+        className={`w-3 h-3 rounded-full bg-[#ff5f56] border border-[#e0443e]/60 shadow-sm ${onClose ? 'cursor-pointer hover:opacity-80' : ''}`}
+      />
+      {/* Yellow */}
+      <div className="w-3 h-3 rounded-full bg-[#ffbd2e] border border-[#dea123]/60 shadow-sm" />
+      {/* Green */}
+      <div className="w-3 h-3 rounded-full bg-[#27c93f] border border-[#1aab29]/60 shadow-sm" />
     </div>
   );
 };
@@ -88,8 +47,6 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
   className = '',
 }) => {
   const [copied, setCopied] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false);
 
   // Compute syntax-highlighted HTML string
   const highlightedHtml = useMemo(() => {
@@ -130,17 +87,8 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
       {/* Code Block Header with Mac Traffic Lights */}
       <div className="px-4 py-3 bg-[#121214] flex items-center justify-between border-0">
         <div className="flex items-center gap-3">
-          {/* Authentic Mac Window Buttons */}
-          <MacTrafficLights
-            onClose={() => handleCopy()}
-            onMinimize={() => setIsMinimized((prev) => !prev)}
-            onMaximize={() => {
-              if (isMinimized) setIsMinimized(false);
-              setIsMaximized((prev) => !prev);
-            }}
-            isMinimized={isMinimized}
-            isMaximized={isMaximized}
-          />
+          {/* Authentic Mac Window Buttons (static, non-collapsing) */}
+          <MacTrafficLights />
 
           {/* Language Tag */}
           <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 font-semibold px-2 py-0.5 rounded-md bg-[#1c1c20] border-0">
@@ -169,7 +117,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
                 exit={{ scale: 0.4, opacity: 0, rotate: 20 }}
                 transition={{ type: 'spring', stiffness: 500, damping: 25 }}
               >
-                <Check className="w-3.5 h-3.5" />
+                <HugeiconsIcon icon={Tick01Icon} size={15} strokeWidth={2.2} />
               </motion.div>
             ) : (
               <motion.div
@@ -179,54 +127,24 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
                 exit={{ scale: 0.4, opacity: 0 }}
                 transition={{ duration: 0.15 }}
               >
-                <Copy className="w-3.5 h-3.5" />
+                <HugeiconsIcon icon={Copy01Icon} size={14} strokeWidth={1.8} />
               </motion.div>
             )}
           </AnimatePresence>
         </button>
       </div>
 
-      {/* Smooth Collapsible Code Block Content */}
-      <AnimatePresence initial={false}>
-        {isMinimized ? (
-          <motion.div
-            key="minimized"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            onClick={() => setIsMinimized(false)}
-            className="px-4 py-2.5 bg-[#121214] text-xs font-mono text-zinc-400 flex items-center justify-between cursor-pointer hover:bg-[#1a1a1e] transition-colors border-0 select-none"
-          >
-            <span className="italic">Code snippet collapsed ({code.split('\n').length} lines)</span>
-            <span className="text-[11px] text-sky-400 font-semibold flex items-center gap-1">
-              Click to expand &rarr;
-            </span>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="expanded"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-            className="overflow-hidden bg-[#121214]"
-          >
-            <div
-              className={`p-4 bg-[#121214] overflow-x-auto transition-all ${
-                isMaximized ? 'max-h-none' : 'max-h-[560px]'
-              }`}
-            >
-              <pre className="font-mono text-xs leading-relaxed selection:bg-zinc-700 selection:text-white">
-                <code
-                  dangerouslySetInnerHTML={{ __html: highlightedHtml }}
-                  className={`language-${lang}`}
-                />
-              </pre>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Code Block Content - Full and clean presentation */}
+      <div className="overflow-hidden bg-[#121214]">
+        <div className="p-4 bg-[#121214] overflow-x-auto">
+          <pre className="font-mono text-xs leading-relaxed selection:bg-zinc-700 selection:text-white">
+            <code
+              dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+              className={`language-${lang}`}
+            />
+          </pre>
+        </div>
+      </div>
     </div>
   );
 };

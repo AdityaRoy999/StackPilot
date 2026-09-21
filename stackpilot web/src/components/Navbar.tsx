@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen } from 'lucide-react';
-import { GithubIcon } from './icons/GithubIcon';
-import { StarIcon } from './icons/StarIcon';
-import { UsersIcon } from './icons/UsersIcon';
-import { MailIcon } from './icons/MailIcon';
+import { HugeiconsIcon } from '@hugeicons/react';
+import {
+  UserMultiple02Icon,
+  BookOpen01Icon,
+  Mail01Icon,
+  GithubIcon,
+  StarIcon
+} from '@hugeicons/core-free-icons';
 import { useFont } from '../context/FontContext';
 
 interface NavbarProps {
@@ -14,26 +17,72 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, onNavigateContact }) => {
-  const [stars, setStars] = useState<number | null>(null);
+  const [stars, setStars] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const cached = localStorage.getItem('sp_github_stars');
+      if (cached) {
+        const num = parseInt(cached, 10);
+        if (!isNaN(num) && num > 0) return num;
+      }
+    }
+    return 4; // Verified baseline for AdityaRoy999/StackPilot
+  });
   const [visitors, setVisitors] = useState<number>(1482);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const { fontMode, toggleFontMode } = useFont();
 
   useEffect(() => {
-    // 1. Fetch live GitHub stars from repo
-    fetch('https://api.github.com/repos/AdityaRoy999/StackPilot')
-      .then((res) => {
-        if (!res.ok) throw new Error('Network error');
-        return res.json();
-      })
-      .then((data) => {
-        if (typeof data.stargazers_count === 'number') {
-          setStars(data.stargazers_count);
+    // 1. Fetch live GitHub stars from repo with multiple fallback strategies
+    const fetchLiveStars = async () => {
+      // Strategy A: Local dev / Vercel serverless proxy endpoint
+      try {
+        const res = await fetch('/api/stars');
+        if (res.ok) {
+          const data = await res.json();
+          if (typeof data.stars === 'number' && data.stars > 0) {
+            setStars(data.stars);
+            localStorage.setItem('sp_github_stars', data.stars.toString());
+            return;
+          }
         }
-      })
-      .catch(() => {
-        setStars(1);
-      });
+      } catch {
+        // Continue to remote fallbacks
+      }
+
+      // Strategy B: Ungh.cc unauthenticated edge-cached GitHub proxy (bypasses GitHub rate limits)
+      try {
+        const unghRes = await fetch('https://ungh.cc/repos/AdityaRoy999/StackPilot');
+        if (unghRes.ok) {
+          const unghData = await unghRes.json();
+          if (typeof unghData?.repo?.stars === 'number') {
+            setStars(unghData.repo.stars);
+            localStorage.setItem('sp_github_stars', unghData.repo.stars.toString());
+            return;
+          }
+        }
+      } catch {
+        // Continue to official GitHub API
+      }
+
+      // Strategy C: Direct GitHub REST API
+      try {
+        const ghRes = await fetch('https://api.github.com/repos/AdityaRoy999/StackPilot', {
+          headers: { Accept: 'application/vnd.github.v3+json' },
+        });
+        if (ghRes.ok) {
+          const ghData = await ghRes.json();
+          if (typeof ghData.stargazers_count === 'number') {
+            setStars(ghData.stargazers_count);
+            localStorage.setItem('sp_github_stars', ghData.stargazers_count.toString());
+            return;
+          }
+        }
+      } catch {
+        // Fall back to existing cached state
+      }
+    };
+
+    fetchLiveStars();
 
     // 2. Track unique visitors persistently
     const KEY_VISITOR = 'sp_unique_visitor_recorded';
@@ -94,7 +143,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-l-full rounded-r-md text-zinc-300 select-none"
             title="Unique site visitors"
           >
-            <UsersIcon className="w-3.5 h-3.5 text-white shrink-0" />
+            <HugeiconsIcon icon={UserMultiple02Icon} size={15} strokeWidth={1.8} className="text-white shrink-0" />
             <span className="tabular-nums">
               {visitors.toLocaleString()} <span className="hidden xs:inline">visitors</span>
             </span>
@@ -122,7 +171,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
               />
             )}
             <span className="relative z-10 flex items-center gap-1.5">
-              <BookOpen className="w-3.5 h-3.5 text-white shrink-0" />
+              <HugeiconsIcon icon={BookOpen01Icon} size={15} strokeWidth={1.8} className="text-white shrink-0" />
               <span>Docs</span>
             </span>
           </a>
@@ -149,7 +198,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
               />
             )}
             <span className="relative z-10 flex items-center gap-1.5">
-              <MailIcon className="w-3.5 h-3.5 text-white shrink-0" />
+              <HugeiconsIcon icon={Mail01Icon} size={15} strokeWidth={1.8} className="text-white shrink-0" />
               <span>Contact</span>
             </span>
           </a>
@@ -207,11 +256,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
               />
             )}
             <span className="relative z-10 flex items-center gap-2">
-              <GithubIcon className="w-3.5 h-3.5 text-white shrink-0" />
+              <HugeiconsIcon icon={GithubIcon} size={15} strokeWidth={1.8} className="text-white shrink-0" />
               <span className="hidden sm:inline">GitHub</span>
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] text-zinc-300 border border-zinc-700/50">
-                <StarIcon className="w-2.5 h-2.5 text-white shrink-0" />
-                <span>{stars !== null ? stars : '1'}</span>
+                <HugeiconsIcon icon={StarIcon} size={13} strokeWidth={1.8} className="text-white shrink-0" />
+                <span>{stars}</span>
               </span>
             </span>
           </a>

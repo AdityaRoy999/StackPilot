@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  outputFileTracingRoot: path.resolve(__dirname),
   turbopack: {},
   allowedDevOrigins: [
     "localhost:3000",
@@ -9,16 +11,6 @@ const nextConfig: NextConfig = {
     "localhost",
     "127.0.0.1",
   ],
-
-  webpack: (config, { dev }) => {
-    if (dev) {
-      config.watchOptions = {
-        poll: 1000,
-        aggregateTimeout: 300,
-      };
-    }
-    return config;
-  },
   async redirects() {
     return [
       {

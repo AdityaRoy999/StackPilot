@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { ArrowLeft, ExternalLink, GitBranch, Loader2, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, GitBranch, Globe, HardDrive, Loader2, ShieldCheck, Trash2, Zap } from "lucide-react";
 import { AppIcon } from "@/lib/custom-icons";
 
 type RuntimeTarget = "docker" | "kubernetes";
@@ -98,6 +98,8 @@ export default function ProjectDeploymentsPage() {
     }
     return window.localStorage.getItem(selectedEnvironmentStorageKey) || "";
   });
+  const [deployExposureMode, setDeployExposureMode] = useState<"direct" | "portless" | "cloudflare_tunnel">("direct");
+  const [updatingExposureDeploymentId, setUpdatingExposureDeploymentId] = useState<string>("");
   const [runtimeTargetByDeploymentId, setRuntimeTargetByDeploymentId] = useState<Record<string, RuntimeTarget>>({});
 
   const selectEnvironment = (environmentId: string) => {
@@ -106,6 +108,46 @@ export default function ProjectDeploymentsPage() {
       window.localStorage.setItem(selectedEnvironmentStorageKey, environmentId);
     }
   };
+
+  const updateExposureMutation = useMutation({
+    mutationFn: async ({
+      deploymentId,
+      mode,
+      projectName,
+      port = 3000,
+    }: {
+      deploymentId: string;
+      mode: "direct" | "portless" | "cloudflare_tunnel";
+      projectName: string;
+      port?: number;
+    }) => {
+      setUpdatingExposureDeploymentId(deploymentId);
+      const res = await api.post(`/deployments/${deploymentId}/exposure`, {
+        exposure_mode: mode,
+        project_name: projectName,
+        port,
+      });
+      return res.data;
+    },
+    onSuccess: (data) => {
+      toast.success(
+        data.runtime_exposure === "cloudflare_tunnel"
+          ? `Cloudflare Tunnel Active: ${data.runtime_url}`
+          : (data.runtime_exposure === "portless" || data.runtime_exposure === "portless_local")
+          ? `Portless URL Active: ${data.runtime_url}`
+          : `Direct Port Active: ${data.runtime_url}`
+      );
+      queryClient.invalidateQueries({ queryKey: ["project-deployments", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["project-environments", projectId] });
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to switch exposure mode");
+    },
+    onSettled: () => {
+      setUpdatingExposureDeploymentId("");
+    },
+  });
 
   const projectQuery = useQuery({
     queryKey: ["project", projectId],
@@ -154,6 +196,7 @@ export default function ProjectDeploymentsPage() {
         commit_hash: commitHash,
         environment_id: selectedId,
         trigger_source: "manual",
+        local_exposure_mode: deployExposureMode,
       });
       const deploymentId = res.data.deployment.id;
       await api.post(`/deployments/${deploymentId}/trigger`);
@@ -367,6 +410,24 @@ export default function ProjectDeploymentsPage() {
                 placeholder="Leave empty to build branch head"
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="deployExposureMode">Local URL / Ingress Target</Label>
+              <Select
+                value={deployExposureMode}
+                onValueChange={(val) => {
+                  if (val) setDeployExposureMode(val as "direct" | "portless" | "cloudflare_tunnel");
+                }}
+              >
+                <SelectTrigger id="deployExposureMode" className="h-10 text-xs font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct">🔌 Direct Port (localhost)</SelectItem>
+                  <SelectItem value="portless">🌐 Portless (.localhost)</SelectItem>
+                  <SelectItem value="cloudflare_tunnel">⚡ Cloudflare Tunnel (HTTPS)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex items-end">
               <Button type="submit" disabled={createDeploymentMutation.isPending || environments.length === 0}>
                 {createDeploymentMutation.isPending ? "Deploying..." : "Deploy Selected"}
@@ -392,11 +453,18 @@ export default function ProjectDeploymentsPage() {
               {environments.map((environment) => {
                 const isSelected = effectiveSelectedEnvironmentId === environment.id;
                 return (
-                  <button
+                  <div
                     key={environment.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectEnvironment(environment.id);
+                      }
+                    }}
                     onClick={() => selectEnvironment(environment.id)}
-                    className={`rounded-xl border p-4 text-left transition-colors ${
+                    className={`rounded-xl border p-4 text-left transition-colors cursor-pointer ${
                       isSelected ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/40"
                     }`}
                   >
@@ -429,22 +497,87 @@ export default function ProjectDeploymentsPage() {
                         {environment.cleanup_previous_on_success ? "cleanup on success" : "keep previous"}
                       </Badge>
                     </div>
-                    <div className="mt-4 space-y-1 text-xs text-muted-foreground">
-                      <div>Current commit: {environment.current_commit_sha ? environment.current_commit_sha.slice(0, 12) : "-"}</div>
-                      <div>Version: {environment.current_deployment_version || "-"}</div>
-                      {environment.current_runtime_url && (
-                        <a
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                          href={environment.current_runtime_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          Preview <AppIcon name="external-link" fallback={ExternalLink} className="h-3 w-3"  />
-                        </a>
+                    <div className="mt-4 space-y-2 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Commit: {environment.current_commit_sha ? environment.current_commit_sha.slice(0, 12) : "-"}</span>
+                        <span>Version: {environment.current_deployment_version || "-"}</span>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <div className="flex flex-col gap-1 min-w-0">
+                          <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                            <span className="text-muted-foreground">URL:</span>
+                            {environment.current_runtime_url?.includes("trycloudflare.com") ? (
+                              <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-400 font-semibold gap-1 text-[10px]">
+                                <AppIcon name="zap" fallback={Zap} className="h-2.5 w-2.5" />
+                                Cloudflare Tunnel
+                              </Badge>
+                            ) : environment.current_runtime_url?.includes(".localhost") ? (
+                              <Badge variant="outline" className="border-indigo-500/40 bg-indigo-500/10 text-indigo-400 font-semibold gap-1 text-[10px]">
+                                <AppIcon name="globe" fallback={Globe} className="h-2.5 w-2.5" />
+                                Portless
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-400 font-semibold gap-1 text-[10px]">
+                                <AppIcon name="hard-drive" fallback={HardDrive} className="h-2.5 w-2.5" />
+                                Localhost
+                              </Badge>
+                            )}
+                          </div>
+                          {environment.current_runtime_url && (
+                            <span className="truncate font-mono text-[10px] text-foreground/80 max-w-[240px]">
+                              {environment.current_runtime_url}
+                            </span>
+                          )}
+                        </div>
+
+                        {environment.current_runtime_url && (
+                          <a
+                            className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"
+                            href={environment.current_runtime_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Preview <AppIcon name="external-link" fallback={ExternalLink} className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
+
+                      {environment.current_deployment_id && (
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/40" onClick={(event) => event.stopPropagation()}>
+                          <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">Change URL Mode:</span>
+                          <Select
+                            value={
+                              environment.current_runtime_url?.includes("trycloudflare.com")
+                                ? "cloudflare_tunnel"
+                                : environment.current_runtime_url?.includes(".localhost")
+                                ? "portless"
+                                : "direct"
+                            }
+                            onValueChange={(val) => {
+                              if (!val || !environment.current_deployment_id) return;
+                              updateExposureMutation.mutate({
+                                deploymentId: environment.current_deployment_id,
+                                mode: val as "direct" | "portless" | "cloudflare_tunnel",
+                                projectName: projectQuery.data?.project?.name || "app",
+                              });
+                            }}
+                            disabled={updatingExposureDeploymentId === environment.current_deployment_id}
+                          >
+                            <SelectTrigger size="sm" className="h-7 w-36 text-xs bg-muted/40 font-medium">
+                              <SelectValue placeholder="Exposure Mode" />
+                            </SelectTrigger>
+                            <SelectContent align="end">
+                              <SelectItem value="direct">🔌 Direct Port</SelectItem>
+                              <SelectItem value="portless">🌐 Portless</SelectItem>
+                              <SelectItem value="cloudflare_tunnel">⚡ Cloudflare</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
                       )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -504,14 +637,23 @@ export default function ProjectDeploymentsPage() {
                     <TableCell className="font-mono text-xs">{deployment.image_name || "-"}</TableCell>
                     <TableCell>
                       {deployment.runtime_url ? (
-                        <a
-                          href={deployment.runtime_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-primary hover:underline"
-                        >
-                          Open <AppIcon name="external-link" fallback={ExternalLink} className="h-3 w-3"  />
-                        </a>
+                        <div className="flex flex-col gap-1">
+                          <a
+                            href={deployment.runtime_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 font-mono text-xs text-primary hover:underline"
+                          >
+                            Open <AppIcon name="external-link" fallback={ExternalLink} className="h-3 w-3" />
+                          </a>
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            {deployment.runtime_url.includes("trycloudflare.com")
+                              ? "⚡ Cloudflare"
+                              : deployment.runtime_url.includes(".localhost")
+                              ? "🌐 Portless"
+                              : "🔌 Localhost"}
+                          </span>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground">-</span>
                       )}
@@ -560,6 +702,33 @@ export default function ProjectDeploymentsPage() {
                         >
                           Start runtime
                         </Button>
+                        <Select
+                          value={
+                            deployment.runtime_url?.includes("trycloudflare.com")
+                              ? "cloudflare_tunnel"
+                              : deployment.runtime_url?.includes(".localhost")
+                              ? "portless"
+                              : "direct"
+                          }
+                          onValueChange={(val) => {
+                            if (!val) return;
+                            updateExposureMutation.mutate({
+                              deploymentId: deployment.id,
+                              mode: val as "direct" | "portless" | "cloudflare_tunnel",
+                              projectName: projectQuery.data?.project?.name || "app",
+                            });
+                          }}
+                          disabled={updatingExposureDeploymentId === deployment.id}
+                        >
+                          <SelectTrigger size="sm" className="h-8 w-32 shrink-0 text-xs font-mono bg-muted/30">
+                            <SelectValue placeholder="URL Mode" />
+                          </SelectTrigger>
+                          <SelectContent align="end">
+                            <SelectItem value="direct">🔌 Direct Port</SelectItem>
+                            <SelectItem value="portless">🌐 Portless</SelectItem>
+                            <SelectItem value="cloudflare_tunnel">⚡ Cloudflare</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Button
                           size="sm"
                           variant="ghost"

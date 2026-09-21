@@ -1,19 +1,18 @@
 import React, { useState } from 'react';
+import { HugeiconsIcon } from '@hugeicons/react';
 import {
-  Globe,
-  Cpu,
-  Database,
-  Layers,
-  Play,
-  Box,
-  CheckCircle2,
-  X,
-  ArrowRight,
-  Code2,
-  Terminal,
-  Activity,
-  Zap
-} from 'lucide-react';
+  Globe02Icon,
+  CpuIcon,
+  DatabaseIcon,
+  Layers01Icon,
+  PlayIcon,
+  PackageIcon,
+  CheckmarkCircle01Icon,
+  Cancel01Icon,
+  ArrowRight01Icon,
+  CodeIcon,
+  FlashIcon
+} from '@hugeicons/core-free-icons';
 
 interface SequenceStep {
   id: number;
@@ -28,12 +27,12 @@ interface SequenceStep {
 }
 
 const PARTICIPANTS = [
-  { id: 'dev', name: 'Developer / Webhook', role: 'Trigger Source', icon: Globe, port: 'Port 443' },
-  { id: 'api', name: 'Drogon Controller', role: 'C++17 Non-blocking API', icon: Cpu, port: 'Port 8090' },
-  { id: 'db', name: 'PostgreSQL 16', role: 'Transactional Store', icon: Database, port: 'Port 5432' },
-  { id: 'redis', name: 'Redis 7 Queue', role: 'FIFO Task Buffer', icon: Layers, port: 'Port 6379' },
-  { id: 'worker', name: 'JobQueueWorker', role: 'Thread Pool Worker', icon: Play, port: 'Internal Thread' },
-  { id: 'build', name: 'Docker BuildService', role: 'BuildKit & Container', icon: Box, port: '/var/run/docker.sock' }
+  { id: 'dev', name: 'Developer / Webhook', role: 'Trigger Source', icon: Globe02Icon, port: 'Port 443' },
+  { id: 'api', name: 'Drogon Controller', role: 'C++17 Non-blocking API', icon: CpuIcon, port: 'Port 8090' },
+  { id: 'db', name: 'PostgreSQL 16', role: 'Transactional Store', icon: DatabaseIcon, port: 'Port 5432' },
+  { id: 'redis', name: 'Redis 7 Queue', role: 'FIFO Task Buffer', icon: Layers01Icon, port: 'Port 6379' },
+  { id: 'worker', name: 'JobQueueWorker', role: 'Thread Pool Worker', icon: PlayIcon, port: 'Internal Thread' },
+  { id: 'build', name: 'Docker BuildService', role: 'BuildKit & Container', icon: PackageIcon, port: '/var/run/docker.sock' }
 ];
 
 const STEPS: SequenceStep[] = [
@@ -156,7 +155,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-zinc-800 text-white">
-              <Zap className="w-4 h-4 text-white" />
+              <HugeiconsIcon icon={FlashIcon} size={16} strokeWidth={1.8} className="text-white" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
               How Deployments Run in the Background
@@ -167,36 +166,42 @@ export const JobQueueSequenceDiagram: React.FC = () => {
           </p>
         </div>
 
-        {/* Filter pills */}
-        <div className="flex items-center gap-1.5 p-1 rounded-full bg-black/60 border border-zinc-800/60 text-[11px] font-mono self-start sm:self-auto">
+        {/* Filter pills with signature | ) style and dividers */}
+        <div className="flex items-center p-1 rounded-full bg-[#121214] border border-zinc-800/80 text-[11px] font-mono self-start sm:self-auto select-none">
           <button
             type="button"
             onClick={() => setFilterMode('all')}
-            className={`px-3 py-1 rounded-full transition-all cursor-pointer border-0 ${
+            className={`px-3 py-1 rounded-l-full rounded-r-md transition-all cursor-pointer border-0 ${
               filterMode === 'all'
-                ? 'bg-zinc-700 text-white font-semibold'
+                ? 'bg-zinc-100 text-zinc-950 font-bold shadow-sm'
                 : 'text-zinc-400 hover:text-white bg-transparent'
             }`}
           >
             All Steps
           </button>
+
+          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 pointer-events-none mx-0.5 select-none" />
+
           <button
             type="button"
             onClick={() => setFilterMode('success')}
-            className={`px-3 py-1 rounded-full transition-all cursor-pointer border-0 ${
+            className={`px-3 py-1 rounded-md transition-all cursor-pointer border-0 ${
               filterMode === 'success'
-                ? 'bg-zinc-700 text-white font-semibold'
+                ? 'bg-zinc-100 text-zinc-950 font-bold shadow-sm'
                 : 'text-zinc-400 hover:text-white bg-transparent'
             }`}
           >
             Success Path
           </button>
+
+          <span className="h-3.5 w-[1px] bg-zinc-800 shrink-0 pointer-events-none mx-0.5 select-none" />
+
           <button
             type="button"
             onClick={() => setFilterMode('failure')}
-            className={`px-3 py-1 rounded-full transition-all cursor-pointer border-0 ${
+            className={`px-3 py-1 rounded-l-md rounded-r-full transition-all cursor-pointer border-0 ${
               filterMode === 'failure'
-                ? 'bg-zinc-700 text-white font-semibold'
+                ? 'bg-zinc-100 text-zinc-950 font-bold shadow-sm'
                 : 'text-zinc-400 hover:text-white bg-transparent'
             }`}
           >
@@ -212,7 +217,6 @@ export const JobQueueSequenceDiagram: React.FC = () => {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           {PARTICIPANTS.map((p) => {
-            const Icon = p.icon;
             return (
               <div
                 key={p.id}
@@ -220,7 +224,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center">
-                    <Icon className="w-3.5 h-3.5 text-white" />
+                    <HugeiconsIcon icon={p.icon} size={14} strokeWidth={1.8} className="text-white" />
                   </div>
                   <span className="text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200">
                     {p.port}
@@ -277,7 +281,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 truncate">
                       <span className="text-zinc-300 font-medium">{step.from}</span>
-                      <ArrowRight className="w-3 h-3 text-white shrink-0 inline" />
+                      <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.8} className="text-white shrink-0 inline" />
                       <span className="text-zinc-300 font-medium">{step.to}</span>
                     </div>
                   </div>
@@ -286,7 +290,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
                 <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
                   {step.latency && (
                     <span className="inline-flex items-center gap-1 text-[11px] font-mono text-zinc-500">
-                      <Zap className="w-3 h-3 text-zinc-400" />
+                      <HugeiconsIcon icon={FlashIcon} size={12} strokeWidth={1.8} className="text-zinc-400" />
                       {step.latency}
                     </span>
                   )}
@@ -303,7 +307,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
           <div className="flex items-start justify-between gap-4 pb-2">
             <div className="flex items-center gap-2">
               <span className="p-1 rounded bg-zinc-800 text-white">
-                <Code2 className="w-4 h-4 text-white" />
+                <HugeiconsIcon icon={CodeIcon} size={16} strokeWidth={1.8} className="text-white" />
               </span>
               <div>
                 <h4 className="text-sm font-semibold text-white flex items-center gap-2">
@@ -342,7 +346,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
         <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 font-mono">
-            <CheckCircle2 className="w-4 h-4 text-white" />
+            <HugeiconsIcon icon={CheckmarkCircle01Icon} size={16} strokeWidth={1.8} className="text-emerald-400" />
             <span>ALT: BUILD SUCCESSFUL</span>
           </div>
           <p className="text-xs text-zinc-300 leading-relaxed">
@@ -352,7 +356,7 @@ export const JobQueueSequenceDiagram: React.FC = () => {
 
         <div className="p-4 rounded-xl bg-[#18181c]/80 border-0 space-y-2">
           <div className="flex items-center gap-2 text-xs font-semibold text-rose-400 font-mono">
-            <X className="w-4 h-4 text-white" />
+            <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={1.8} className="text-rose-400" />
             <span>ALT: BUILD FAILED / RETRY</span>
           </div>
           <p className="text-xs text-zinc-300 leading-relaxed">
