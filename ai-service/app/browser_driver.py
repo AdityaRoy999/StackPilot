@@ -2718,13 +2718,14 @@ class BrowserSession:
         return True
 
     async def type_text(self, text: str, element_id: Optional[int] = None, clear_first: bool = True):
-        """Types text into an input or textarea instantly using CDP Input.insertText with event propagation."""
+        """Types text into an input or textarea with universal framework binding (Angular Reactive Forms, React 18, Vue, Svelte) and native CDP event propagation."""
         if element_id:
             await self.scroll_to_element(element_id)
             coords = await self.evaluate(f"""
             (() => {{
                 const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (!el) return null;
+                try {{ el.focus(); }} catch(e) {{}}
                 const r = el.getBoundingClientRect();
                 return {{
                     x: Math.round(r.left + r.width / 2),
@@ -2747,53 +2748,78 @@ class BrowserSession:
             "label": f"Typing '{text[:25]}...'",
         })
 
-        if clear_first:
-            # Native select all via CDP shortcut to clear before typing
-            try:
-                await self.send_command("Input.dispatchKeyEvent", {
-                    "type": "rawKeyDown",
-                    "windowsVirtualKeyCode": 65,
-                    "modifiers": 2, # Ctrl
-                    "key": "a",
-                    "code": "KeyA"
-                })
-                await self.send_command("Input.dispatchKeyEvent", {
-                    "type": "keyUp",
-                    "windowsVirtualKeyCode": 65,
-                    "key": "a",
-                    "code": "KeyA"
-                })
-            except Exception:
-                pass
+        el_target_js = f"(window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id=\"{element_id}\"]') || " if element_id else ""
+        escaped_text = json.dumps(text)
 
-        # Native instant text insertion via CDP (sub-5ms single call)
-        try:
-            await self.send_command("Input.insertText", {"text": text})
-        except Exception:
-            # Fallback to key dispatch if insertText fails on special input
-            for char in text:
-                await self.send_command("Input.dispatchKeyEvent", {
-                    "type": "char",
-                    "text": char
-                })
+        # 1. Framework-Universal Prototype Setter & Event Sequence (Angular Reactive Forms, React 18+, Vue 3)
+        framework_type_js = f"""
+        (() => {{
+            const el = ({el_target_js}document.activeElement);
+            if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) return false;
+            try {{ el.focus(); }} catch(e) {{}}
+            const val = {escaped_text};
 
-        # Trigger React and HTML5 change events instantly
-        input_dispatch_js = """
-        (() => {
-            const active = document.activeElement;
-            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
-                active.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-                active.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-            }
-        })()
+            // Prototype value setter for HTMLInputElement / HTMLTextAreaElement
+            const proto = (el instanceof HTMLTextAreaElement) ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (nativeSetter) {{
+                nativeSetter.call(el, val);
+            }} else {{
+                el.value = val;
+            }}
+
+            // React 18 controlled component tracker bypass
+            const tracker = el._valueTracker;
+            if (tracker) {{
+                try {{ tracker.setValue(""); }} catch(e) {{}}
+            }}
+
+            // Full event lifecycle for Angular DefaultValueAccessor & HTML5 standards
+            el.dispatchEvent(new InputEvent('input', {{ bubbles: true, cancelable: true, inputType: 'insertText', data: val }}));
+            el.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
+            el.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
+            el.dispatchEvent(new Event('blur', {{ bubbles: true, cancelable: true }}));
+            return el.value === val;
+        }})()
         """
         try:
-            self.send_command_nowait("Runtime.evaluate", {"expression": input_dispatch_js})
+            await self.send_command("Runtime.evaluate", {"expression": framework_type_js, "returnByValue": True})
         except Exception:
             pass
 
-        # Settle input state with fast-path quiescence
-        await self.wait_for_quiescence(network_idle_ms=40, dom_quiet_ms=20, max_timeout_s=0.5, fast_mode=True)
+        # 2. Native instant text insertion via CDP for Blink input stream and screen render
+        try:
+            await self.send_command("Input.insertText", {"text": text})
+        except Exception:
+            for char in text:
+                try:
+                    await self.send_command("Input.dispatchKeyEvent", {"type": "char", "text": char})
+                except Exception:
+                    pass
+
+        # 3. Final seal & re-verification
+        verify_js = f"""
+        (() => {{
+            const el = ({el_target_js}document.activeElement);
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {{
+                if (el.value !== {escaped_text}) {{
+                    const proto = (el instanceof HTMLTextAreaElement) ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+                    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                    if (nativeSetter) nativeSetter.call(el, {escaped_text});
+                    else el.value = {escaped_text};
+                }}
+                el.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
+                el.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
+            }}
+        }})()
+        """
+        try:
+            await self.send_command("Runtime.evaluate", {"expression": verify_js, "returnByValue": True})
+        except Exception:
+            pass
+
+        # Settle input state with quiescence
+        await self.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=0.8, fast_mode=True)
         return True
 
     async def press_key(self, key: str, modifiers: Optional[List[str]] = None) -> bool:

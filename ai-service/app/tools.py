@@ -1221,11 +1221,11 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                     t = (e.get("text") or e.get("aria_label") or "").lower()
                     tag = (e.get("tag") or "").lower()
                     etype = (e.get("type") or "").lower()
-                    if etype == "submit" or tag == "button" and any(kw in t for kw in ["submit", "send", "save", "book", "register", "contact", "apply", "test", "login", "sign in"]):
+                    if etype == "submit" or tag == "button" or any(kw in t for kw in ["submit", "send", "save", "book", "register", "contact", "apply", "test", "login", "sign in", "next", "continue", "proceed", "verify"]):
                         submit_candidate = f"'{e.get('text') or 'Submit'}' (id: {e['id']})"
                         break
                 if submit_candidate:
-                    hint_interact = f"Input typed successfully into {clean_target}. Now call browser_interact(action='click', element_id=...) on submission/login button {submit_candidate} and wait for the website to complete."
+                    hint_interact = f"Input typed successfully into {clean_target}. Now call browser_interact(action='click', element_id=...) on submission/login/next button {submit_candidate} and wait for the website to complete."
                 else:
                     hint_interact = f"Input typed successfully into {clean_target}. Continue to next field or submit button."
             elif next_untested:

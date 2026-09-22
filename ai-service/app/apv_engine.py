@@ -228,10 +228,13 @@ class ActionPerceptionVerification:
                 const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (!el) return;
                 try {{
-                    if (typeof el.click === 'function') {{
-                        el.click();
-                    }} else {{
-                        const opts = {{ bubbles: true, cancelable: true, composed: true, view: window }};
+                    const targetBtn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') || el);
+                    if (typeof targetBtn.click === 'function') {{
+                        targetBtn.click();
+                    }}
+                    const opts = {{ bubbles: true, cancelable: true, composed: true, view: window }};
+                    targetBtn.dispatchEvent(new MouseEvent('click', opts));
+                    if (targetBtn !== el) {{
                         el.dispatchEvent(new MouseEvent('click', opts));
                     }}
                 }} catch(e) {{}}
