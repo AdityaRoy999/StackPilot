@@ -10,6 +10,7 @@ import { ScriptProvider } from './context/ScriptContext';
 import { FontProvider } from './context/FontContext';
 import { DocsPage } from './pages/DocsPage';
 import { ContactPage } from './pages/ContactPage';
+import { Preloader } from './components/Preloader';
 
 type RouteState = 'home' | 'docs' | 'contact';
 
@@ -51,6 +52,7 @@ export const App: React.FC = () => {
 
   return (
     <FontProvider>
+      <Preloader />
       {route === 'docs' && (
         <SmoothScroll>
           <DocsPage

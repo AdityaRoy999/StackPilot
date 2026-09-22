@@ -164,25 +164,25 @@ export const BentoFeatures: React.FC = () => {
       className="relative w-full select-none"
       style={{ minHeight: '250vh' }}
     >
-      {/* Sticky Showcase Stage — transparent so Lightfall particles show through */}
+      {/* Sticky Showcase Stage — positioned higher up so cards are elevated and fully visible */}
       <div
         ref={stageRef}
-        className="sticky top-[65px] w-full flex flex-col items-center py-2 sm:py-3 z-10"
+        className="sticky top-[36px] sm:top-[44px] w-full flex flex-col items-center pt-1 pb-2 z-10"
       >
         {/* Features Headline & Subtitle */}
-        <div className="text-center max-w-3xl mx-auto mb-3 sm:mb-4 px-4">
-          <h2 className="font-headline text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white leading-tight">
+        <div className="text-center max-w-3xl mx-auto mb-2 px-4 shrink-0">
+          <h2 className="font-headline text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight">
             Features
           </h2>
-          <p className="mt-1.5 text-sm sm:text-base lg:text-lg text-zinc-400 leading-relaxed font-normal max-w-2xl mx-auto">
+          <p className="mt-1 text-xs sm:text-sm lg:text-base text-zinc-400 leading-relaxed font-normal max-w-2xl mx-auto">
             From 1-click cloud provisioning to vision-guided autonomous testing,
             StackPilot delivers a complete, resilient delivery cockpit for modern engineering teams.
           </p>
         </div>
 
-        {/* Side-by-Side: Video & Bento Card — viewport-constrained height so both fit fully */}
+        {/* Side-by-Side: Video & Bento Card — elevated higher up with optimal viewport height */}
         <div className="w-full max-w-7xl mx-auto px-2 sm:px-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch" style={{ height: 'calc(100vh - 240px)' }}>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch h-[calc(100vh-195px)] min-h-[380px] max-h-[530px]">
             {/* Left Box: Video Container */}
             <div className="w-full h-full">
               <div

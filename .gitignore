@@ -104,5 +104,6 @@ kubectl
 video/
 *.mp4
 !stackpilot web/public/features/*.mp4
+!stackpilot web/public/preloader/*.mp4
 shrink_docker_disk.bat
 
