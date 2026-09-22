@@ -91,6 +91,8 @@ class ActionPerceptionVerification:
                 .slice(0, 10)
                 .join('|');
             return {
+                url: window.location.href,
+                title: document.title || '',
                 scrollY: Math.round(window.scrollY || window.pageYOffset || 0),
                 scrollX: Math.round(window.scrollX || window.pageXOffset || 0),
                 modalsCount: modals.length,
@@ -108,6 +110,25 @@ class ActionPerceptionVerification:
             val = res.get("result", {}).get("value", {}) if isinstance(res, dict) else {}
         except Exception:
             val = {}
+
+        raw_live_url = val.get("url", "")
+        if raw_live_url and "chrome-error://" not in raw_live_url:
+            try:
+                from .browser_driver import to_frontend_display_url
+                disp = to_frontend_display_url(raw_live_url)
+            except Exception:
+                try:
+                    from browser_driver import to_frontend_display_url
+                    disp = to_frontend_display_url(raw_live_url)
+                except Exception:
+                    disp = raw_live_url
+            session.current_url = disp
+            url = disp.rstrip("/")
+
+        live_title = val.get("title", "")
+        if live_title:
+            session.page_title = live_title
+            title = live_title
 
         cur_scroll_y = val.get("scrollY", scroll_y)
         cur_scroll_x = val.get("scrollX", 0)

@@ -2848,10 +2848,15 @@ async def stream_agent_reply(
                 user_content += (
                     f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user specified exact testing instructions: '{request.message}'.\n"
                     f"1. Open or connect to the live browser session with `browser_open_live_session(url='{target_runtime_url}')`. "
-                    f"If the session is already active on the application, DO NOT reload or reset the page — preserve current page persistence!\n"
-                    f"2. STRICT SCOPE CONFINEMENT: Strictly and exclusively test what the user instructed in their prompt. Do NOT click random elements or crawl unrelated pages.\n"
-                    f"3. Execute the requested interaction(s) using `browser_interact` and verify the outcome.\n"
-                    f"4. Conclude your test and provide the verification report.]"
+                    f"If the session is already active on the application, DO NOT reload or reset the page — preserve active page persistence!\n"
+                    f"2. MULTI-STEP GOAL COMPLETION & CONTINUATION PRINCIPLE: You must NEVER stop midway! Continue until the user's desired goal is 100% achieved.\n"
+                    f"   - Sequential Execution: If the prompt requires filling inputs, logging in, and then testing or verifying the page after login:\n"
+                    f"     * Step 1: Type the required credentials/values into the inputs using `browser_interact(action='type', element_id=..., text=...)`.\n"
+                    f"     * Step 2: Click the Submit / Login button using `browser_interact(action='click', element_id=...)`.\n"
+                    f"     * Step 3: WAIT FOR ACTION COMPLETION: The browser driver automatically holds and waits for network requests, authentication API, and page redirection to settle.\n"
+                    f"     * Step 4: CONTINUATION AFTER LOGIN: DO NOT STOP after clicking the Login button! Clicking the button is NOT the end of your task. Once the website completes the login and transitions to the post-login page (e.g. dashboard, home, settings), inspect the new page controls and CONTINUE executing the remaining instructions until the user's desired goal is reached!\n"
+                    f"     * Step 5: Conclude ONLY after all requested actions on the destination page are verified, or if a blocking error occurs on the site.\n"
+                    f"3. STRICT SCOPE CONFINEMENT: Strictly and exclusively test what the user instructed in their prompt. Do NOT click random elements or crawl unrelated pages.]"
                 )
             else:
                 user_content += (
@@ -3407,6 +3412,63 @@ async def stream_agent_reply(
                     "tool_calls": list(tool_calls.values()),
                 })
             else:
+                # Autonomous Multi-Step Continuation Guard for Browser QA Goals:
+                # If the user instructed a multi-step workflow (e.g. login, fill credentials, and test post-login page),
+                # and the assistant stopped without tools immediately after typing or clicking submit/login,
+                # or when the website has freshly transitioned to a new route that has not yet been verified:
+                should_continue_browser = False
+                continuation_msg = ""
+                if is_browser_test and is_targeted_test and iteration < 20:
+                    from .browser_driver import browser_manager
+                    cur_sess = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
+                    if cur_sess and cur_sess.is_connected:
+                        last_tool_msg = next((m for m in reversed(messages) if m.get("role") == "tool"), None)
+                        if last_tool_msg:
+                            tool_body = str(last_tool_msg.get("content", "")).lower()
+                            just_interacted = any(k in tool_body for k in ["login", "signin", "submit", "password", "email", "auth", "click", "type"])
+                            route_nav = "navigated to" in tool_body or "transitioned to" in tool_body
+                            
+                            req_lower = (request.message or "").lower()
+                            wants_multistep = any(w in req_lower for w in [
+                                "then", "after", "continue", "next", "dashboard", "into the page", "check", "test", "verify", "explore", "go into"
+                            ])
+                            
+                            nudge_count = sum(1 for m in messages if "[AUTONOMOUS MULTI-STEP CONTINUATION DIRECTIVE]" in str(m.get("content", "")))
+                            if (just_interacted or route_nav) and wants_multistep and nudge_count < 2:
+                                assistant_txt = "".join(iteration_content).lower()
+                                claims_ended = any(w in assistant_txt for w in [
+                                    "completed", "finished", "concluded", "done", "clicked the login", "entered", "all tests"
+                                ])
+                                if claims_ended or len(assistant_txt) < 350:
+                                    should_continue_browser = True
+                                    interactive_controls_count = len(cur_sess.interactive_elements or [])
+                                    continuation_msg = (
+                                        f"[AUTONOMOUS MULTI-STEP CONTINUATION DIRECTIVE: The website has completed the previous action and is currently on page '{cur_sess.current_url}' ('{cur_sess.page_title}') with {interactive_controls_count} interactive controls.\n"
+                                        f"CRITICAL: Do NOT conclude your testing midway! The user's full instruction was: '{request.message}'.\n"
+                                        f"You must continue executing the required steps on this post-login / destination page until the entire goal is verified. "
+                                        f"Inspect the available interactive elements and call `browser_interact` to continue now.]"
+                                    )
+
+                if should_continue_browser:
+                    iteration_content.clear()
+                    content_parts.clear()
+                    buffered_chunks.clear()
+                    if messages and messages[-1].get("role") == "assistant" and not messages[-1].get("tool_calls"):
+                        messages.pop()
+
+                    cont_thought = (
+                        f"• ⚡ [Autonomous Continuation] Action completed on `{cur_sess.current_url}` ('{cur_sess.page_title}'). "
+                        f"Continuing multi-step workflow on the destination page to achieve the user's goal...\n"
+                    )
+                    reasoning_parts.append(cont_thought)
+                    yield _sse({"type": "reasoning", "delta": cont_thought})
+
+                    messages.append({
+                        "role": "user",
+                        "content": continuation_msg,
+                    })
+                    continue
+
                 break  # No tools called and no unexecuted rebuild intent
 
         # Check loop / repetition before executing tools

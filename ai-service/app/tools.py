@@ -909,6 +909,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             label = ""
             target_name = ""
             hover_portals = []
+            pre_action_url = (session.current_url or "").rstrip("/")
             x = arguments.get("x")
             y = arguments.get("y")
 
@@ -1190,23 +1191,47 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                     if href not in {"/", "#", ""} or tag in {"button", "a"} or role in {"button", "link", "tab"}:
                         next_untested.append(f"'{norm}' (id: {e['id']})")
 
-            hint_interact = f"Action '{action}' on '{clean_target}' completed successfully. "
-            if action == "type":
+            verif = getattr(session, "last_action_verification", {}) or {}
+            effect_type = verif.get("effect_type", "")
+            post_action_url = (session.current_url or "").rstrip("/")
+            route_changed = (effect_type == "route_change") or (pre_action_url and pre_action_url != post_action_url)
+            is_login_or_submit = any(kw in clean_target.lower() for kw in [
+                "login", "log in", "signin", "sign in", "submit", "register", "signup", "auth"
+            ])
+
+            if route_changed:
+                hint_interact = (
+                    f"Action '{action}' on '{clean_target}' succeeded! The website completed the transition and navigated to '{session.current_url}' ('{tree.get('title', '')}'). "
+                    f"CONTINUE GOAL: You are now on the destination page. Do NOT stop now! Inspect the new interactive controls on this page and CONTINUE executing the remaining instructions to complete the user's desired goal."
+                )
+            elif is_login_or_submit:
+                if verif.get("new_alerts"):
+                    hint_interact = (
+                        f"Form submission / Login on '{clean_target}' finished with feedback alerts: {', '.join(verif['new_alerts'])}. "
+                        f"Inspect the alerts to verify success or diagnose any credentials/validation errors before proceeding."
+                    )
+                else:
+                    hint_interact = (
+                        f"Submission / Login on '{clean_target}' executed and settled on '{session.current_url}'. "
+                        f"Check if the desired page or state has been reached. If further actions are needed, CONTINUE immediately until the goal is fully accomplished."
+                    )
+            elif action == "type":
                 submit_candidate = None
                 for e in tree.get("elements", []):
                     t = (e.get("text") or e.get("aria_label") or "").lower()
                     tag = (e.get("tag") or "").lower()
                     etype = (e.get("type") or "").lower()
-                    if etype == "submit" or tag == "button" and any(kw in t for kw in ["submit", "send", "save", "book", "register", "contact", "apply", "test"]):
+                    if etype == "submit" or tag == "button" and any(kw in t for kw in ["submit", "send", "save", "book", "register", "contact", "apply", "test", "login", "sign in"]):
                         submit_candidate = f"'{e.get('text') or 'Submit'}' (id: {e['id']})"
                         break
                 if submit_candidate:
-                    hint_interact += f"Form input filled. Remember to click submission button {submit_candidate} to trigger and test form submission! "
-
-            if next_untested:
-                hint_interact += f"Next untested elements to test: {', '.join(next_untested[:5])}. Refer to som_frame numeric badges [id] to visually verify targets. Call browser_interact(action='click', element_id=...) on the next element."
+                    hint_interact = f"Input typed successfully into {clean_target}. Now call browser_interact(action='click', element_id=...) on submission/login button {submit_candidate} and wait for the website to complete."
+                else:
+                    hint_interact = f"Input typed successfully into {clean_target}. Continue to next field or submit button."
+            elif next_untested:
+                hint_interact = f"Action '{action}' on '{clean_target}' completed. Next untested elements: {', '.join(next_untested[:5])}. Continue testing until your goal is reached."
             else:
-                hint_interact += "Interactive controls have been tested. Conclude testing or visit subpages."
+                hint_interact = f"Action '{action}' on '{clean_target}' completed. If your desired goal is fulfilled, synthesize your final report; otherwise continue."
 
             arch_val = getattr(session, "current_archetype", "unknown")
             arch_str = arch_val.value if hasattr(arch_val, "value") else str(arch_val)

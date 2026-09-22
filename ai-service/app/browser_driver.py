@@ -106,6 +106,32 @@ def to_frontend_display_url(url: str, fallback_url: str = "http://localhost:3000
     )
 
 
+def is_transitioning_or_submit_action(element: Optional[Dict[str, Any]] = None, label: str = "", action: str = "click") -> bool:
+    """Detects whether an action triggers submission, authentication, navigation, or asynchronous state changes."""
+    if action in {"navigate", "navigate_back"}:
+        return True
+    
+    text_corpus = (label or "").lower()
+    if element:
+        el_text = (element.get("text") or element.get("aria_label") or element.get("placeholder") or element.get("name") or "").lower()
+        el_tag = (element.get("tag") or "").lower()
+        el_type = (element.get("type") or "").lower()
+        el_role = (element.get("role") or "").lower()
+        el_href = (element.get("href") or "").lower()
+        text_corpus += f" {el_text} {el_tag} {el_type} {el_role} {el_href}"
+        if el_type == "submit" or (el_tag == "button" and el_type != "button"):
+            return True
+
+    transition_keywords = [
+        "login", "log in", "signin", "sign in", "sign-in", "log-in",
+        "submit", "save", "send", "register", "signup", "sign up", "sign-up",
+        "continue", "next", "confirm", "proceed", "enter", "checkout",
+        "apply", "book", "delete", "destroy", "create", "search", "verify",
+        "authenticate", "reset", "start", "join", "connect", "auth"
+    ]
+    return any(kw in text_corpus for kw in transition_keywords)
+
+
 class BrowserSession:
     """Manages an active CDP connection to a Chromium tab with real-time screencast."""
 
@@ -1593,6 +1619,103 @@ class BrowserSession:
 
         return True
 
+    async def wait_for_action_quiescence(
+        self,
+        pre_url: str = "",
+        is_transition: bool = False,
+        min_grace_ms: int = 350,
+        max_timeout_s: float = 10.0,
+    ) -> bool:
+        """
+        Wait until an action (form submission, login, button click, route navigation)
+        has completely finished executing on the website.
+        
+        1. Grace Period: Pause min_grace_ms (350ms) to allow Blink event loop, React dispatchers,
+           and network fetch/XHR calls to register in CDP _inflight_requests.
+        2. Network Quiescence: If requests are in flight, wait until _inflight_requests drops to 0
+           and stays quiet for at least 200ms.
+        3. Document & Visual Settling:
+           - Check document.readyState === 'complete'.
+           - Detect loading spinners, progress bars, aria-busy="true", or disabled submitting buttons.
+           - Wait until all busy states clear.
+        4. SPA / Route Transition Settling:
+           - If window.location.href changed from pre_url, wait an additional 400ms
+             for React components to mount, hydrate, and layout.
+        5. Quad-Phase DOM quiescence (double RAF + mutation settling).
+        """
+        start = time.time()
+        # 1. Mandatory grace period for action dispatch and event initiation
+        await asyncio.sleep(min_grace_ms / 1000.0)
+
+        # 2. Wait for in-flight network requests (up to max_timeout_s)
+        network_wait_limit = max_timeout_s if is_transition else min(3.0, max_timeout_s)
+        while (time.time() - start) < network_wait_limit:
+            inflight = len(self._inflight_requests)
+            quiet_time = (time.time() - self._last_network_activity) * 1000
+            if inflight == 0 and quiet_time >= 200:
+                break
+            await asyncio.sleep(0.05)
+
+        # 3. Check for document loading or visible spinners / busy states in DOM
+        busy_check_js = """
+        (() => {
+            if (document.readyState !== 'complete') return true;
+            const busyEls = Array.from(document.querySelectorAll('[aria-busy="true"], [data-loading="true"], .spinner, .loading, [class*="animate-spin"], [class*="loading-spinner"]'));
+            for (const el of busyEls) {
+                if (el.offsetParent !== null || el.getClientRects().length > 0) {
+                    const s = window.getComputedStyle(el);
+                    if (s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0') return true;
+                }
+            }
+            const disBtns = Array.from(document.querySelectorAll('button[disabled], input[type="submit"][disabled]'));
+            for (const b of disBtns) {
+                const t = (b.innerText || b.value || '').toLowerCase();
+                if (t.includes('log') || t.includes('wait') || t.includes('load') || t.includes('submit')) return true;
+            }
+            return false;
+        })()
+        """
+        while (time.time() - start) < max_timeout_s:
+            try:
+                chk = await self.send_command("Runtime.evaluate", {
+                    "expression": busy_check_js,
+                    "returnByValue": True
+                }, timeout=1.0)
+                is_busy = bool(chk.get("result", {}).get("value"))
+                if not is_busy:
+                    break
+            except Exception:
+                break
+            await asyncio.sleep(0.1)
+
+        # 4. Check if route changed (window.location.href vs pre_url)
+        try:
+            url_res = await self.send_command("Runtime.evaluate", {
+                "expression": "window.location.href",
+                "returnByValue": True
+            }, timeout=0.8)
+            live_href = str(url_res.get("result", {}).get("value") or "")
+            if live_href and "chrome-error://" not in live_href:
+                disp_url = to_frontend_display_url(live_href)
+                norm_live = disp_url.rstrip("/").lower()
+                norm_pre = (pre_url or "").rstrip("/").lower()
+                if norm_pre and norm_live and norm_live != norm_pre:
+                    self.current_url = disp_url
+                    # Route changed: wait 400ms for fresh page hydration and mounting
+                    await asyncio.sleep(0.4)
+        except Exception:
+            pass
+
+        # 5. Final Quad-Phase DOM quiescence & layout commit
+        await self.wait_for_quiescence(
+            network_idle_ms=80,
+            dom_quiet_ms=40,
+            scroll_quiet_ms=60,
+            max_timeout_s=2.0,
+            fast_mode=False
+        )
+        return True
+
     async def navigate(self, url: str) -> Dict[str, Any]:
         """Navigate to URL and wait for tri-phase quiescence (network idle, DOM mutations quiet, double RAF)."""
         internal_url = to_container_accessible_url(url)
@@ -2149,7 +2272,6 @@ class BrowserSession:
             "button": "left",
             "clickCount": 1,
         })
-        await asyncio.sleep(0.045)
         await self.send_command("Input.dispatchMouseEvent", {
             "type": "mouseReleased",
             "x": x,
@@ -2157,6 +2279,24 @@ class BrowserSession:
             "button": "left",
             "clickCount": 1,
         })
+
+        # Settle click action (awaits in-flight requests and route transitions)
+        pre_url = (self.current_url or "").rstrip("/")
+        matched_el = None
+        if self.interactive_elements:
+            for el in self.interactive_elements:
+                el_x = el.get("x", -999)
+                el_y = el.get("y", -999)
+                if ((x - el_x)**2 + (y - el_y)**2)**0.5 < 15.0:
+                    matched_el = el
+                    break
+        is_trans = is_transitioning_or_submit_action(matched_el, label=label, action="click")
+        await self.wait_for_action_quiescence(
+            pre_url=pre_url,
+            is_transition=is_trans,
+            min_grace_ms=300 if is_trans else 120,
+            max_timeout_s=8.0 if is_trans else 2.0
+        )
 
     async def hover(self, x: int, y: int, duration: float = 0.35, label: str = "") -> Dict[str, Any]:
         """Simulate organic cursor glide to (x, y) and dwell to trigger CSS :hover and pointer events, capturing ephemeral UI."""
@@ -2481,16 +2621,24 @@ class BrowserSession:
         return True
 
     async def click_element(self, element_id: int, label: str = "", fast_mode: bool = True) -> bool:
-        """Scrolls element into view if needed, performs APV two-tier click, awaits fast quiescence, and verifies outcome."""
+        """Scrolls element into view if needed, performs APV two-tier click, awaits action completion, and verifies outcome."""
+        el = next((e for e in (self.interactive_elements or []) if str(e.get("id")) == str(element_id)), None)
+        target_name = label or (el.get("text") if el else f"Element #{element_id}")
+        is_transition = is_transitioning_or_submit_action(el, label=target_name, action="click")
+
         # 1. Capture Pre-action Perception Snapshot
         pre_snap = await ActionPerceptionVerification.capture_snapshot(self)
 
         # 2. Dispatch Two-Tier Click (CDP synthetic input events + Native Blink DOM synthetic sequence)
-        target_name = label or f"Element #{element_id}"
-        await ActionPerceptionVerification.dispatch_two_tier_click(self, element_id, label=target_name, fast_mode=fast_mode)
+        await ActionPerceptionVerification.dispatch_two_tier_click(self, element_id, label=target_name, fast_mode=fast_mode and not is_transition)
 
-        # 3. Fast-path quiescence (DOM & animations settling)
-        await self.wait_for_quiescence(network_idle_ms=50, dom_quiet_ms=25, scroll_quiet_ms=40, max_timeout_s=1.0, fast_mode=fast_mode)
+        # 3. Action Completion Quiescence (awaits network idle, loading spinners cleared, route changes settled)
+        await self.wait_for_action_quiescence(
+            pre_url=pre_snap.url,
+            is_transition=is_transition,
+            min_grace_ms=350 if is_transition else 180,
+            max_timeout_s=10.0 if is_transition else 2.5
+        )
 
         # 4. Refresh interactive tree
         try:
@@ -2714,6 +2862,14 @@ class BrowserSession:
             "code": code_val,
         })
         await asyncio.sleep(0.04)
+        if k_clean in {"enter", "return"}:
+            pre_url = (self.current_url or "").rstrip("/")
+            await self.wait_for_action_quiescence(
+                pre_url=pre_url,
+                is_transition=True,
+                min_grace_ms=350,
+                max_timeout_s=10.0
+            )
         return True
 
     async def get_theme(self) -> Dict[str, Any]:
