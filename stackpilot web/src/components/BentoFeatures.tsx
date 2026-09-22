@@ -104,6 +104,8 @@ export const BentoFeatures: React.FC = () => {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    let ticking = false;
+
     const handleScroll = () => {
       const el = containerRef.current;
       if (!el) return;
@@ -122,11 +124,21 @@ export const BentoFeatures: React.FC = () => {
       }
     };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    const onScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          handleScroll();
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    window.addEventListener('scroll', onScroll, { passive: true });
     handleScroll();
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('scroll', onScroll);
     };
   }, []);
 

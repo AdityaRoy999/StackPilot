@@ -1,7 +1,5 @@
 import React, { useEffect, useRef } from 'react';
 import Lenis from 'lenis';
-import { gsap } from 'gsap';
-import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 interface SmoothScrollProps {
   children: React.ReactNode;
@@ -12,30 +10,27 @@ export const SmoothScroll: React.FC<SmoothScrollProps> = ({ children }) => {
 
   useEffect(() => {
     const lenis = new Lenis({
-      duration: 1.1,
+      duration: 0.8,
       easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
       orientation: 'vertical',
       gestureOrientation: 'vertical',
       smoothWheel: true,
       wheelMultiplier: 1.0,
-      touchMultiplier: 1.5,
+      touchMultiplier: 1.0,
       infinite: false,
     });
 
     lenisRef.current = lenis;
 
-    // 1. Sync Lenis scroll updates with ScrollTrigger
-    lenis.on('scroll', ScrollTrigger.update);
-
-    // 2. Hook into GSAP ticker so Lenis and ScrollTrigger run in the exact same frame
-    const updateTicker = (time: number) => {
-      lenis.raf(time * 1000);
+    let rafId = 0;
+    const raf = (time: number) => {
+      lenis.raf(time);
+      rafId = requestAnimationFrame(raf);
     };
-    gsap.ticker.add(updateTicker);
-    gsap.ticker.lagSmoothing(0);
+    rafId = requestAnimationFrame(raf);
 
     return () => {
-      gsap.ticker.remove(updateTicker);
+      cancelAnimationFrame(rafId);
       lenis.destroy();
       lenisRef.current = null;
     };

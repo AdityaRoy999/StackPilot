@@ -274,6 +274,8 @@ class MorphEngine {
   private sizes: [number, number][];
   private resizeObserver: ResizeObserver;
   private raf = 0;
+  private isVisible = true;
+  private observer?: IntersectionObserver;
   private boundLoop: (t: number) => void;
   private boundContextLost: (e: Event) => void;
   private pendingTarget: number | null = null;
@@ -341,6 +343,25 @@ class MorphEngine {
 
     this.boundLoop = this.loop.bind(this);
     this.raf = requestAnimationFrame(this.boundLoop);
+
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            this.isVisible = entry.isIntersecting;
+            const curVid = this.videos[this.current];
+            if (this.isVisible) {
+              if (curVid && curVid.paused) curVid.play().catch(() => {});
+              if (!this.raf) this.raf = requestAnimationFrame(this.boundLoop);
+            } else {
+              if (curVid && !curVid.paused) curVid.pause();
+            }
+          });
+        },
+        { threshold: 0.05 }
+      );
+      this.observer.observe(container);
+    }
   }
 
   private loadMedia(): void {
@@ -410,6 +431,10 @@ class MorphEngine {
   }
 
   private loop(t: number): void {
+    if (!this.isVisible) {
+      this.raf = 0;
+      return;
+    }
     this.program.uniforms.uTime.value = t * 0.001;
 
     // Update active video textures for real-time video playback inside WebGL
@@ -577,7 +602,12 @@ class MorphEngine {
   }
 
   destroy(): void {
+    if (this.observer) {
+      this.observer.disconnect();
+      this.observer = undefined;
+    }
     cancelAnimationFrame(this.raf);
+    this.raf = 0;
     if (this.tween) this.tween.kill();
     this.resizeObserver.disconnect();
     this.canvas.removeEventListener('webglcontextlost', this.boundContextLost);
@@ -665,7 +695,7 @@ export const MorphSlider: React.FC<MorphSliderProps> = ({
       items,
       startIndex,
       reducedMotion,
-      dprCap: 2,
+      dprCap: 1.25,
       getOptions: () => optsRef.current,
       onIndexChange: handleIndexChange,
     });

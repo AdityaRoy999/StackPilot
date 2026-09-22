@@ -73,13 +73,15 @@ export const App: React.FC = () => {
         <ScriptProvider>
           <SmoothScroll>
             <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-clip">
-              {/* Rich Vibrant Bluish & Indigo Atmospheric Ambient Gradients */}
+              {/* Rich Vibrant Bluish & Indigo Atmospheric Ambient Gradients — Hardware accelerated compositor layers */}
               <div
-                className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none"
+                className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none will-change-transform transform-gpu"
+                style={{ transform: 'translate3d(0, 0, 0)' }}
                 aria-hidden="true"
               />
               <div
-                className="fixed top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] pointer-events-none z-0 rounded-full select-none"
+                className="fixed top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] pointer-events-none z-0 rounded-full select-none will-change-transform transform-gpu"
+                style={{ transform: 'translate3d(0, 0, 0)' }}
                 aria-hidden="true"
               />
 
@@ -98,9 +100,8 @@ export const App: React.FC = () => {
                   zoom={1.5}
                   backgroundGlow={0.25}
                   opacity={0.65}
-                  mouseInteraction={true}
-                  mouseStrength={0.6}
-                  mouseRadius={0.45}
+                  dpr={1.0}
+                  mouseInteraction={false}
                 />
               </div>
 
