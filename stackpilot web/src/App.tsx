@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Navbar } from './components/Navbar';
 import { Hero } from './components/Hero';
 import { BentoFeatures } from './components/BentoFeatures';
@@ -47,13 +48,22 @@ export const App: React.FC = () => {
       window.history.pushState({}, '', targetPath);
     }
     setRoute(target);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
   };
 
   return (
     <FontProvider>
       <Preloader />
-      {route === 'docs' && (
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={route}
+          initial={{ opacity: 0, filter: 'blur(16px)', y: 4 }}
+          animate={{ opacity: 1, filter: 'blur(0px)', y: 0 }}
+          exit={{ opacity: 0, filter: 'blur(16px)', y: -4 }}
+          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full flex-1 flex flex-col will-change-transform transform-gpu"
+        >
+          {route === 'docs' && (
         <SmoothScroll>
           <DocsPage
             onNavigateHome={() => navigateTo('home')}
@@ -131,6 +141,8 @@ export const App: React.FC = () => {
           </SmoothScroll>
         </ScriptProvider>
       )}
+        </motion.div>
+      </AnimatePresence>
     </FontProvider>
   );
 };
