@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
@@ -29,7 +30,19 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
   });
   const [visitors, setVisitors] = useState<number>(1482);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { fontMode, toggleFontMode } = useFont();
+
+  // Close mobile menu on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileMenuOpen(false);
+    };
+    if (mobileMenuOpen) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     // 1. Fetch live GitHub stars from repo with multiple fallback strategies
@@ -107,15 +120,16 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
 
   return (
     <header className="fixed top-5 left-0 right-0 z-50 px-4 sm:px-8 flex items-center justify-between pointer-events-none">
-      {/* Left side: Expandable Terminal Button (reveals 'StackPilot' on hover) */}
+      {/* Left side: Brand Pill (shows 'StackPilot' clearly on mobile and expands on desktop hover) */}
       <div className="pointer-events-auto">
         <a
           href="/"
           onClick={(e) => {
             e.preventDefault();
+            setMobileMenuOpen(false);
             onNavigateHome?.();
           }}
-          className="group inline-flex items-center h-10 px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl hover:bg-[#262629] transition-all duration-300 ease-out cursor-pointer select-none"
+          className="group inline-flex items-center h-10 px-3.5 rounded-full border-0 bg-[#1c1c1e] backdrop-blur-xl hover:bg-[#262629] transition-all duration-300 ease-out cursor-pointer select-none shadow-lg"
           title="StackPilot Home"
         >
           {/* Terminal prompt icon */}
@@ -123,20 +137,47 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
             &gt;_
           </div>
 
-          {/* Smoothly expanding brand container */}
-          <div className="max-w-0 opacity-0 group-hover:max-w-[160px] group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out flex items-center whitespace-nowrap">
-            <span className="ml-2.5 font-semibold text-xs sm:text-sm tracking-tight text-zinc-100">
+          {/* Clean brand label */}
+          <div className="max-w-[140px] opacity-100 sm:max-w-0 sm:opacity-0 sm:group-hover:max-w-[160px] sm:group-hover:opacity-100 overflow-hidden transition-all duration-300 ease-out flex items-center whitespace-nowrap">
+            <span className="ml-2 font-semibold text-xs sm:text-sm tracking-tight text-zinc-100">
               StackPilot
             </span>
           </div>
         </a>
       </div>
 
-      {/* Right side: Unified Capsule Pill with Animated Sliding Hover Tab Physics */}
-      <div className="pointer-events-auto">
+      {/* Right side: Desktop Capsule Bar + Mobile Hamburger Button */}
+      <div className="pointer-events-auto flex items-center gap-2">
+        {/* Mobile Hamburger Button (visible on mobile screens) */}
+        <button
+          type="button"
+          onClick={() => setMobileMenuOpen(prev => !prev)}
+          className="md:hidden relative inline-flex items-center justify-center w-10 h-10 rounded-full bg-[#1c1c1e] border border-zinc-800/80 text-zinc-300 hover:text-white transition-all cursor-pointer shadow-xl border-0"
+          aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        >
+          <div className="w-4 h-3 flex flex-col justify-between items-center">
+            <span
+              className={`h-0.5 w-4 bg-zinc-200 rounded-full transition-all duration-300 origin-center ${
+                mobileMenuOpen ? 'rotate-45 translate-y-[5px]' : ''
+              }`}
+            />
+            <span
+              className={`h-0.5 w-4 bg-zinc-200 rounded-full transition-all duration-300 ${
+                mobileMenuOpen ? 'opacity-0 scale-0' : ''
+              }`}
+            />
+            <span
+              className={`h-0.5 w-4 bg-zinc-200 rounded-full transition-all duration-300 origin-center ${
+                mobileMenuOpen ? '-rotate-45 -translate-y-[5px]' : ''
+              }`}
+            />
+          </div>
+        </button>
+
+        {/* Desktop Unified Capsule Pill with Animated Sliding Hover Tab Physics */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
-          className="inline-flex items-center h-10 p-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs text-zinc-300 backdrop-blur-xl relative"
+          className="hidden md:inline-flex items-center h-10 p-1 rounded-full bg-[#1c1c1e] border border-zinc-800/80 shadow-lg text-xs text-zinc-300 backdrop-blur-xl relative"
         >
           {/* Visitors: between '(' and '|' -> left fully rounded, right square rounded */}
           <div
@@ -266,6 +307,127 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigateDocs, onNavigateHome, 
           </a>
         </div>
       </div>
+
+      {/* Portaled Mobile Menu Dropdown Drawer */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {mobileMenuOpen && (
+              <>
+                {/* Backdrop Overlay */}
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="fixed inset-0 bg-black/75 backdrop-blur-md z-[9990] md:hidden cursor-pointer"
+                />
+
+                {/* Floating Glassmorphic Dropdown Drawer */}
+                <motion.div
+                  initial={{ opacity: 0, y: -14, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -14, scale: 0.96 }}
+                  transition={{ type: 'spring', stiffness: 450, damping: 32 }}
+                  className="fixed top-20 left-4 right-4 z-[9995] rounded-3xl bg-[#161619]/95 border border-zinc-800/90 shadow-2xl backdrop-blur-2xl p-4 flex flex-col gap-2.5 md:hidden keep-sans select-none"
+                >
+                  {/* Primary Nav Link: Documentation */}
+                  <a
+                    href="/docs"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setMobileMenuOpen(false);
+                      onNavigateDocs?.();
+                    }}
+                    className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[#1e1e22] hover:bg-[#28282d] border border-zinc-800/60 text-sm font-medium text-white transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-zinc-800/80 flex items-center justify-center text-white shrink-0 group-hover:bg-zinc-700/80 transition-colors">
+                        <HugeiconsIcon icon={BookOpen01Icon} size={16} strokeWidth={1.8} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-zinc-100">Documentation</span>
+                        <span className="text-[11px] text-zinc-400">Guides, CLI reference &amp; architecture</span>
+                      </div>
+                    </div>
+                    <span className="text-xs text-zinc-500 font-mono group-hover:text-zinc-300 transition-colors">→</span>
+                  </a>
+
+                  {/* Primary Nav Link: Contact */}
+                  <a
+                    href="/contact"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setMobileMenuOpen(false);
+                      onNavigateContact?.();
+                    }}
+                    className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[#1e1e22] hover:bg-[#28282d] border border-zinc-800/60 text-sm font-medium text-white transition-all cursor-pointer group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-zinc-800/80 flex items-center justify-center text-white shrink-0 group-hover:bg-zinc-700/80 transition-colors">
+                        <HugeiconsIcon icon={Mail01Icon} size={16} strokeWidth={1.8} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm font-medium text-zinc-100">Contact Us</span>
+                        <span className="text-[11px] text-zinc-400">Get in touch with the team</span>
+                      </div>
+                    </div>
+                    <span className="text-xs text-zinc-500 font-mono group-hover:text-zinc-300 transition-colors">→</span>
+                  </a>
+
+                  {/* Secondary Quick Actions Grid: Font Mode & GitHub */}
+                  <div className="grid grid-cols-2 gap-2 mt-1">
+                    {/* Font Mode Switcher */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        toggleFontMode();
+                      }}
+                      className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-2xl bg-[#1e1e22] hover:bg-[#28282d] border border-zinc-800/60 text-xs font-medium text-zinc-200 transition-all cursor-pointer"
+                    >
+                      {fontMode === 'stylish' ? (
+                        <>
+                          <span className="text-sm">✍️</span>
+                          <span>Stylish Font</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xs font-bold text-white">Aa</span>
+                          <span>Normal Font</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* GitHub Repo */}
+                    <a
+                      href="https://github.com/AdityaRoy999/StackPilot"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-2xl bg-[#1e1e22] hover:bg-[#28282d] border border-zinc-800/60 text-xs font-medium text-zinc-200 transition-all cursor-pointer"
+                    >
+                      <HugeiconsIcon icon={GithubIcon} size={15} strokeWidth={1.8} className="text-white shrink-0" />
+                      <span>GitHub</span>
+                      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[#28282c] text-[10px] text-zinc-300 border border-zinc-700/50">
+                        <HugeiconsIcon icon={StarIcon} size={11} strokeWidth={1.8} className="text-white shrink-0" />
+                        <span>{stars}</span>
+                      </span>
+                    </a>
+                  </div>
+
+                  {/* Bottom Strip: Visitor Counter */}
+                  <div className="flex items-center justify-center gap-2 pt-2 border-t border-zinc-800/60 text-[11px] text-zinc-400">
+                    <HugeiconsIcon icon={UserMultiple02Icon} size={13} strokeWidth={1.8} className="text-zinc-400 shrink-0" />
+                    <span>
+                      <strong className="font-semibold text-zinc-200 tabular-nums">{visitors.toLocaleString()}</strong> unique visitors
+                    </span>
+                  </div>
+                </motion.div>
+              </>
+            )}
+          </AnimatePresence>,
+          document.body
+        )}
     </header>
   );
 };

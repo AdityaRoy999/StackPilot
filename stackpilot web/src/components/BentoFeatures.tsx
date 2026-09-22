@@ -182,9 +182,9 @@ export const BentoFeatures: React.FC = () => {
 
         {/* Side-by-Side: Video & Bento Card — elevated higher up with optimal viewport height */}
         <div className="w-full max-w-7xl mx-auto px-2 sm:px-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch h-[calc(100vh-195px)] min-h-[380px] max-h-[530px]">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch h-auto lg:h-[calc(100vh-195px)] lg:min-h-[380px] lg:max-h-[530px]">
             {/* Left Box: Video Container */}
-            <div className="w-full h-full">
+            <div className="w-full h-52 xs:h-64 sm:h-72 lg:h-full">
               <div
                 onClick={() => setIsEnlarged(true)}
                 className="relative w-full h-full rounded-2xl sm:rounded-3xl overflow-hidden bg-black shadow-2xl select-none cursor-pointer border border-zinc-800/80 transition-transform duration-300 hover:scale-[1.005] group flex items-center justify-center"
@@ -217,7 +217,7 @@ export const BentoFeatures: React.FC = () => {
             </div>
 
             {/* Right Box: Bento Card — Tagline + Title at top, Description in grey nested card */}
-            <div className="w-full h-full">
+            <div className="w-full h-auto lg:h-full">
               <div className="w-full h-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-5 sm:p-6 lg:p-7 flex flex-col justify-between gap-4 shadow-2xl select-none">
                 {/* Top Section: Title directly at top */}
                 <div>

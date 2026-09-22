@@ -22,6 +22,7 @@ import {
   StarIcon,
   Copy01Icon,
   Tick01Icon,
+  Cancel01Icon,
 } from '@hugeicons/core-free-icons';
 import { BranchedMenu, BranchedMenuItem } from '../components/reactbits/BranchedMenu';
 import { SearchModal } from '../components/SearchModal';
@@ -175,7 +176,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
             onMouseLeave={() => setHoveredTab(null)}
             className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-lg text-xs text-zinc-300 relative"
           >
-            {/* Interactive Search Button: between '(' and '|' -> left fully rounded, right square rounded */}
+            {/* Interactive Search Button: compact on mobile */}
             <button
               type="button"
               onClick={(e) => {
@@ -184,7 +185,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 setIsSearchOpen(true);
               }}
               onMouseEnter={() => setHoveredTab('search')}
-              className="relative inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-full rounded-r-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
+              className="relative inline-flex items-center gap-2 h-8 px-2.5 sm:px-3.5 rounded-l-full rounded-r-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
               title="Search documentation (⌘K)"
             >
               {hoveredTab === 'search' && (
@@ -194,7 +195,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                   transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                 />
               )}
-              <span className="relative z-10 flex items-center gap-2.5">
+              <span className="relative z-10 flex items-center gap-2">
                 <HugeiconsIcon icon={Search01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0 transition-colors" />
                 <span className="hidden sm:inline">Search docs...</span>
                 <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 bg-[#161618] rounded border border-zinc-700/60">
@@ -203,26 +204,26 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               </span>
             </button>
 
-            {/* Mobile Menu Toggle (lg:hidden): between '|' and '|' -> square rounded tab */}
+            {/* Mobile Menu Toggle (lg:hidden): rounded-r-full on mobile, rounded-md on sm+ */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               onMouseEnter={() => setHoveredTab('menu')}
-              className="lg:hidden relative inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md bg-transparent text-zinc-300 hover:text-white border-0 cursor-pointer mx-0.5"
+              className="lg:hidden relative inline-flex items-center gap-1.5 h-8 px-2.5 rounded-r-full sm:rounded-md bg-transparent text-zinc-300 hover:text-white border-0 cursor-pointer mx-0.5"
             >
               {hoveredTab === 'menu' && (
                 <motion.div
                   layoutId="docsHoverPill"
-                  className="absolute inset-0 bg-[#26262a] rounded-md"
+                  className="absolute inset-0 bg-[#26262a] rounded-r-full sm:rounded-md"
                   transition={{ type: 'spring', stiffness: 450, damping: 35 }}
                 />
               )}
-              <span className="relative z-10">{mobileMenuOpen ? 'Close' : 'Topics'}</span>
+              <span className="relative z-10 font-medium">{mobileMenuOpen ? 'Close' : 'Topics'}</span>
             </button>
 
-            {/* Vertical Divider */}
-            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
+            {/* Vertical Divider - hidden on mobile */}
+            <span className="hidden sm:block h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
 
-            {/* Contact: between '|' and '|' -> square rounded tab */}
+            {/* Contact - hidden on mobile */}
             <a
               href="/contact"
               onClick={(e) => {
@@ -230,7 +231,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 onNavigateContact?.();
               }}
               onMouseEnter={() => setHoveredTab('contact')}
-              className="relative inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0"
+              className="hidden sm:inline-flex relative items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0"
               title="Contact StackPilot Team"
             >
               {hoveredTab === 'contact' && (
@@ -242,19 +243,19 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               )}
               <span className="relative z-10 flex items-center gap-1.5">
                 <HugeiconsIcon icon={Mail01Icon} size={14} strokeWidth={1.8} className="text-white shrink-0" />
-                <span className="hidden sm:inline">Contact</span>
+                <span>Contact</span>
               </span>
             </a>
 
-            {/* Vertical Divider */}
-            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
+            {/* Vertical Divider - hidden on mobile */}
+            <span className="hidden sm:block h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
 
-            {/* Font Switcher Tab: between '|' and '|' -> square rounded tab */}
+            {/* Font Switcher Tab - hidden on mobile */}
             <button
               type="button"
               onClick={toggleFontMode}
               onMouseEnter={() => setHoveredTab('font')}
-              className="relative inline-flex items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
+              className="hidden sm:inline-flex relative items-center gap-1.5 h-8 px-2.5 sm:px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
               title={fontMode === 'stylish' ? 'Switch to Normal font' : 'Switch to Handwriting / Stylish font'}
             >
               {hoveredTab === 'font' && (
@@ -268,27 +269,27 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
                 {fontMode === 'stylish' ? (
                   <>
                     <span className="text-xs text-white">✍️</span>
-                    <span className="hidden sm:inline text-[11px] text-zinc-300">Stylish</span>
+                    <span className="text-[11px] text-zinc-300">Stylish</span>
                   </>
                 ) : (
                   <>
                     <span className="text-[11px] font-bold text-white">Aa</span>
-                    <span className="hidden sm:inline text-[11px] text-zinc-300">Normal</span>
+                    <span className="text-[11px] text-zinc-300">Normal</span>
                   </>
                 )}
               </span>
             </button>
 
-            {/* Vertical Divider */}
-            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
+            {/* Vertical Divider - hidden on mobile */}
+            <span className="hidden sm:block h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-1 select-none" />
 
-            {/* GitHub Repo: between '|' and ')' -> left square rounded, right fully rounded */}
+            {/* GitHub Repo - hidden on mobile */}
             <a
               href="https://github.com/AdityaRoy999/StackPilot"
               target="_blank"
               rel="noopener noreferrer"
               onMouseEnter={() => setHoveredTab('repo')}
-              className="relative inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-md rounded-r-full bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
+              className="hidden sm:inline-flex relative items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-md rounded-r-full bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
               title="View StackPilot on GitHub"
             >
               {hoveredTab === 'repo' && (
@@ -300,7 +301,7 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
               )}
               <span className="relative z-10 flex items-center gap-2">
                 <HugeiconsIcon icon={GithubIcon} size={14} strokeWidth={1.8} className="text-white shrink-0 transition-colors" />
-                <span className="hidden sm:inline">Repo</span>
+                <span>Repo</span>
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[#161618] text-[10px] text-zinc-300 border border-zinc-700/50">
                   <HugeiconsIcon icon={StarIcon} size={12} strokeWidth={1.8} className="text-white shrink-0" />
                   <span>Star</span>
@@ -311,13 +312,21 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
         </div>
       </div>
 
+      {/* Mobile Drawer Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          onClick={() => setMobileMenuOpen(false)}
+          className="fixed inset-0 bg-black/75 backdrop-blur-md z-40 lg:hidden cursor-pointer"
+        />
+      )}
+
       {/* Main Container with Sidebar + Content */}
       <div className="flex-1 max-w-[1700px] w-full mx-auto px-4 sm:px-6 lg:px-10 py-6 flex gap-8">
         {/* Left Sidebar: Greyish Bento Card containing the Tree */}
         <aside
-          className={`lg:w-72 shrink-0 transition-all duration-300 z-30 ${
+          className={`lg:w-72 shrink-0 transition-all duration-300 ${
             mobileMenuOpen
-              ? 'fixed inset-x-4 top-20 bottom-4 bg-[#18181b] border border-zinc-800 rounded-3xl p-5 overflow-y-auto no-scrollbar block shadow-2xl z-50'
+              ? 'fixed inset-x-4 top-20 bottom-6 bg-[#18181b] border border-zinc-800 rounded-3xl p-4 sm:p-5 overflow-y-auto no-scrollbar block shadow-2xl z-50'
               : 'hidden lg:block'
           }`}
         >
@@ -325,6 +334,63 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
           <div
             className="sticky top-6 rounded-2xl sm:rounded-3xl border border-zinc-800/90 bg-[#18181b]/95 p-4 sm:p-5 flex flex-col gap-3 shadow-xl transition-all"
           >
+            {/* Mobile Header Bar with Close & Quick Actions */}
+            <div className="lg:hidden flex flex-col gap-2.5 pb-3 border-b border-zinc-800/80">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-white">Menu &amp; Topics</span>
+                <button
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="w-7 h-7 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-300 hover:text-white border-0 cursor-pointer"
+                >
+                  <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={2} />
+                </button>
+              </div>
+
+              {/* Mobile Quick Action Buttons: Contact, Font, GitHub */}
+              <div className="grid grid-cols-3 gap-1.5 pt-1">
+                <a
+                  href="/contact"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setMobileMenuOpen(false);
+                    onNavigateContact?.();
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-zinc-800/70 hover:bg-zinc-700/70 text-xs font-medium text-zinc-200 transition-colors"
+                >
+                  <HugeiconsIcon icon={Mail01Icon} size={13} strokeWidth={1.8} className="text-white shrink-0" />
+                  <span>Contact</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={toggleFontMode}
+                  className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-zinc-800/70 hover:bg-zinc-700/70 text-xs font-medium text-zinc-200 border-0 cursor-pointer transition-colors"
+                >
+                  {fontMode === 'stylish' ? (
+                    <>
+                      <span>✍️</span>
+                      <span>Stylish</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-bold text-white text-[11px]">Aa</span>
+                      <span>Normal</span>
+                    </>
+                  )}
+                </button>
+
+                <a
+                  href="https://github.com/AdityaRoy999/StackPilot"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-zinc-800/70 hover:bg-zinc-700/70 text-xs font-medium text-zinc-200 transition-colors"
+                >
+                  <HugeiconsIcon icon={GithubIcon} size={13} strokeWidth={1.8} className="text-white shrink-0" />
+                  <span>GitHub</span>
+                </a>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800/80">
               <span className="text-[11px] font-mono uppercase tracking-widest text-zinc-400 font-semibold">
                 Documentation

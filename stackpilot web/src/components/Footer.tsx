@@ -134,16 +134,16 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
               </span>
             </a>
 
-            {/* Vertical Divider */}
-            <span className="h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-0.5 select-none" />
+            {/* Vertical Divider - only on sm+ */}
+            <span className="hidden sm:block h-3.5 w-[1px] bg-zinc-800/90 shrink-0 mx-0.5 select-none" />
 
-            {/* Releases: between '|' and '|' -> square rounded tab */}
+            {/* Releases: between '|' and '|' -> square rounded tab (hidden on small mobile) */}
             <a
               href="https://github.com/AdityaRoy999/StackPilot/releases"
               target="_blank"
               rel="noopener noreferrer"
               onMouseEnter={() => setHoveredTab('releases')}
-              className="relative inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
+              className="hidden sm:inline-flex relative items-center gap-1.5 h-8 px-3 rounded-md bg-transparent text-zinc-400 hover:text-white transition-colors cursor-pointer select-none border-0"
               title="StackPilot Releases"
             >
               {hoveredTab === 'releases' && (

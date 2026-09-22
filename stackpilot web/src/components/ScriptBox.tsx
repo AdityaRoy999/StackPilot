@@ -40,7 +40,7 @@ export const ScriptBox: React.FC = () => {
         {/* Top Bento Row: Platform Options switcher with signature | ) style and section dividers */}
         <div
           onMouseLeave={() => setHoveredTab(null)}
-          className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
+          className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto touch-pan-x no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
         >
           {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
@@ -99,7 +99,7 @@ export const ScriptBox: React.FC = () => {
         <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl sm:rounded-2xl bg-[#121214]/95 border border-zinc-800/60 transition-all relative">
           {/* Command text container with right fading gradient and smooth letter switching animation */}
           <div className="relative flex-1 min-w-0 overflow-hidden">
-            <div className="flex items-center gap-2.5 overflow-x-auto no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5 pr-10">
+            <div className="flex items-center gap-2.5 overflow-x-auto touch-pan-x no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5 pr-10">
               <span className="text-emerald-400 font-mono font-bold select-none shrink-0 text-xs sm:text-sm">$</span>
               <BlurText
                 key={activeScript.id}
