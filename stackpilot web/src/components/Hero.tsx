@@ -3,8 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ScriptBox } from './ScriptBox';
 
 const MORPH_WORDS = ['Deployment', 'Testing'];
-const LINE_1_TEXT = 'Autonomous AI';
-const PLATFORM_TEXT = 'Platform';
 
 export const Hero: React.FC = () => {
   const [wordIndex, setWordIndex] = useState(0);
@@ -29,106 +27,71 @@ export const Hero: React.FC = () => {
 
   const currentWord = MORPH_WORDS[wordIndex];
 
-  // Calculate delays for the initial landing animation cascade across the full headline
-  const line1Chars = LINE_1_TEXT.split('');
-  const platformChars = PLATFORM_TEXT.split('');
-
   return (
-    <section className="pt-28 pb-16 sm:pt-36 sm:pb-24 text-center relative z-10">
-      {/* Main Title - Unified font-headline across the entire headline with full cascading landing animation */}
+    <section className="pt-28 pb-10 sm:pt-36 sm:pb-14 text-center relative z-10">
+      {/* Main Title - GPU-accelerated word-level cascade for buttery smooth 60 FPS initial render */}
       <div className="w-full max-w-5xl mx-auto mb-3 flex flex-col items-center justify-center select-none">
         <h1 className="font-headline text-4xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-50 leading-[1.04] text-center">
-          {/* First Line: Autonomous AI - Full landing animation */}
-          <span className="justify-center text-center text-zinc-50 font-bold block">
-            {line1Chars.map((char, idx) => (
-              <motion.span
-                key={idx}
-                initial={{ filter: 'blur(10px)', opacity: 0, y: -45 }}
-                animate={{
-                  filter: ['blur(10px)', 'blur(4px)', 'blur(0px)'],
-                  opacity: [0, 0.5, 1],
-                  y: [-45, 5, 0],
-                }}
-                transition={{
-                  duration: 0.38,
-                  times: [0, 0.55, 1],
-                  delay: idx * 0.025,
-                  ease: [0.22, 1, 0.36, 1],
-                }}
-                className="inline-block"
-              >
-                {char === ' ' ? '\u00A0' : char}
-              </motion.span>
-            ))}
+          {/* First Line: Autonomous AI - Word-level hardware-accelerated cascade */}
+          <span className="justify-center text-center text-zinc-50 font-bold flex flex-wrap gap-x-3 sm:gap-x-4">
+            <motion.span
+              initial={{ opacity: 0, y: -28, filter: 'blur(8px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              transition={{ duration: 0.45, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
+              className="inline-block will-change-transform transform-gpu"
+            >
+              Autonomous
+            </motion.span>
+            <motion.span
+              initial={{ opacity: 0, y: -28, filter: 'blur(8px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              transition={{ duration: 0.45, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              className="inline-block will-change-transform transform-gpu"
+            >
+              AI
+            </motion.span>
           </span>
 
           {/* Second Line: [Deployment/Testing] Platform */}
           <motion.span
             layout
             transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-            className="inline-flex items-center justify-center gap-1 sm:gap-1.5 mt-0"
+            className="inline-flex items-center justify-center gap-2 sm:gap-2.5 mt-1"
           >
             {/* Morphing Word without colored gradients - Pure crisp white matching the headline */}
             <span className="relative inline-flex items-center justify-center">
               <AnimatePresence mode="wait">
                 <motion.span
                   key={currentWord}
+                  initial={{ opacity: 0, y: hasLanded ? -18 : -28, filter: 'blur(8px)' }}
+                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                   exit={{
                     opacity: 0,
                     y: 16,
                     filter: 'blur(8px)',
-                    transition: { duration: 0.2, ease: 'easeIn' },
+                    transition: { duration: 0.22, ease: 'easeIn' },
                   }}
-                  className="inline-flex items-center font-bold tracking-normal text-zinc-50"
+                  transition={{
+                    duration: 0.38,
+                    delay: hasLanded ? 0 : 0.28,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                  className="inline-block font-bold tracking-normal text-zinc-50 will-change-transform transform-gpu"
                 >
-                  {currentWord.split('').map((char, idx) => (
-                    <motion.span
-                      key={idx}
-                      initial={{ filter: 'blur(10px)', opacity: 0, y: hasLanded ? -24 : -45 }}
-                      animate={{
-                        filter: ['blur(10px)', 'blur(4px)', 'blur(0px)'],
-                        opacity: [0, 0.5, 1],
-                        y: hasLanded ? [-24, 3, 0] : [-45, 5, 0],
-                      }}
-                      transition={{
-                        duration: hasLanded ? 0.32 : 0.38,
-                        times: [0, 0.55, 1],
-                        // If landing, stagger after line 1; during subsequent morphs, stagger from 0
-                        delay: hasLanded ? idx * 0.025 : (line1Chars.length + idx) * 0.025,
-                        ease: [0.22, 1, 0.36, 1],
-                      }}
-                      className="inline-block font-bold"
-                    >
-                      {char}
-                    </motion.span>
-                  ))}
+                  {currentWord}
                 </motion.span>
               </AnimatePresence>
             </span>
 
-            {/* Platform - Participates in initial landing animation then remains stable */}
-            <span className="text-zinc-50 font-bold ml-0.5 inline-flex items-center">
-              {platformChars.map((char, idx) => (
-                <motion.span
-                  key={idx}
-                  initial={{ filter: 'blur(10px)', opacity: 0, y: -45 }}
-                  animate={{
-                    filter: ['blur(10px)', 'blur(4px)', 'blur(0px)'],
-                    opacity: [0, 0.5, 1],
-                    y: [-45, 5, 0],
-                  }}
-                  transition={{
-                    duration: 0.38,
-                    times: [0, 0.55, 1],
-                    delay: (line1Chars.length + currentWord.length + idx) * 0.025,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                  className="inline-block font-bold"
-                >
-                  {char}
-                </motion.span>
-              ))}
-            </span>
+            {/* Platform - Participates in initial landing cascade then remains stable */}
+            <motion.span
+              initial={{ opacity: 0, y: -28, filter: 'blur(8px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              transition={{ duration: 0.45, delay: 0.38, ease: [0.22, 1, 0.36, 1] }}
+              className="text-zinc-50 font-bold inline-block will-change-transform transform-gpu"
+            >
+              Platform
+            </motion.span>
           </motion.span>
         </h1>
       </div>

@@ -1,38 +1,52 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-type Theme = 'dark' | 'light';
+export type ThemeMode = 'dark' | 'light';
 
 interface ThemeContextType {
-  theme: Theme;
+  theme: ThemeMode;
   toggleTheme: () => void;
-  setTheme: (theme: Theme) => void;
+  setTheme: (mode: ThemeMode) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    return 'dark';
+  const [theme, setThemeState] = useState<ThemeMode>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('sp_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    }
+    return 'dark'; // Default dark cyber theme
   });
 
   useEffect(() => {
     const root = document.documentElement;
-    if (theme === 'dark') {
-      root.classList.add('dark');
-      root.classList.remove('light');
-    } else {
-      root.classList.add('light');
+    const body = document.body;
+
+    root.setAttribute('data-theme', theme);
+    body.setAttribute('data-theme', theme);
+
+    if (theme === 'light') {
+      root.classList.add('light-mode');
       root.classList.remove('dark');
+      body.classList.add('light-mode');
+      body.classList.remove('dark');
+    } else {
+      root.classList.remove('light-mode');
+      root.classList.add('dark');
+      body.classList.remove('light-mode');
+      body.classList.add('dark');
     }
+
     localStorage.setItem('sp_theme', theme);
   }, [theme]);
 
   const toggleTheme = () => {
-    setThemeState(prev => (prev === 'dark' ? 'light' : 'dark'));
+    setThemeState((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  const setTheme = (t: Theme) => {
-    setThemeState(t);
+  const setTheme = (mode: ThemeMode) => {
+    setThemeState(mode);
   };
 
   return (

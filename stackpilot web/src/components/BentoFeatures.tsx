@@ -164,25 +164,25 @@ export const BentoFeatures: React.FC = () => {
       className="relative w-full select-none"
       style={{ minHeight: '250vh' }}
     >
-      {/* Sticky Showcase Stage — transparent so Lightfall particles show through */}
+      {/* Sticky Showcase Stage — vertically centered inside viewport so cards are never pushed too low */}
       <div
         ref={stageRef}
-        className="sticky top-[65px] w-full flex flex-col items-center py-2 sm:py-3 z-10"
+        className="sticky top-[68px] sm:top-[74px] w-full h-[calc(100vh-74px)] max-h-[880px] flex flex-col justify-center items-center py-1 sm:py-2 z-10"
       >
         {/* Features Headline & Subtitle */}
-        <div className="text-center max-w-3xl mx-auto mb-3 sm:mb-4 px-4">
-          <h2 className="font-headline text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white leading-tight">
+        <div className="text-center max-w-3xl mx-auto mb-2 sm:mb-3 px-4 shrink-0">
+          <h2 className="font-headline text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white leading-tight">
             Features
           </h2>
-          <p className="mt-1.5 text-sm sm:text-base lg:text-lg text-zinc-400 leading-relaxed font-normal max-w-2xl mx-auto">
+          <p className="mt-1 text-xs sm:text-sm lg:text-base text-zinc-400 leading-relaxed font-normal max-w-2xl mx-auto">
             From 1-click cloud provisioning to vision-guided autonomous testing,
             StackPilot delivers a complete, resilient delivery cockpit for modern engineering teams.
           </p>
         </div>
 
-        {/* Side-by-Side: Video & Bento Card — viewport-constrained height so both fit fully */}
-        <div className="w-full max-w-7xl mx-auto px-2 sm:px-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch" style={{ height: 'calc(100vh - 240px)' }}>
+        {/* Side-by-Side: Video & Bento Card — perfectly balanced height fitting fully inside screen */}
+        <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 flex-1 min-h-0 flex flex-col justify-center">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch h-[calc(100vh-270px)] min-h-[360px] max-h-[510px]">
             {/* Left Box: Video Container */}
             <div className="w-full h-full">
               <div
