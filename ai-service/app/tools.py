@@ -2,6 +2,7 @@ import asyncio
 import os
 import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 import httpx
 
 
@@ -826,7 +827,14 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             if url and url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
                 curr = (session.current_url or "").rstrip("/").strip()
                 norm = url.rstrip("/").strip()
-                if curr != norm or curr in {"about:blank", ""}:
+                curr_parsed = urlparse(curr) if curr else None
+                norm_parsed = urlparse(norm) if norm else None
+                same_origin = bool(
+                    curr_parsed and norm_parsed and
+                    curr_parsed.netloc and norm_parsed.netloc and
+                    curr_parsed.netloc == norm_parsed.netloc
+                )
+                if (curr in {"about:blank", ""} or not same_origin) and norm:
                     await session.navigate(url)
             page_state = await session.extract_interactive_tree()
             try:

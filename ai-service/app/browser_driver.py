@@ -487,8 +487,6 @@ class BrowserSession:
                         extra_id = target_info.get("targetId")
                         extra_url = target_info.get("url", "")
                         logger.info(f"Closing extra popup tab: {extra_id} ({extra_url})")
-                        if extra_url and "about:blank" not in extra_url:
-                            asyncio.create_task(self.navigate(extra_url))
                         asyncio.create_task(self._close_extra_tab(extra_id))
 
                 # 5. Network tracking for Quiescence
@@ -1602,9 +1600,8 @@ class BrowserSession:
         self.current_url = display_url
         # Suppress stale keepalive re-broadcast during navigation
         self._navigating = True
-        self._last_navigation_time = time.time()
-        self._last_raw_jpeg = None  # Clear stale screenshot to prevent ghost page
-        self.latest_frame = None  # Clear stale frame cache to prevent old project snapshot leak
+        self._last_raw_jpeg = None  # Clear raw screenshot cache
+        # Retain self.latest_frame so screencast clients have smooth persistent visuals until next frame paints
         self._notify_listeners({"type": "action", "action": "navigate", "url": display_url})
         res = await self.send_command("Page.navigate", {"url": internal_url})
         await self.wait_for_quiescence(network_idle_ms=100, dom_quiet_ms=50, max_timeout_s=3.0)
@@ -3004,7 +3001,20 @@ class BrowserManager:
                 if hasattr(session, "skg") and session.skg:
                     session.skg.origin_url = session.target_url
             curr = (session.current_url or "").rstrip("/").strip()
-            if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and (norm_url != curr or curr in {"about:blank", ""}):
+            # Origin persistence: If already on the same website/domain, DO NOT reload! Keep current state/subpage.
+            curr_parsed = urlparse(curr) if curr else None
+            norm_parsed = urlparse(norm_url) if norm_url else None
+            same_origin = bool(
+                curr_parsed and norm_parsed and
+                curr_parsed.netloc and norm_parsed.netloc and
+                curr_parsed.netloc == norm_parsed.netloc
+            )
+            should_navigate = (
+                bool(norm_url) and
+                norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and
+                (curr in {"about:blank", ""} or not same_origin)
+            )
+            if should_navigate:
                 await session.navigate(url)
             return session
 
@@ -3017,7 +3027,19 @@ class BrowserManager:
                 if hasattr(active, "skg") and active.skg:
                     active.skg.origin_url = active.target_url
             curr = (active.current_url or "").rstrip("/").strip()
-            if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and (norm_url != curr or curr in {"about:blank", ""}):
+            curr_parsed = urlparse(curr) if curr else None
+            norm_parsed = urlparse(norm_url) if norm_url else None
+            same_origin = bool(
+                curr_parsed and norm_parsed and
+                curr_parsed.netloc and norm_parsed.netloc and
+                curr_parsed.netloc == norm_parsed.netloc
+            )
+            should_navigate = (
+                bool(norm_url) and
+                norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and
+                (curr in {"about:blank", ""} or not same_origin)
+            )
+            if should_navigate:
                 await active.navigate(url)
             return active
 

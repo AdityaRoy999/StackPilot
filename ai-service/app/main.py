@@ -2746,6 +2746,13 @@ async def stream_agent_reply(
             command_name in {"/test", "/browse", "/verify", "/browser"} or
             any(k in user_msg_lower for k in browser_keywords)
         )
+        full_site_keywords = [
+            "full site", "entire site", "whole site", "all pages", "everything",
+            "100%", "crawl all", "crawl site", "comprehensive site", "full scan", "audit all", "full coverage"
+        ]
+        is_full_site_audit = any(k in user_msg_lower for k in full_site_keywords)
+        # Targeted prompt test: when user asks to test specific things/elements/flows rather than an unconstrained crawl
+        is_targeted_test = is_browser_test and not is_full_site_audit
 
         custom_target = getattr(request, "custom_url", None) or (request.runtime or {}).get("custom_url") or (request.runtime or {}).get("url")
         target_runtime_url = ""
@@ -2784,20 +2791,36 @@ async def stream_agent_reply(
                 target_runtime_url = "about:blank"
 
         if is_browser_test:
-            sys_prompt += (
-                f"\n\nSPECIAL WORKFLOW: COMPLETE LIVE FULL-WEBSITE TESTING & COMPUTER USE\n"
-                f"The user requested testing the live website/application for target: '{target_runtime_url}'.\n"
-                f"You MUST execute comprehensive end-to-end testing across all interactive surfaces of the application:\n"
-                f"1. Open the live session using `browser_open_live_session(url='{target_runtime_url}')`. If already open at another URL, navigate to '{target_runtime_url}'.\n"
-                f"2. Analyze site architecture: discover all main navigation menus, headers, buttons, links, forms, inputs, and internal sub-pages.\n"
-                f"3. Test primary interactive controls: click key navigation targets, category filters, interactive tabs, theme switches, and card triggers.\n"
-                f"4. FORM COMPLETION & SUBMISSION MANDATE: When encountering any form (contact, login, feedback, inquiry), fill ALL visible inputs (Name, Email, Phone, Message), and ALWAYS click the associated Submit/Send/Test button and verify page response.\n"
-                f"5. Test deep vertical scroll walkthrough: scroll through viewports to trigger IntersectionObservers and below-the-fold content.\n"
-                f"6. HIERARCHICAL SUBPAGE & CARD EXPLORATION: Click card buttons or sub-page links to explore depth-first. On each subpage, audit controls, then call `browser_interact(action='navigate_back')` to return to the parent page and continue testing subsequent cards.\n"
-                f"7. Audit runtime health: inspect console for uncaught exceptions, 404s, or hydration mismatches.\n"
-                f"8. STRICT TARGET DOMAIN CONFINEMENT: You must ONLY test internal routes belonging to the application domain ({target_runtime_url}). NEVER click or navigate to external third-party links (such as GitHub, Twitter/X, Discord, LinkedIn, documentation on external domains, or sponsors). All autonomous testing and sub-page exploration must be strictly confined to the application under test.\n"
-                f"9. Present an exhaustive Markdown Test Report covering all tested routes and components."
-            )
+            if is_targeted_test:
+                sys_prompt += (
+                    f"\n\nSPECIAL WORKFLOW: TARGETED PROMPT-DIRECTED TESTING & COMPUTER USE\n"
+                    f"The user has defined specific testing criteria: \"{request.message}\".\n"
+                    f"Target Application: '{target_runtime_url}'.\n"
+                    f"MANDATORY DIRECTIVES:\n"
+                    f"1. STRICT PROMPT SCOPE CONFINEMENT: You must ONLY test the specific features, elements, or flows explicitly specified in the user's prompt (\"{request.message}\").\n"
+                    f"   - DO NOT test unrelated sections.\n"
+                    f"   - DO NOT click random buttons, links, or cards outside the requested scope.\n"
+                    f"   - DO NOT perform an unconstrained full-site scan or crawl unrelated pages.\n"
+                    f"2. SESSION & WEBSITE PERSISTENCE: If the live browser session is already open on this website (or on a subpage like /docs or a specific view), DO NOT reload or reset the page! Keep the website state, DOM, and open modals/views completely persistent.\n"
+                    f"3. OPEN / REUSE LIVE SESSION: Use `browser_open_live_session(url='{target_runtime_url}')` to inspect interactive elements. If already open on the application, it preserves the current page view.\n"
+                    f"4. EXECUTE & VERIFY: Use `browser_interact` to interact directly with the target elements (e.g. fill inputs, click target buttons, verify expected response).\n"
+                    f"5. CONCLUDE IMMEDIATELY: Once the requested test is performed and verified, STOP and deliver a clear, concise report on the test outcome. Do not trigger further unsolicited actions."
+                )
+            else:
+                sys_prompt += (
+                    f"\n\nSPECIAL WORKFLOW: COMPLETE LIVE FULL-WEBSITE TESTING & COMPUTER USE\n"
+                    f"The user requested testing the live website/application for target: '{target_runtime_url}'.\n"
+                    f"You MUST execute comprehensive end-to-end testing across all interactive surfaces of the application:\n"
+                    f"1. Open the live session using `browser_open_live_session(url='{target_runtime_url}')`. If already open at another URL, navigate to '{target_runtime_url}'.\n"
+                    f"2. Analyze site architecture: discover all main navigation menus, headers, buttons, links, forms, inputs, and internal sub-pages.\n"
+                    f"3. Test primary interactive controls: click key navigation targets, category filters, interactive tabs, theme switches, and card triggers.\n"
+                    f"4. FORM COMPLETION & SUBMISSION MANDATE: When encountering any form (contact, login, feedback, inquiry), fill ALL visible inputs (Name, Email, Phone, Message), and ALWAYS click the associated Submit/Send/Test button and verify page response.\n"
+                    f"5. Test deep vertical scroll walkthrough: scroll through viewports to trigger IntersectionObservers and below-the-fold content.\n"
+                    f"6. HIERARCHICAL SUBPAGE & CARD EXPLORATION: Click card buttons or sub-page links to explore depth-first. On each subpage, audit controls, then call `browser_interact(action='navigate_back')` to return to the parent page and continue testing subsequent cards.\n"
+                    f"7. Audit runtime health: inspect console for uncaught exceptions, 404s, or hydration mismatches.\n"
+                    f"8. STRICT TARGET DOMAIN CONFINEMENT: You must ONLY test internal routes belonging to the application domain ({target_runtime_url}). NEVER click or navigate to external third-party links (such as GitHub, Twitter/X, Discord, LinkedIn, documentation on external domains, or sponsors). All autonomous testing and sub-page exploration must be strictly confined to the application under test.\n"
+                    f"9. Present an exhaustive Markdown Test Report covering all tested routes and components."
+                )
 
         context = {
             "project": safe_json(request.project),
@@ -2821,19 +2844,29 @@ async def stream_agent_reply(
                 f"Invoke the tool calls now.]"
             )
         elif is_browser_test:
-            user_content += (
-                f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user requested to test the live application for target '{target_runtime_url}'. "
-                f"1. Open or navigate the live browser session using `browser_open_live_session(url='{target_runtime_url}')`. "
-                f"You MUST ONLY test target '{target_runtime_url}'. Do NOT test any URL from previous chat turns or previous sessions. "
-                f"If the session is currently open at a different website or project, ensure you navigate directly to '{target_runtime_url}'. "
-                f"2. Comprehensive testing workflow: "
-                f"   - Header & navigation controls (click key section buttons and tabs). "
-                f"   - Form inputs & textareas (fill ALL fields: name, email, phone, message, AND click Submit/Send/Test to verify submission). "
-                f"   - Vertical scrolling (scroll viewports down to explore all content). "
-                f"   - Hierarchical sub-page & card exploration: Click card action buttons / sub-page links, explore their content, and call `browser_interact(action='navigate_back')` to return and test remaining cards! "
-                f"3. STRICT DOMAIN CONSTRAINT: Strictly confine all testing to '{target_runtime_url}' and its same-origin pages. DO NOT click external links (such as GitHub, Twitter/X, social media, external documentation) or explore third-party websites. "
-                f"4. Do NOT close the browser session or call DevOps/terminal tools. Focus 100% on verifying the live application UI.]"
-            )
+            if is_targeted_test:
+                user_content += (
+                    f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user specified exact testing instructions: '{request.message}'.\n"
+                    f"1. Open or connect to the live browser session with `browser_open_live_session(url='{target_runtime_url}')`. "
+                    f"If the session is already active on the application, DO NOT reload or reset the page — preserve current page persistence!\n"
+                    f"2. STRICT SCOPE CONFINEMENT: Strictly and exclusively test what the user instructed in their prompt. Do NOT click random elements or crawl unrelated pages.\n"
+                    f"3. Execute the requested interaction(s) using `browser_interact` and verify the outcome.\n"
+                    f"4. Conclude your test and provide the verification report.]"
+                )
+            else:
+                user_content += (
+                    f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user requested to test the live application for target '{target_runtime_url}'. "
+                    f"1. Open or navigate the live browser session using `browser_open_live_session(url='{target_runtime_url}')`. "
+                    f"You MUST ONLY test target '{target_runtime_url}'. Do NOT test any URL from previous chat turns or previous sessions. "
+                    f"If the session is currently open at a different website or project, ensure you navigate directly to '{target_runtime_url}'. "
+                    f"2. Comprehensive testing workflow: "
+                    f"   - Header & navigation controls (click key section buttons and tabs). "
+                    f"   - Form inputs & textareas (fill ALL fields: name, email, phone, message, AND click Submit/Send/Test to verify submission). "
+                    f"   - Vertical scrolling (scroll viewports down to explore all content). "
+                    f"   - Hierarchical sub-page & card exploration: Click card action buttons / sub-page links, explore their content, and call `browser_interact(action='navigate_back')` to return and test remaining cards! "
+                    f"3. STRICT DOMAIN CONSTRAINT: Strictly confine all testing to '{target_runtime_url}' and its same-origin pages. DO NOT click external links (such as GitHub, Twitter/X, social media, external documentation) or explore third-party websites. "
+                    f"4. Do NOT close the browser session or call DevOps/terminal tools. Focus 100% on verifying the live application UI.]"
+                )
 
         if request.images:
             content_blocks: List[Dict[str, Any]] = [{"type": "text", "text": user_content}]
@@ -3736,12 +3769,12 @@ async def stream_agent_reply(
         and not any(w in (sp.get("url") or sp.get("path") or "").lower() for w in ["logout", "signout", "delete", "destroy"])
     ]
 
-    # Needs exploration if unvisited subpages exist, or if total test cases < 6,
-    # or if the user asked for full/thorough/subpage coverage.
-    wants_full_coverage = any(w in (request.message or "").lower() for w in [
-        "sub page", "subpage", "100%", "all", "every", "thorough", "complete", "full", "comprehensive", "deep", "test", "check", "button", "buttons", "explore"
+    # Needs exploration ONLY if the user explicitly requested a full/comprehensive site scan.
+    # Targeted prompt tests must strictly test what the user requested and NEVER launch the indiscriminate crawler!
+    wants_full_coverage = is_full_site_audit or any(w in (request.message or "").lower() for w in [
+        "full site", "entire site", "whole site", "all pages", "everything", "100%", "crawl", "comprehensive site"
     ])
-    needs_full_qa = is_browser_test or bool(unvisited_subpages) or len(test_cases) < 20 or wants_full_coverage
+    needs_full_qa = not is_targeted_test and is_browser_test and (wants_full_coverage or bool(unvisited_subpages))
     if is_browser_test and (browser_open_called or session_exists) and needs_full_qa:
         if not active_session or not active_session.is_connected:
             try:
@@ -3765,9 +3798,18 @@ async def stream_agent_reply(
         tested_signatures = set()
         curr_norm = (active_session.current_url or "").rstrip("/").strip()
         target_norm = (target_runtime_url or "").rstrip("/").strip()
-        if target_norm and target_norm not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"} and curr_norm != target_norm:
+        curr_p = urlparse(curr_norm) if curr_norm else None
+        target_p = urlparse(target_norm) if target_norm else None
+        same_origin = bool(
+            curr_p and target_p and
+            curr_p.netloc and target_p.netloc and
+            curr_p.netloc == target_p.netloc
+        )
+        # Origin persistence: only navigate if session is blank or on an entirely different domain!
+        # If already on this website/domain, DO NOT reload — keep current page and DOM persistent!
+        if target_norm and target_norm not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"} and (curr_norm in {"about:blank", ""} or not same_origin):
             try:
-                logger.info(f"Active session URL '{curr_norm}' differs from target '{target_norm}'. Navigating...")
+                logger.info(f"Active session URL '{curr_norm}' differs in domain from target '{target_norm}'. Navigating...")
                 await active_session.navigate(target_runtime_url)
                 await asyncio.sleep(0.5)
                 await active_session.extract_interactive_tree()
@@ -4349,9 +4391,9 @@ async def stream_agent_reply(
                             "result": {"external_url": post_url, "verification": ext_status},
                         })
 
-                        # Navigate back to target URL immediately
+                        # Return to target URL immediately via SPA back
                         try:
-                            await active_session.navigate(current_page_clean_url)
+                            await active_session.navigate_back(fallback_url=current_page_clean_url)
                             await active_session.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=1.5, fast_mode=True)
                             await active_session.extract_interactive_tree()
                             cur_elements = active_session.interactive_elements or []
@@ -4394,9 +4436,9 @@ async def stream_agent_reply(
                         ):
                             yield sse_chunk
 
-                        # Ensure session is back on parent URL
+                        # Ensure session is back on parent URL via SPA back
                         if (active_session.current_url or "").rstrip("/").lower() != current_page_clean_url:
-                            await active_session.navigate(current_page_clean_url)
+                            await active_session.navigate_back(fallback_url=current_page_clean_url)
                         await active_session.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=1.0, fast_mode=True)
                         await active_session.extract_interactive_tree()
 
@@ -4552,7 +4594,7 @@ async def stream_agent_reply(
                                         frontier.append((active_session.current_url, nb_text[:30], False))
                                     # Backtrack to continue scrolling
                                     try:
-                                        await active_session.navigate(current_page_clean_url if current_page_clean_url else pre_url)
+                                        await active_session.navigate_back(fallback_url=current_page_clean_url if current_page_clean_url else pre_url)
                                         await asyncio.sleep(0.3)
                                         await active_session.extract_interactive_tree()
                                         cur_elements = active_session.interactive_elements or []
