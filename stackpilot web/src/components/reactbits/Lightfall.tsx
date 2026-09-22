@@ -243,11 +243,10 @@ export const Lightfall: React.FC<LightfallProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    const effectiveDpr = dpr ?? Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 1.0);
     const renderer = new Renderer({
-      dpr: effectiveDpr,
+      dpr: dpr ?? (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1),
       alpha: true,
-      antialias: false
+      antialias: true
     });
     rendererRef.current = renderer;
     const gl = renderer.gl;

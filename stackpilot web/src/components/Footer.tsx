@@ -26,21 +26,13 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
 
       {/* Giant Chronicle-Style Wordmark: Clean, Monolithic Typography Fading Smoothly into Background */}
       <div className="w-full overflow-hidden flex items-center justify-center mt-6 sm:mt-10 mb-2 sm:mb-4 px-4 sm:px-8 relative">
-        <div
-          className="relative select-none pointer-events-none pb-4"
-          style={{
-            maskImage:
-              'linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.85) 35%, rgba(0, 0, 0, 0.35) 65%, rgba(0, 0, 0, 0.06) 85%, transparent 100%)',
-            WebkitMaskImage:
-              'linear-gradient(to bottom, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.85) 35%, rgba(0, 0, 0, 0.35) 65%, rgba(0, 0, 0, 0.06) 85%, transparent 100%)',
-          }}
-        >
+        <div className="relative select-none pointer-events-none pb-4">
           <h2
-            className="footer-brand-wordmark keep-sans text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.03em] uppercase leading-[1.1] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
+            className="footer-brand-wordmark keep-sans text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.02em] sm:tracking-[0.01em] uppercase leading-[1.15] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
             style={{
               fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
               backgroundImage:
-                'linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.55) 32%, rgba(255, 255, 255, 0.2) 65%, rgba(255, 255, 255, 0.03) 88%, transparent 100%)',
+                'linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0.55) 28%, rgba(255, 255, 255, 0.18) 65%, rgba(255, 255, 255, 0.03) 88%, transparent 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
             }}
