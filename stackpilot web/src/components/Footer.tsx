@@ -17,7 +17,7 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
 
   return (
-    <footer className="relative w-full pt-16 pb-8 overflow-hidden z-20 flex flex-col items-center mt-24 select-none">
+    <footer className="relative w-full pt-16 pb-4 overflow-hidden z-20 flex flex-col items-center mt-12 select-none">
       {/* Subtle ambient light glow behind the giant wordmark */}
       <div
         className="absolute bottom-16 left-1/2 -translate-x-1/2 w-[80vw] max-w-5xl h-48 bg-gradient-to-t from-zinc-700/20 via-zinc-800/8 to-transparent blur-3xl pointer-events-none -z-10 rounded-full"

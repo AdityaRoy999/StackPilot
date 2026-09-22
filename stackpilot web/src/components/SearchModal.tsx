@@ -140,14 +140,22 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  // Focus input on open
+  // Focus input on open, prevent page scroll, lock body
   useEffect(() => {
     if (isOpen) {
       setQuery('');
       setSelectedIndex(0);
       if (listRef.current) listRef.current.scrollTop = 0;
-      setTimeout(() => inputRef.current?.focus(), 50);
+      // Prevent the browser from scrolling the underlying page to the input
+      setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50);
+      // Lock body scroll so Lenis/native scroll can't move while modal is open
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
     }
+    return () => {
+      document.body.style.overflow = '';
+    };
   }, [isOpen]);
 
   // Filter items

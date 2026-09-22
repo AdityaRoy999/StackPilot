@@ -100,21 +100,19 @@ export const App: React.FC = () => {
               {/* Full-screen Global React Bits Lightfall Background */}
               <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none">
                 <Lightfall
-                  colors={['#A6C8FF', '#5227FF', '#FF9FFC']}
+                  colors={['#60a5fa', '#3b82f6', '#4f46e5', '#818cf8', '#93c5fd', '#38bdf8']}
                   backgroundColor="#000000"
-                  speed={0.8}
-                  streakCount={8}
-                  streakWidth={1.2}
-                  streakLength={1.2}
-                  glow={1}
-                  density={1}
-                  twinkle={0.8}
-                  zoom={1.8}
-                  backgroundGlow={0.4}
-                  opacity={0.7}
-                  mouseInteraction={true}
-                  mouseStrength={0.8}
-                  mouseRadius={0.5}
+                  speed={0.42}
+                  streakCount={5}
+                  streakWidth={0.9}
+                  streakLength={1.1}
+                  glow={0.8}
+                  density={0.32}
+                  twinkle={0.5}
+                  zoom={1.5}
+                  backgroundGlow={0.25}
+                  opacity={0.65}
+                  mouseInteraction={false}
                 />
               </div>
 
