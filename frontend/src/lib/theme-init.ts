@@ -23,6 +23,7 @@ export const UI_THEMES = [
   "aws-cloudscape",
   "ibm-carbon",
   "azure-fluent",
+  "stackpilot-web",
 ] as const;
 
 export type UiTheme = (typeof UI_THEMES)[number];

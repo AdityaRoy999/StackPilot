@@ -26,6 +26,7 @@ export const UI_THEMES = [
   "aws-cloudscape",
   "ibm-carbon",
   "azure-fluent",
+  "stackpilot-web",
 ] as const;
 export type UiTheme = (typeof UI_THEMES)[number] | (string & {});
 
@@ -148,6 +149,12 @@ export const UI_THEME_META: UiThemeMeta[] = [
     name: "Azure Fluent",
     description: "Microsoft Azure & Fluent 2 design: Segoe UI, subtle acrylic surfaces, and Azure Blue.",
     swatches: ["#ffffff", "#f3f2f1", "#0078d4"],
+  },
+  {
+    id: "stackpilot-web",
+    name: "StackPilot Web",
+    description: "Official StackPilot Web Bento aesthetic — obsidian pitch-black canvas, dark glass cards (#0c0c0e / #141418), crisp zinc hairline borders, and emerald & cyan accents.",
+    swatches: ["#000000", "#141418", "#10b981"],
   },
 ];
 

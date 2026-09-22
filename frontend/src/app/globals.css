@@ -1745,6 +1745,200 @@
   --sidebar-ring: #2886de;
 }
 
+/* ============================================================
+   9. StackPilot Web (Obsidian Bento & Emerald Accent)
+   ============================================================ */
+[data-ui-theme="stackpilot-web"] {
+  --radius: 1rem;
+
+  --background: #fbfbfc;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #10b981;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #09090b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #e6f7f0;
+  --accent-foreground: #059669;
+  --destructive: #ef4444;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #10b981;
+  --sidebar: #f8fafc;
+  --sidebar-foreground: #09090b;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f1f5f9;
+  --sidebar-accent-foreground: #059669;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #10b981;
+
+  --ink: #09090b;
+  --ink-2: #27272a;
+  --ink-3: #71717a;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --surface: #ffffff;
+  --field: #f8fafc;
+  --inset: #f1f5f9;
+  --hover: #f4f4f5;
+  --hover-2: #e4e4e7;
+  --green: #10b981;
+  --red: #ef4444;
+  --green-tint: rgba(16, 185, 129, 0.12);
+  --red-tint: rgba(239, 68, 68, 0.12);
+}
+
+[data-ui-theme="stackpilot-web"].dark {
+  --radius: 1rem;
+
+  --background: #000000;
+  --foreground: #f4f4f5;
+  --card: #0c0c0f;
+  --card-foreground: #f4f4f5;
+  --popover: #0c0c0f;
+  --popover-foreground: #f4f4f5;
+  --primary: #10b981;
+  --primary-foreground: #000000;
+  --secondary: #18181c;
+  --secondary-foreground: #f4f4f5;
+  --muted: #141418;
+  --muted-foreground: #a1a1aa;
+  --accent: #1e1e24;
+  --accent-foreground: #34d399;
+  --destructive: #f43f5e;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: #18181c;
+  --ring: #10b981;
+  --sidebar: #050507;
+  --sidebar-foreground: #e4e4e7;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #141418;
+  --sidebar-accent-foreground: #34d399;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-ring: #10b981;
+
+  --ink: #f4f4f5;
+  --ink-2: #d4d4d8;
+  --ink-3: #a1a1aa;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --surface: #0c0c0f;
+  --field: #070709;
+  --inset: #141418;
+  --hover: #18181c;
+  --hover-2: #222228;
+  --green: #10b981;
+  --red: #f43f5e;
+  --green-tint: rgba(16, 185, 129, 0.15);
+  --red-tint: rgba(244, 63, 94, 0.15);
+}
+
+/* StackPilot Web Signature Bento Cards */
+[data-ui-theme="stackpilot-web"] [data-slot="card"] {
+  border-radius: 1rem;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="card"] {
+  background-color: rgba(12, 12, 15, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="card"] [data-slot="card"] {
+  background-color: #141418;
+  border-color: rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* StackPilot Web Capsule Buttons */
+[data-ui-theme="stackpilot-web"] [data-slot="button"] {
+  border-radius: 10px;
+  font-weight: 500;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="button"].bg-primary,
+[data-ui-theme="stackpilot-web"].dark button[data-slot="button"]:has(span.text-primary-foreground) {
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.35);
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="button"].bg-secondary,
+[data-ui-theme="stackpilot-web"].dark [data-slot="button"].border {
+  background-color: #18181c;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: #f4f4f5;
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="button"].bg-secondary:hover,
+[data-ui-theme="stackpilot-web"].dark [data-slot="button"].border:hover {
+  background-color: #222228;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* StackPilot Web Micro-chip Badges */
+[data-ui-theme="stackpilot-web"] [data-slot="badge"] {
+  border-radius: 9999px;
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  padding: 2px 10px;
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="badge"].bg-primary {
+  background-color: rgba(16, 185, 129, 0.14);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+/* StackPilot Web Floating Popovers & Modals */
+[data-ui-theme="stackpilot-web"] [data-slot="select-content"],
+[data-ui-theme="stackpilot-web"] [data-slot="dropdown-menu-content"],
+[data-ui-theme="stackpilot-web"] [data-slot="popover-content"],
+[data-ui-theme="stackpilot-web"] [data-slot="dialog-content"] {
+  border-radius: 1rem;
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="select-content"],
+[data-ui-theme="stackpilot-web"].dark [data-slot="dropdown-menu-content"],
+[data-ui-theme="stackpilot-web"].dark [data-slot="popover-content"],
+[data-ui-theme="stackpilot-web"].dark [data-slot="dialog-content"] {
+  background-color: rgba(12, 12, 15, 0.95);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* StackPilot Web Inputs */
+[data-ui-theme="stackpilot-web"].dark [data-slot="input"],
+[data-ui-theme="stackpilot-web"].dark input:not([type="checkbox"]):not([type="radio"]),
+[data-ui-theme="stackpilot-web"].dark textarea,
+[data-ui-theme="stackpilot-web"].dark select {
+  background-color: #09090c;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  color: #f4f4f5;
+}
+
+[data-ui-theme="stackpilot-web"].dark [data-slot="input"]:focus-visible,
+[data-ui-theme="stackpilot-web"].dark input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+[data-ui-theme="stackpilot-web"].dark textarea:focus-visible,
+[data-ui-theme="stackpilot-web"].dark select:focus-visible {
+  border-color: #10b981;
+  box-shadow: 0 0 0 1px #10b981, 0 0 14px rgba(16, 185, 129, 0.25);
+}
+
 /* ── Status verb shine ──────────────────────────────────────────
    The sweep on the "Thinking…" indicator. Uses background-clip so the
    highlight travels across the glyphs themselves rather than sitting in a
