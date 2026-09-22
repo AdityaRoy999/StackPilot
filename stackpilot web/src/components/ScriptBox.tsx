@@ -6,6 +6,7 @@ import confetti from 'canvas-confetti';
 import { SCRIPTS, ScriptTab } from '../config/scripts';
 import { useScript } from '../context/ScriptContext';
 import { BlurText } from './reactbits/BlurText';
+import { BorderGlow } from './reactbits/BorderGlow';
 
 export const ScriptBox: React.FC = () => {
   const { activeTab, setActiveTab, activeScript } = useScript();
@@ -35,13 +36,24 @@ export const ScriptBox: React.FC = () => {
 
   return (
     <div className="w-full max-w-[650px] mx-auto mt-8 flex justify-center px-4 sm:px-0">
-      {/* Unified Bento Grid Card */}
-      <div className="w-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-2 sm:p-2.5 flex flex-col gap-2 transition-all shadow-2xl">
-        {/* Top Bento Row: Platform Options switcher with signature | ) style and section dividers */}
-        <div
-          onMouseLeave={() => setHoveredTab(null)}
-          className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto touch-pan-x no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative"
-        >
+      {/* Unified Bento Grid Card with Reactive BorderGlow */}
+      <BorderGlow
+        edgeSensitivity={28}
+        glowColor="165 85 55"
+        backgroundColor="#0c0c0e"
+        borderRadius={28}
+        glowRadius={38}
+        glowIntensity={1.1}
+        coneSpread={26}
+        colors={['#10b981', '#06b6d4', '#6366f1']}
+        className="w-full shadow-2xl"
+      >
+        <div className="w-full p-2 sm:p-2.5 flex flex-col gap-2 transition-all">
+          {/* Top Bento Row: Platform Options switcher with signature | ) style and section dividers */}
+          <div
+            onMouseLeave={() => setHoveredTab(null)}
+            className="flex items-center gap-1 sm:gap-1.5 p-1 rounded-full bg-[#121214]/90 border border-zinc-800/60 overflow-x-auto touch-pan-x no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-xs select-none relative keep-sans"
+          >
           {SCRIPTS.map((script, idx) => {
             const isActive = script.id === activeTab;
             // Segmented corner geometry: ( | on first tab, | | square-rounded in middle, | ) on last tab
@@ -96,11 +108,11 @@ export const ScriptBox: React.FC = () => {
         </div>
 
         {/* Bottom Bento Row: Command well with terminal prompt, animated BlurText switching and spring copy button */}
-        <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl sm:rounded-2xl bg-[#121214]/95 border border-zinc-800/60 transition-all relative">
+        <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-xl sm:rounded-2xl bg-[#121214]/95 border border-zinc-800/60 transition-all relative keep-mono">
           {/* Command text container with right fading gradient and smooth letter switching animation */}
-          <div className="relative flex-1 min-w-0 overflow-hidden">
-            <div className="flex items-center gap-2.5 overflow-x-auto touch-pan-x no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5 pr-10">
-              <span className="text-emerald-400 font-mono font-bold select-none shrink-0 text-xs sm:text-sm">$</span>
+          <div className="relative flex-1 min-w-0 overflow-hidden keep-mono">
+            <div className="flex items-center gap-2.5 overflow-x-auto touch-pan-x no-scrollbar [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden text-left font-mono text-xs sm:text-sm text-zinc-200 py-0.5 pr-10 keep-mono">
+              <span className="text-emerald-400 font-mono font-bold select-none shrink-0 text-xs sm:text-sm keep-mono">$</span>
               <BlurText
                 key={activeScript.id}
                 text={activeScript.command}
@@ -109,7 +121,7 @@ export const ScriptBox: React.FC = () => {
                 stepDuration={0.2}
                 direction="top"
                 as="span"
-                className="flex-nowrap font-mono text-xs sm:text-sm text-zinc-200 whitespace-nowrap selection:bg-zinc-800 selection:text-white"
+                className="flex-nowrap font-mono text-xs sm:text-sm text-zinc-200 whitespace-nowrap selection:bg-zinc-800 selection:text-white keep-mono"
               />
             </div>
 
@@ -154,6 +166,7 @@ export const ScriptBox: React.FC = () => {
           </button>
         </div>
       </div>
+      </BorderGlow>
     </div>
   );
 };

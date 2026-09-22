@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MorphSlider, type MorphItem } from './reactbits/MorphSlider';
+import { BorderGlow } from './reactbits/BorderGlow';
 
 interface FeatureItem {
   id: string;
@@ -9,6 +10,9 @@ interface FeatureItem {
   title: string;
   description: string;
   video: string;
+  colors: string[];
+  glowColor: string;
+  borderRadius: number;
 }
 
 const FEATURES: FeatureItem[] = [
@@ -19,6 +23,9 @@ const FEATURES: FeatureItem[] = [
     description:
       'Connect your repository or codebase. StackPilot auto-detects frameworks, creates isolated micro-sandboxes, and provisions public HTTPS edge ingress in seconds.',
     video: '/features/project-deployment.mp4',
+    colors: ['#38bdf8', '#818cf8', '#2563eb'],
+    glowColor: '205 92 62',
+    borderRadius: 24,
   },
   {
     id: 'clusters',
@@ -27,6 +34,9 @@ const FEATURES: FeatureItem[] = [
     description:
       'Turn bare-metal or VPS instances into production Kubernetes and Docker clusters across Hetzner, AWS, or custom nodes with automated SSH distribution and mesh networking.',
     video: '/features/one-click-cluster-builder.mp4',
+    colors: ['#c084fc', '#a855f7', '#ec4899'],
+    glowColor: '275 85 65',
+    borderRadius: 32,
   },
   {
     id: 'observability',
@@ -35,6 +45,9 @@ const FEATURES: FeatureItem[] = [
     description:
       'Inspect real-time per-container CPU, RAM, and network telemetry with live streaming logs and instant search to catch resource bottlenecks before users experience downtime.',
     video: '/features/monitoring-infrastructure.mp4',
+    colors: ['#34d399', '#14b8a6', '#f59e0b'],
+    glowColor: '160 85 52',
+    borderRadius: 20,
   },
   {
     id: 'ai-qa',
@@ -43,6 +56,9 @@ const FEATURES: FeatureItem[] = [
     description:
       'Our vision-guided AI agent explores your live app like a real human—navigating full user flows, filling and submitting complex forms, crawling subpage hierarchies, and running self-healing diagnostic repairs on broken paths.',
     video: '/features/ai-agent-testing.mp4',
+    colors: ['#f43f5e', '#fb7185', '#f97316'],
+    glowColor: '350 90 65',
+    borderRadius: 36,
   },
 ];
 
@@ -183,70 +199,113 @@ export const BentoFeatures: React.FC = () => {
         {/* Side-by-Side: Video & Bento Card — elevated higher up with optimal viewport height */}
         <div className="w-full max-w-7xl mx-auto px-2 sm:px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6 items-stretch h-auto lg:h-[calc(100vh-195px)] lg:min-h-[380px] lg:max-h-[530px]">
-            {/* Left Box: Video Container */}
+            {/* Left Box: Video Container wrapped with reactive BorderGlow */}
             <div className="w-full h-52 xs:h-64 sm:h-72 lg:h-full">
-              <div
-                onClick={() => setIsEnlarged(true)}
-                className="relative w-full h-full rounded-2xl sm:rounded-3xl overflow-hidden bg-black shadow-2xl select-none cursor-pointer border border-zinc-800/80 transition-transform duration-300 hover:scale-[1.005] group flex items-center justify-center"
-                title="Click to expand video"
+              <BorderGlow
+                key={`video-glow-${activeFeature.id}`}
+                edgeSensitivity={32}
+                glowColor={activeFeature.glowColor}
+                backgroundColor="#000000"
+                borderRadius={activeFeature.borderRadius}
+                glowRadius={36}
+                glowIntensity={1.0}
+                coneSpread={26}
+                colors={activeFeature.colors}
+                className="w-full h-full select-none"
               >
-                <MorphSlider
-                  items={MORPH_ITEMS}
-                  currentIndex={activeIndex}
-                  onIndexChange={setActiveIndex}
-                  transition="melt"
-                  intensity={0.55}
-                  aberration={0.32}
-                  duration={0.85}
-                  radius={24}
-                  drift={0}
-                  showControls={false}
-                  showIndicators={false}
-                  showCaptions={false}
-                  className="w-full h-full"
-                />
+                <div
+                  onClick={() => setIsEnlarged(true)}
+                  className="relative w-full h-full overflow-hidden bg-black select-none cursor-pointer transition-transform duration-300 hover:scale-[1.005] group flex items-center justify-center"
+                  style={{ borderRadius: `${activeFeature.borderRadius}px` }}
+                  title="Click to expand video"
+                >
+                  <MorphSlider
+                    items={MORPH_ITEMS}
+                    currentIndex={activeIndex}
+                    onIndexChange={setActiveIndex}
+                    transition="melt"
+                    intensity={0.55}
+                    aberration={0.32}
+                    duration={0.85}
+                    radius={activeFeature.borderRadius}
+                    drift={0}
+                    showControls={false}
+                    showIndicators={false}
+                    showCaptions={false}
+                    className="w-full h-full"
+                  />
 
-                {/* Subtle Hover Expand Indicator */}
-                <div className="absolute top-3 right-3 z-10 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none flex items-center gap-1.5 shadow-xl">
-                  <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span>Expand</span>
+                  {/* Subtle Hover Expand Indicator */}
+                  <div className="absolute top-3 right-3 z-10 px-2.5 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-xs font-mono text-zinc-300 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none flex items-center gap-1.5 shadow-xl">
+                    <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span>Expand</span>
+                  </div>
                 </div>
-              </div>
+              </BorderGlow>
             </div>
 
-            {/* Right Box: Bento Card — Tagline + Title at top, Description in grey nested card */}
+            {/* Right Box: Bento Card wrapped with reactive BorderGlow */}
             <div className="w-full h-auto lg:h-full">
-              <div className="w-full h-full rounded-2xl sm:rounded-3xl border border-zinc-800/80 bg-zinc-950/90 backdrop-blur-2xl p-5 sm:p-6 lg:p-7 flex flex-col justify-between gap-4 shadow-2xl select-none">
-                {/* Top Section: Title directly at top */}
-                <div>
-                  <AnimatePresence mode="wait">
-                    <div key={`title-${activeIndex}`}>
-                      <CascadingText
-                        text={activeFeature.title}
-                        delayOffset={0.02}
-                        wordMode={true}
-                        className="text-2xl sm:text-3xl lg:text-[28px] xl:text-[31px] font-bold text-white tracking-tight leading-snug"
-                      />
+              <BorderGlow
+                key={`bento-glow-${activeFeature.id}`}
+                edgeSensitivity={30}
+                glowColor={activeFeature.glowColor}
+                backgroundColor="#0d0d10"
+                borderRadius={activeFeature.borderRadius}
+                glowRadius={42}
+                glowIntensity={1.2}
+                coneSpread={28}
+                colors={activeFeature.colors}
+                className="w-full h-full keep-sans select-none"
+              >
+                <div
+                  className="w-full h-full p-5 sm:p-6 lg:p-7 flex flex-col justify-between gap-4 select-none keep-sans"
+                  style={{ borderRadius: `${activeFeature.borderRadius}px` }}
+                >
+                  {/* Top Section: Micro-chip Tagline + Title */}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold tracking-wider uppercase border keep-mono"
+                        style={{
+                          color: activeFeature.colors[0],
+                          backgroundColor: `${activeFeature.colors[0]}15`,
+                          borderColor: `${activeFeature.colors[0]}35`,
+                        }}
+                      >
+                        {activeFeature.tagline}
+                      </span>
                     </div>
-                  </AnimatePresence>
-                </div>
 
-                {/* Lower Section: Nested Card containing the Description */}
-                <div className="rounded-xl sm:rounded-2xl bg-[#111114] border border-zinc-800/80 p-5 sm:p-6 shadow-lg flex flex-col justify-center flex-1">
-                  <AnimatePresence mode="wait">
-                    <div key={`desc-${activeIndex}`}>
-                      <CascadingText
-                        text={activeFeature.description}
-                        delayOffset={0.06}
-                        wordMode={true}
-                        className="text-sm sm:text-base lg:text-[15px] text-zinc-200 leading-relaxed font-normal"
-                      />
-                    </div>
-                  </AnimatePresence>
+                    <AnimatePresence mode="wait">
+                      <div key={`title-${activeIndex}`}>
+                        <CascadingText
+                          text={activeFeature.title}
+                          delayOffset={0.02}
+                          wordMode={true}
+                          className="text-2xl sm:text-3xl lg:text-[28px] xl:text-[31px] font-bold text-white tracking-tight leading-snug keep-sans font-headline"
+                        />
+                      </div>
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Lower Section: Nested Card containing the Description */}
+                  <div className="rounded-xl sm:rounded-2xl bg-[#141418]/90 border border-zinc-800/80 p-5 sm:p-6 shadow-lg flex flex-col justify-center flex-1 keep-sans">
+                    <AnimatePresence mode="wait">
+                      <div key={`desc-${activeIndex}`}>
+                        <CascadingText
+                          text={activeFeature.description}
+                          delayOffset={0.06}
+                          wordMode={true}
+                          className="text-sm sm:text-base lg:text-[15px] text-zinc-200 leading-relaxed font-normal keep-sans"
+                        />
+                      </div>
+                    </AnimatePresence>
+                  </div>
                 </div>
-              </div>
+              </BorderGlow>
             </div>
           </div>
         </div>

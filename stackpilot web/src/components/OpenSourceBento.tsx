@@ -129,11 +129,33 @@ export const OpenSourceBento: React.FC = () => {
         />
       </div>
 
-      {/* Interactive Navigation Hint */}
-      <div className="mt-4 flex items-center justify-center">
-        <span className="font-mono text-xs text-zinc-500 tracking-wider">
-          ← Drag or scroll to rotate tools →
-        </span>
+      {/* Curved Interactive Navigation Hint matching 3D cylinder arc */}
+      <div className="mt-2 flex items-center justify-center pointer-events-none select-none px-4">
+        <svg
+          viewBox="0 0 540 64"
+          className="w-full max-w-[480px] h-12 overflow-visible"
+          aria-label="Drag or scroll to rotate tools"
+        >
+          <defs>
+            <path
+              id="tools-curve-path"
+              d="M 30,52 Q 270,14 510,52"
+              fill="none"
+            />
+          </defs>
+          <text
+            className="fill-zinc-400/90 text-[12px] sm:text-[13px] tracking-[0.2em] uppercase keep-mono select-none"
+            style={{
+              fontFamily: 'JetBrains Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+              letterSpacing: '0.2em',
+              fontWeight: 500,
+            }}
+          >
+            <textPath href="#tools-curve-path" startOffset="50%" textAnchor="middle">
+              ← Drag or scroll to rotate tools →
+            </textPath>
+          </text>
+        </svg>
       </div>
     </section>
   );

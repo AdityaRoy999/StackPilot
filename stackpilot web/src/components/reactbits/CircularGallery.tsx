@@ -24,8 +24,8 @@ function autoBind(instance: any): void {
   });
 }
 
-const DEFAULT_FONT = 'bold 30px Figtree';
-const DEFAULT_FONT_URL = 'https://fonts.googleapis.com/css2?family=Figtree:wght@400;700&display=swap';
+const DEFAULT_FONT = 'bold 32px Inter, sans-serif';
+const DEFAULT_FONT_URL = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap';
 
 function deriveFontFamilyFromUrl(url: string): string {
   const fileName = (url.split('/').pop() || 'custom-font').split('?')[0];
@@ -113,7 +113,7 @@ function getFontSize(font: string): number {
 function createTextTexture(
   gl: GL,
   text: string,
-  font: string = 'bold 36px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  font: string = 'bold 32px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   color: string = '#ffffff'
 ): { texture: Texture; width: number; height: number } {
   const canvas = document.createElement('canvas');
@@ -163,7 +163,7 @@ class Title {
   font: string;
   mesh!: Mesh;
 
-  constructor({ gl, plane, renderer, text, textColor = '#545050', font = '30px sans-serif' }: TitleProps) {
+  constructor({ gl, plane, renderer, text, textColor = '#545050', font = 'bold 32px Inter, -apple-system, BlinkMacSystemFont, sans-serif' }: TitleProps) {
     autoBind(this);
     this.gl = gl;
     this.plane = plane;
@@ -339,8 +339,8 @@ class Media {
 
       // Where it is used (e.g. "Database", "Container Runtime")
       if (this.role) {
-        ctx.font = '600 24px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        ctx.fillStyle = '#94a3b8';
+        ctx.font = '600 22px Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+        ctx.fillStyle = '#a1a1aa';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(this.role, 256, 490);
@@ -846,7 +846,7 @@ export function CircularGallery({
   bend = 3,
   textColor = '#ffffff',
   borderRadius = 0.05,
-  font = 'bold 30px Figtree',
+  font = 'bold 32px Inter, sans-serif',
   fontUrl,
   scrollSpeed = 2,
   scrollEase = 0.05,

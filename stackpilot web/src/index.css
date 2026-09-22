@@ -35,7 +35,7 @@
    ========================================================================= */
 html.font-stylish,
 html.font-stylish body,
-html.font-stylish *:not(code):not(pre):not(kbd):not(code *):not(pre *):not(.keep-mono):not(.keep-sans):not(.keep-sans *):not(.footer-brand-wordmark):not(.footer-brand-wordmark *) {
+html.font-stylish *:not(code):not(pre):not(kbd):not(code *):not(pre *):not(.keep-mono):not(.keep-mono *):not(.font-mono):not(.font-mono *):not(.keep-sans):not(.keep-sans *):not(.card-text):not(.card-text *):not(#install *):not(.footer-brand-wordmark):not(.footer-brand-wordmark *) {
   font-family: 'Fuzzy Bubbles', cursive, sans-serif !important;
 }
 
@@ -51,12 +51,17 @@ html.font-stylish pre,
 html.font-stylish kbd,
 html.font-stylish code *,
 html.font-stylish pre *,
-html.font-stylish .keep-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+html.font-stylish .keep-mono,
+html.font-stylish .keep-mono *,
+html.font-stylish .font-mono,
+html.font-stylish .font-mono * {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !important;
 }
 
 .keep-sans,
 .keep-sans *,
+.card-text,
+.card-text *,
 .footer-brand-wordmark,
 .footer-brand-wordmark * {
   font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
