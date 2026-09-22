@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Search01Icon, Cancel01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons';
@@ -136,26 +137,29 @@ interface SearchModalProps {
 export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSelectDoc }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [mounted, setMounted] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
-  // Focus input on open, prevent page scroll, lock body
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Focus input on open without triggering parent scroll
   useEffect(() => {
     if (isOpen) {
       setQuery('');
       setSelectedIndex(0);
       if (listRef.current) listRef.current.scrollTop = 0;
-      // Prevent the browser from scrolling the underlying page to the input
-      setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 50);
-      // Lock body scroll so Lenis/native scroll can't move while modal is open
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = '';
+      // Focus without browser scrolling
+      const timer = setTimeout(() => {
+        if (inputRef.current) {
+          inputRef.current.focus({ preventScroll: true });
+        }
+      }, 30);
+      return () => clearTimeout(timer);
     }
-    return () => {
-      document.body.style.overflow = '';
-    };
   }, [isOpen]);
 
   // Filter items
@@ -177,13 +181,18 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
     }
   }, [query]);
 
-  // Scroll active item into view when navigating via keyboard
+  // Scroll active item into view when navigating via keyboard (only within list)
   useEffect(() => {
-    if (itemRefs.current[selectedIndex]) {
-      itemRefs.current[selectedIndex]?.scrollIntoView({
-        block: 'nearest',
-        behavior: 'smooth'
-      });
+    const listEl = listRef.current;
+    const itemEl = itemRefs.current[selectedIndex];
+    if (listEl && itemEl) {
+      const listRect = listEl.getBoundingClientRect();
+      const itemRect = itemEl.getBoundingClientRect();
+      if (itemRect.bottom > listRect.bottom) {
+        listEl.scrollTop += itemRect.bottom - listRect.bottom + 8;
+      } else if (itemRect.top < listRect.top) {
+        listEl.scrollTop -= listRect.top - itemRect.top + 8;
+      }
     }
   }, [selectedIndex]);
 
@@ -214,10 +223,12 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, filtered, selectedIndex, onClose, onSelectDoc]);
 
-  return (
+  if (!mounted || typeof document === 'undefined') return null;
+
+  return createPortal(
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 pointer-events-auto">
           {/* Smooth Dark Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -225,17 +236,17 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={onClose}
-            className="fixed inset-0 bg-black/75 backdrop-blur-sm cursor-pointer"
+            className="fixed inset-0 bg-black/80 backdrop-blur-md cursor-pointer"
           />
 
           {/* Modal Container Centered in the Middle of the Page */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ type: 'spring', stiffness: 450, damping: 30 }}
+            initial={{ opacity: 0, scale: 0.96, y: -10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -10 }}
+            transition={{ type: 'spring', stiffness: 450, damping: 32 }}
             data-lenis-prevent
-            className="relative w-full max-w-xl rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10 my-auto"
+            className="relative w-full max-w-xl max-h-[85vh] rounded-2xl sm:rounded-3xl border border-zinc-800 bg-[#161619] shadow-2xl overflow-hidden flex flex-col z-10"
           >
             {/* Search Input Bar - Seamless without dividing border line */}
             <div className="flex items-center gap-3 px-4 sm:px-5 py-3.5 bg-[#161619]">
@@ -330,7 +341,8 @@ export const SearchModal: React.FC<SearchModalProps> = ({ isOpen, onClose, onSel
           </motion.div>
         </div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 };
 

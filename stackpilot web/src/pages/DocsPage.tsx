@@ -178,7 +178,11 @@ export const DocsPage: React.FC<DocsPageProps> = ({ onNavigateHome, onNavigateCo
             {/* Interactive Search Button: between '(' and '|' -> left fully rounded, right square rounded */}
             <button
               type="button"
-              onClick={() => setIsSearchOpen(true)}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setIsSearchOpen(true);
+              }}
               onMouseEnter={() => setHoveredTab('search')}
               className="relative inline-flex items-center gap-2.5 h-8 px-3 sm:px-3.5 rounded-l-full rounded-r-md bg-transparent text-zinc-300 hover:text-white transition-colors cursor-pointer select-none border-0 group"
               title="Search documentation (⌘K)"

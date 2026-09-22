@@ -57,11 +57,11 @@ export const App: React.FC = () => {
       <AnimatePresence mode="wait">
         <motion.div
           key={route}
-          initial={{ opacity: 0, filter: 'blur(16px)', y: 4 }}
-          animate={{ opacity: 1, filter: 'blur(0px)', y: 0 }}
-          exit={{ opacity: 0, filter: 'blur(16px)', y: -4 }}
-          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full flex-1 flex flex-col will-change-transform transform-gpu"
+          initial={{ opacity: 0, filter: 'blur(14px)' }}
+          animate={{ opacity: 1, filter: 'blur(0px)' }}
+          exit={{ opacity: 0, filter: 'blur(14px)' }}
+          transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full flex-1 flex flex-col"
         >
           {route === 'docs' && (
         <SmoothScroll>
@@ -87,13 +87,11 @@ export const App: React.FC = () => {
             <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-clip">
               {/* Rich Vibrant Bluish & Indigo Atmospheric Ambient Gradients — Hardware accelerated compositor layers */}
               <div
-                className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none will-change-transform transform-gpu"
-                style={{ transform: 'translate3d(0, 0, 0)' }}
+                className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none"
                 aria-hidden="true"
               />
               <div
-                className="fixed top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] pointer-events-none z-0 rounded-full select-none will-change-transform transform-gpu"
-                style={{ transform: 'translate3d(0, 0, 0)' }}
+                className="fixed top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] pointer-events-none z-0 rounded-full select-none"
                 aria-hidden="true"
               />
 
@@ -107,12 +105,14 @@ export const App: React.FC = () => {
                   streakWidth={0.9}
                   streakLength={1.1}
                   glow={0.8}
-                  density={0.32}
+                  density={0.35}
                   twinkle={0.5}
-                  zoom={1.5}
+                  zoom={2.5}
                   backgroundGlow={0.25}
                   opacity={0.65}
-                  mouseInteraction={false}
+                  mouseInteraction={true}
+                  mouseStrength={0.5}
+                  mouseRadius={0.4}
                 />
               </div>
 
