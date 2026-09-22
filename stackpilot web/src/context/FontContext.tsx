@@ -13,10 +13,13 @@ const FontContext = createContext<FontContextType | undefined>(undefined);
 export const FontProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [fontMode, setFontModeState] = useState<FontMode>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('sp_font_mode');
-      if (saved === 'normal' || saved === 'stylish') return saved;
+      const explicit = localStorage.getItem('sp_font_mode_explicit');
+      if (explicit === 'true') {
+        const saved = localStorage.getItem('sp_font_mode');
+        if (saved === 'normal' || saved === 'stylish') return saved;
+      }
     }
-    return 'stylish';
+    return 'normal';
   });
 
   useEffect(() => {
@@ -40,10 +43,16 @@ export const FontProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [fontMode]);
 
   const toggleFontMode = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sp_font_mode_explicit', 'true');
+    }
     setFontModeState((prev) => (prev === 'stylish' ? 'normal' : 'stylish'));
   };
 
   const setFontMode = (mode: FontMode) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sp_font_mode_explicit', 'true');
+    }
     setFontModeState(mode);
   };
 

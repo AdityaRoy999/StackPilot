@@ -34,9 +34,9 @@ export default {
         }
       },
       fontFamily: {
-        sans: ['var(--app-font-body)', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        headline: ['var(--app-font-heading)', '"Caveat Brush"', 'cursive', 'sans-serif'],
-        mono: ['var(--app-font-mono)', 'JetBrains Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+        headline: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
         caveat: ['"Caveat Brush"', 'cursive', 'sans-serif'],
         bubbles: ['"Fuzzy Bubbles"', 'cursive', 'sans-serif'],
       },

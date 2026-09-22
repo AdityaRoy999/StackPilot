@@ -36,10 +36,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
           }}
         >
           <h2
-            className="font-headline text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.02em] sm:tracking-[0.01em] uppercase leading-[1.15] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
+            className="footer-brand-wordmark keep-sans text-[11vw] sm:text-[12.5vw] md:text-[13.5vw] font-black tracking-[-0.03em] uppercase leading-[1.1] text-center whitespace-nowrap select-none text-transparent bg-clip-text"
             style={{
+              fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
               backgroundImage:
-                'linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.55) 30%, rgba(255, 255, 255, 0.2) 62%, rgba(255, 255, 255, 0.04) 86%, transparent 100%)',
+                'linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.55) 32%, rgba(255, 255, 255, 0.2) 65%, rgba(255, 255, 255, 0.03) 88%, transparent 100%)',
               WebkitBackgroundClip: 'text',
               WebkitTextFillColor: 'transparent',
             }}
@@ -50,19 +51,19 @@ export const Footer: React.FC<FooterProps> = ({ onNavigateDocs, onNavigateContac
       </div>
 
       {/* Clean Bottom Navigation & Metadata Bar with Floating Capsule Bubble (Without harsh border line) */}
-      <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 pt-4 sm:pt-6 flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-zinc-400">
+      <div className="w-full max-w-6xl mx-auto px-4 sm:px-8 pt-4 sm:pt-6 flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-zinc-400 keep-sans">
         {/* Left: Brand & Engine tagline */}
-        <div className="flex items-center gap-2 text-zinc-400 text-xs">
+        <div className="flex items-center gap-2 text-zinc-400 text-xs keep-sans">
           <span className="font-bold text-zinc-200">StackPilot</span>
           <span className="text-zinc-600">•</span>
           <span className="text-zinc-400">Autonomous AI QA &amp; Delivery Engine</span>
         </div>
 
         {/* Right: Floating Capsule Bubble with Animated Sliding Hover Tab Physics */}
-        <div className="flex items-center justify-center">
+        <div className="flex items-center justify-center keep-sans">
           <div
             onMouseLeave={() => setHoveredTab(null)}
-            className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-xl text-xs text-zinc-300 relative select-none"
+            className="inline-flex items-center h-10 p-1 rounded-full bg-[#18181b] border border-zinc-800/90 shadow-xl text-xs text-zinc-300 relative select-none keep-sans"
           >
             {/* Documentation: between '(' and '|' -> left fully rounded, right square rounded */}
             <a
