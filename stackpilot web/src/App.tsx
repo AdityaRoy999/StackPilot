@@ -54,92 +54,97 @@ export const App: React.FC = () => {
   return (
     <FontProvider>
       <Preloader />
+
+      {/* Global Viewport Background: 100% FIXED to screen, completely decoupled from scroll & Lenis */}
+      {route === 'home' && (
+        <div
+          className="fixed inset-0 pointer-events-none overflow-hidden select-none"
+          style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 0 }}
+        >
+          {/* Ambient Blue Gradients */}
+          <div
+            className="absolute -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] rounded-full select-none"
+            aria-hidden="true"
+          />
+          <div
+            className="absolute top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] rounded-full select-none"
+            aria-hidden="true"
+          />
+
+          {/* Full-screen Global React Bits Lightfall Background */}
+          <Lightfall
+            colors={['#60a5fa', '#3b82f6', '#4f46e5', '#818cf8', '#93c5fd', '#38bdf8']}
+            backgroundColor="#000000"
+            speed={0.42}
+            streakCount={5}
+            streakWidth={0.9}
+            streakLength={1.1}
+            glow={0.8}
+            density={0.35}
+            twinkle={0.5}
+            zoom={2.5}
+            backgroundGlow={0.25}
+            opacity={0.65}
+            mouseInteraction={false}
+          />
+        </div>
+      )}
+
       <AnimatePresence mode="wait">
         <motion.div
           key={route}
-          initial={{ opacity: 0, filter: 'blur(14px)' }}
-          animate={{ opacity: 1, filter: 'blur(0px)' }}
-          exit={{ opacity: 0, filter: 'blur(14px)' }}
-          transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full flex-1 flex flex-col"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25 }}
+          className="w-full flex-1 flex flex-col relative z-10"
         >
           {route === 'docs' && (
-        <SmoothScroll>
-          <DocsPage
-            onNavigateHome={() => navigateTo('home')}
-            onNavigateContact={() => navigateTo('contact')}
-          />
-        </SmoothScroll>
-      )}
-
-      {route === 'contact' && (
-        <SmoothScroll>
-          <ContactPage
-            onNavigateHome={() => navigateTo('home')}
-            onNavigateDocs={() => navigateTo('docs')}
-          />
-        </SmoothScroll>
-      )}
-
-      {route === 'home' && (
-        <ScriptProvider>
-          <SmoothScroll>
-            <div className="min-h-screen bg-black text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative overflow-x-clip">
-              {/* Rich Vibrant Bluish & Indigo Atmospheric Ambient Gradients — Hardware accelerated compositor layers */}
-              <div
-                className="fixed -bottom-24 -left-28 w-[720px] h-[720px] bg-gradient-to-tr from-blue-600/35 via-indigo-600/22 to-transparent blur-[130px] pointer-events-none z-0 rounded-full select-none"
-                aria-hidden="true"
-              />
-              <div
-                className="fixed top-1/4 -right-28 w-[560px] h-[560px] bg-gradient-to-bl from-indigo-600/20 via-sky-600/15 to-transparent blur-[140px] pointer-events-none z-0 rounded-full select-none"
-                aria-hidden="true"
-              />
-
-              {/* Full-screen Global React Bits Lightfall Background */}
-              <div className="fixed inset-0 w-full h-full pointer-events-none z-0 overflow-hidden select-none">
-                <Lightfall
-                  colors={['#60a5fa', '#3b82f6', '#4f46e5', '#818cf8', '#93c5fd', '#38bdf8']}
-                  backgroundColor="#000000"
-                  speed={0.42}
-                  streakCount={5}
-                  streakWidth={0.9}
-                  streakLength={1.1}
-                  glow={0.8}
-                  density={0.35}
-                  twinkle={0.5}
-                  zoom={2.5}
-                  backgroundGlow={0.25}
-                  opacity={0.65}
-                  mouseInteraction={true}
-                  mouseStrength={0.5}
-                  mouseRadius={0.4}
-                />
-              </div>
-
-              <Navbar
-                onNavigateDocs={() => navigateTo('docs')}
+            <SmoothScroll>
+              <DocsPage
                 onNavigateHome={() => navigateTo('home')}
                 onNavigateContact={() => navigateTo('contact')}
               />
+            </SmoothScroll>
+          )}
 
-              <main className="flex-1 max-w-[1380px] w-full mx-auto px-4 sm:px-6 lg:px-8 flex flex-col relative z-10">
-                <Hero />
-                <BentoFeatures />
-              </main>
-
-              {/* Full-width 100vw section for CircularGallery */}
-              <div className="w-full relative z-10 overflow-hidden">
-                <OpenSourceBento />
-              </div>
-
-              <Footer
+          {route === 'contact' && (
+            <SmoothScroll>
+              <ContactPage
+                onNavigateHome={() => navigateTo('home')}
                 onNavigateDocs={() => navigateTo('docs')}
-                onNavigateContact={() => navigateTo('contact')}
               />
-            </div>
-          </SmoothScroll>
-        </ScriptProvider>
-      )}
+            </SmoothScroll>
+          )}
+
+          {route === 'home' && (
+            <ScriptProvider>
+              <SmoothScroll>
+                <div className="min-h-screen bg-transparent text-zinc-100 flex flex-col selection:bg-zinc-800 selection:text-zinc-100 antialiased font-sans relative">
+                  <Navbar
+                    onNavigateDocs={() => navigateTo('docs')}
+                    onNavigateHome={() => navigateTo('home')}
+                    onNavigateContact={() => navigateTo('contact')}
+                  />
+
+                  <main className="flex-1 max-w-[1380px] w-full mx-auto px-4 sm:px-6 lg:px-8 flex flex-col relative z-10">
+                    <Hero />
+                    <BentoFeatures />
+                  </main>
+
+                  {/* Full-width 100vw section for CircularGallery */}
+                  <div className="w-full relative z-10 overflow-hidden">
+                    <OpenSourceBento />
+                  </div>
+
+                  <Footer
+                    onNavigateDocs={() => navigateTo('docs')}
+                    onNavigateContact={() => navigateTo('contact')}
+                  />
+                </div>
+              </SmoothScroll>
+            </ScriptProvider>
+          )}
         </motion.div>
       </AnimatePresence>
     </FontProvider>
