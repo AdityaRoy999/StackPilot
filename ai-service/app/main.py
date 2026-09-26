@@ -2927,6 +2927,12 @@ async def stream_agent_reply(
                             "tool_call_id": tc_id,
                             "content": json.dumps(tc["result"], ensure_ascii=False) if isinstance(tc["result"], dict) else str(tc["result"])
                         })
+                    else:
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": json.dumps({"status": "interrupted", "note": "Execution paused. See the user's next message for the response or continuation."})
+                        })
                 messages.append(msg)
                 messages.extend(tool_results)
             else:
