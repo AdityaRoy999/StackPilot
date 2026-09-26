@@ -3608,7 +3608,7 @@ export default function AiAgentPage() {
                                       {field.type === "dropdown" || (field.options && field.options.length > 0) ? (
                                         <Select
                                           value={agentQuestionAnswers[field.id] || field.default_value || (field.options && field.options[0]) || ""}
-                                          onValueChange={(val: string) => setAgentQuestionAnswers((prev) => ({ ...prev, [field.id]: val || "" }))}
+                                          onValueChange={(val: string | null) => setAgentQuestionAnswers((prev) => ({ ...prev, [field.id]: val || "" }))}
                                         >
                                           <SelectTrigger className="w-full h-9">
                                             <SelectValue placeholder="Select an option..." />
