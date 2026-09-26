@@ -2905,38 +2905,37 @@ async def stream_agent_reply(
         
         messages = [{"role": "system", "content": sys_prompt}]
         for turn in request.history[-12:]:
-            msg = {"role": turn.get("role", "user"), "content": turn.get("content", "")}
-            if turn.get("tool_calls"):
-                msg["tool_calls"] = []
-                tool_results = []
-                for tc in turn.get("tool_calls"):
-                    # Create the OpenAI format function spec
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            tool_calls = turn.get("tool_calls")
+            if tool_calls:
+                for tc in tool_calls:
                     func_spec = {
                         "name": tc.get("name", "unknown_tool"),
                         "arguments": tc.get("arguments") if isinstance(tc.get("arguments"), str) else json.dumps(tc.get("arguments", {}), ensure_ascii=False)
                     }
                     tc_id = tc.get("id", f"call_{int(time.time()*1000)}")
-                    msg["tool_calls"].append({
-                        "id": tc_id,
-                        "type": "function",
-                        "function": func_spec
+                    # Single tool call per assistant turn for universal model compatibility (e.g. NIM / Llama)
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{
+                            "id": tc_id,
+                            "type": "function",
+                            "function": func_spec
+                        }]
                     })
                     if "result" in tc:
-                        tool_results.append({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": json.dumps(tc["result"], ensure_ascii=False) if isinstance(tc["result"], dict) else str(tc["result"])
-                        })
+                        res_str = json.dumps(tc["result"], ensure_ascii=False) if isinstance(tc["result"], dict) else str(tc["result"])
                     else:
-                        tool_results.append({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": json.dumps({"status": "interrupted", "note": "Execution paused. See the user's next message for the response or continuation."})
-                        })
-                messages.append(msg)
-                messages.extend(tool_results)
+                        res_str = json.dumps({"status": "interrupted", "note": "Execution paused. See the user's next message for the response or continuation."})
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": res_str
+                    })
             else:
-                messages.append(msg)
+                messages.append({"role": role, "content": content})
 
         user_content = request.message
         if is_affirmative and has_repair_context and request.deployment_id:
@@ -3462,6 +3461,11 @@ async def stream_agent_reply(
 
                 response = enter_task.result()
                 try:
+                    if response.is_error:
+                        err_bytes = await response.aread()
+                        err_text = err_bytes.decode("utf-8", errors="replace")
+                        logger.error(f"[AI STREAM ERROR RAW] HTTP {response.status_code}: {err_text}")
+                        print(f"[AI STREAM ERROR RAW] HTTP {response.status_code}: {err_text}", flush=True)
                     response.raise_for_status()
                     async for line in _cancelable_aiter_lines(response, is_cancelled):
                         if await is_cancelled():
