@@ -21,6 +21,19 @@ export type AgentStreamEvent =
       token?: string;
     }
   | {
+      type: "agent_question";
+      question_id: string;
+      question: string;
+      fields: Array<{
+        id: string;
+        label: string;
+        type: "dropdown" | "text" | "radio";
+        options?: string[];
+        placeholder?: string;
+        default_value?: string;
+      }>;
+    }
+  | {
       type: "subagent_start";
       id?: string;
       role?: string;
@@ -63,6 +76,7 @@ export interface StreamAgentOptions {
   project?: unknown;
   agentAccessMode?: "ask" | "auto_review" | "full_access";
   remoteTerminal?: "ask" | "allow";
+  allowAgentQuestions?: boolean;
   images?: string[];
   customUrl?: string;
   sandboxMode?: "local" | "remote";
@@ -83,6 +97,7 @@ export async function streamAgentReply({
   project,
   agentAccessMode,
   remoteTerminal,
+  allowAgentQuestions = true,
   images,
   customUrl,
   sandboxMode,
@@ -111,12 +126,14 @@ export async function streamAgentReply({
       ...(project ? { project } : {}),
       ...(agentAccessMode ? { agent_access_mode: agentAccessMode } : {}),
       ...(remoteTerminal ? { remote_terminal: remoteTerminal } : {}),
+      allow_agent_questions: allowAgentQuestions !== false,
       ...(images && images.length > 0 ? { images } : {}),
       runtime: {
         ...(customUrl ? { url: customUrl, custom_url: customUrl } : {}),
         permissions: {
           agent_access_mode: agentAccessMode || "ask",
           remote_terminal: remoteTerminal || "ask",
+          allow_agent_questions: allowAgentQuestions !== false,
         },
       },
     }),

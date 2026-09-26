@@ -335,8 +335,8 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
             userMessage);
 
         const auto historyRows = txn.exec_params(
-            "SELECT role, content FROM ("
-            "SELECT role, content, created_at FROM ai_messages WHERE session_id = $1 "
+            "SELECT role, content, metadata FROM ("
+            "SELECT role, content, metadata, created_at FROM ai_messages WHERE session_id = $1 "
             "ORDER BY created_at DESC LIMIT 24"
             ") recent ORDER BY created_at ASC",
             sessionId);
@@ -344,7 +344,18 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
         for (const auto& row : historyRows) {
             Json::Value item(Json::objectValue);
             item["role"] = row["role"].as<std::string>();
-            item["content"] = row["content"].as<std::string>();
+            item["content"] = row["content"].is_null() ? "" : row["content"].as<std::string>();
+            if (!row["metadata"].is_null()) {
+                try {
+                    Json::Value meta;
+                    Json::Reader reader;
+                    if (reader.parse(row["metadata"].as<std::string>(), meta)) {
+                        if (meta.isMember("tool_calls")) {
+                            item["tool_calls"] = meta["tool_calls"];
+                        }
+                    }
+                } catch (...) {}
+            }
             history.append(item);
         }
         payload["history"] = history;

@@ -281,7 +281,8 @@ services:
       - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
       - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
       - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-openai/gpt-oss-20b}
-      - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-openai/gpt-oss-20b}
+      - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-meta/llama-3.2-11b-vision-instruct}
+      - NVIDIA_NIM_BROWSER_MODEL=${NVIDIA_NIM_BROWSER_MODEL:-meta/llama-3.2-11b-vision-instruct}
       - NVIDIA_NIM_THINKING_MODEL=${NVIDIA_NIM_THINKING_MODEL:-openai/gpt-oss-20b}
       - NVIDIA_NIM_ALLOWED_MODELS=${NVIDIA_NIM_ALLOWED_MODELS:-}
       - NVIDIA_NIM_DISCOVER_MODELS=${NVIDIA_NIM_DISCOVER_MODELS:-true}

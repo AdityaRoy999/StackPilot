@@ -25,7 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSock
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.tools import AGENT_TOOLS, execute_tool_call, resolve_target_project_runtime_url, normalize_element_text
+from app.tools import AGENT_TOOLS, execute_tool_call, resolve_target_project_runtime_url, normalize_element_text, _compact_interactive_elements
 from app.browser_driver import browser_manager
 from app.swarm import (
     ArchitectAgent,
@@ -84,6 +84,7 @@ class AgentRequest(BaseModel):
     images: List[str] = Field(default_factory=list)
     custom_url: Optional[str] = None
     sandbox_mode: Literal["local", "remote"] = "local"
+    allow_agent_questions: bool = True
 
     @model_validator(mode="after")
     def normalize_legacy_fields(self) -> "AgentRequest":
@@ -99,6 +100,18 @@ class AgentRequest(BaseModel):
             extra = getattr(self, "__pydantic_extra__", {}) or {}
             if "custom_url" in extra:
                 self.custom_url = str(extra["custom_url"])
+        if not self.custom_url and self.runtime and isinstance(self.runtime, dict):
+            if self.runtime.get("custom_url"):
+                self.custom_url = str(self.runtime["custom_url"])
+            elif self.runtime.get("url"):
+                self.custom_url = str(self.runtime["url"])
+            perms = self.runtime.get("permissions") or {}
+            if "allow_agent_questions" in perms:
+                self.allow_agent_questions = bool(perms["allow_agent_questions"])
+        if self.custom_url:
+            c_url = self.custom_url.strip()
+            if c_url and not c_url.startswith(("http://", "https://", "about:", "data:", "chrome:")):
+                self.custom_url = f"https://{c_url}"
         if not self.project and self.project_context:
             self.project = self.project_context
         if not self.project_id and self.project and isinstance(self.project, dict):
@@ -325,13 +338,25 @@ def provider_config(
             or os.getenv("NVIDIA_NIM_API_KEY")
             or os.getenv("NVIDIA_API_KEY", "")
         )
-        selected_model = (
-            model
-            or str(overrides.get("model") or "")
-            or os.getenv("STACKPILOT_AI_MODEL", "")
-            or os.getenv("NVIDIA_NIM_MODEL", "")
-            or "meta/llama-3.2-11b-vision-instruct"
-        )
+        if not model and not overrides.get("model"):
+            if model_mode == "fast" and os.getenv("NVIDIA_NIM_FAST_MODEL"):
+                selected_model = os.getenv("NVIDIA_NIM_FAST_MODEL")
+            elif model_mode == "thinking" and os.getenv("NVIDIA_NIM_THINKING_MODEL"):
+                selected_model = os.getenv("NVIDIA_NIM_THINKING_MODEL")
+            else:
+                selected_model = (
+                    os.getenv("STACKPILOT_AI_MODEL", "")
+                    or os.getenv("NVIDIA_NIM_MODEL", "")
+                    or "meta/llama-3.2-11b-vision-instruct"
+                )
+        else:
+            selected_model = (
+                model
+                or str(overrides.get("model") or "")
+                or os.getenv("STACKPILOT_AI_MODEL", "")
+                or os.getenv("NVIDIA_NIM_MODEL", "")
+                or "meta/llama-3.2-11b-vision-instruct"
+            )
         # Transparently migrate deprecated/retired NIM models
         retired_models = {
             "meta/llama-3.1-70b-instruct": "meta/llama-3.2-11b-vision-instruct",
@@ -2737,45 +2762,40 @@ async def stream_agent_reply(
                 "4. 👑 Supervisor: Coordinates execution, handles permissions, and synthesizes the unified final report.\n"
                 "Proactively inspect files, implement required architecture changes, verify builds, and deliver a comprehensive multi-agent report."
             )
-        user_msg_lower = request.message.lower()
-        browser_keywords = [
-            "test", "button", "buttons", "click", "verify", "navigation", "page",
-            "portfolio", "canvas", "interactive", "screencast", "ui test", "website", "browse"
-        ]
-        is_browser_test = (
-            command_name in {"/test", "/browse", "/verify", "/browser"} or
-            any(k in user_msg_lower for k in browser_keywords)
+        is_repair_workflow = (
+            command_name in {"/repair", "/fix", "/diagnose", "/deploy", "/architect", "/swarm", "/analyze"}
+            or request.workflow_type in {"sre_incident", "auto_healing", "repair_project", "architect", "swarm"}
+            or (is_affirmative and has_repair_context)
         )
-        full_site_keywords = [
-            "full site", "entire site", "whole site", "all pages", "everything",
-            "100%", "crawl all", "crawl site", "comprehensive site", "full scan", "audit all", "full coverage"
-        ]
-        is_full_site_audit = any(k in user_msg_lower for k in full_site_keywords)
-        # Targeted prompt test: when user asks to test specific things/elements/flows rather than an unconstrained crawl
-        is_targeted_test = is_browser_test and not is_full_site_audit
 
         custom_target = getattr(request, "custom_url", None) or (request.runtime or {}).get("custom_url") or (request.runtime or {}).get("url")
+        if custom_target and isinstance(custom_target, str):
+            custom_target = custom_target.strip()
+            if custom_target and not custom_target.startswith(("http://", "https://", "about:", "data:", "chrome:")):
+                custom_target = f"https://{custom_target}"
+
         target_runtime_url = ""
+        live_sess = None
+        has_active_browser_session = False
+        try:
+            from .browser_driver import browser_manager
+            live_sess = (browser_manager.sessions.get(request.session_id) if request.session_id else None) or browser_manager.get_active_session()
+            if live_sess and live_sess.is_connected and live_sess.current_url and live_sess.current_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
+                has_active_browser_session = True
+                target_runtime_url = live_sess.current_url
+        except Exception:
+            pass
+
         if custom_target and custom_target not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
             target_runtime_url = custom_target
-        elif request.message and re.search(r"https?://[^\s<>\"']+", request.message):
+        elif request.message and (re.search(r"https?://[^\s<>\"']+", request.message) or re.search(r"\b([a-zA-Z0-9-]+\.(?:com|org|in|io|co|net|dev|ai|app|gov|edu|me)(?:/[^\s]*)?)\b", request.message)):
             target_runtime_url = resolve_target_project_runtime_url(user_message=request.message, session_id=request.session_id)
-        else:
-            # 1. Prioritize active live browser canvas session if already navigated
-            try:
-                from .browser_driver import browser_manager
-                live_sess = (browser_manager.sessions.get(request.session_id) if request.session_id else None) or browser_manager.get_active_session()
-                if live_sess and live_sess.current_url and live_sess.current_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
-                    target_runtime_url = live_sess.current_url
-            except Exception:
-                pass
-
-            if not target_runtime_url:
-                target_runtime_url = (
-                    (request.deployment or {}).get("runtime_url") or
-                    (request.project or {}).get("runtime_url") or
-                    ""
-                )
+        elif not target_runtime_url:
+            target_runtime_url = (
+                (request.deployment or {}).get("runtime_url") or
+                (request.project or {}).get("runtime_url") or
+                ""
+            )
 
         if not target_runtime_url or any(bad in target_runtime_url for bad in ["localhost:3000", "127.0.0.1:3000"]):
             resolved = resolve_target_project_runtime_url(
@@ -2790,21 +2810,75 @@ async def stream_agent_reply(
             elif not target_runtime_url:
                 target_runtime_url = "about:blank"
 
+        has_custom_target = bool(
+            custom_target and custom_target not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}
+        )
+        has_valid_target_url = bool(
+            target_runtime_url and target_runtime_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}
+        )
+
+        user_msg_lower = request.message.lower()
+        browser_keywords = [
+            "test", "button", "buttons", "click", "verify", "navigation", "page",
+            "portfolio", "canvas", "interactive", "screencast", "ui test", "website", "browse",
+            "book", "booking", "ticket", "tickets", "movie", "cinema", "buy", "purchase", "checkout", "order", "reserve", "seat", "seats",
+            "train", "trains", "flight", "flights", "hotel", "hotels", "bus", "buses", "cab", "travel",
+            "form", "fill", "input", "select", "type", "search", "find", "check", "available", "availability", "schedule", "route",
+            "login", "signin", "signup", "register", "cart", "product", "item", "items", "price", "navigate", "open", "go to"
+        ]
+        is_browser_test = (
+            (command_name in {"/test", "/browse", "/verify", "/browser"})
+            or (not is_repair_workflow and (has_custom_target or has_active_browser_session))
+            or (not is_repair_workflow and has_valid_target_url and any(k in user_msg_lower for k in browser_keywords))
+            or any(k in user_msg_lower for k in [
+                "ui test", "browser", "screencast", "canvas", "click button", "fill form", "book ticket",
+                "is there any", "search for", "find me", "check availability", "check available"
+            ])
+        )
+        full_site_keywords = [
+            "full site", "entire site", "whole site", "all pages", "everything",
+            "100%", "crawl all", "crawl site", "comprehensive site", "full scan", "audit all", "full coverage"
+        ]
+        is_full_site_audit = any(k in user_msg_lower for k in full_site_keywords)
+        # Targeted prompt test: when user asks to test specific things/elements/flows or query availability rather than an unconstrained crawl
+        is_targeted_test = is_browser_test and not is_full_site_audit
+
         if is_browser_test:
+            if provider == "nvidia_nim":
+                fast_browser_model = os.getenv("NVIDIA_NIM_BROWSER_MODEL") or os.getenv("NVIDIA_NIM_FAST_MODEL") or "meta/llama-3.2-11b-vision-instruct"
+                if "gpt-oss-20b" in model.lower() or "reasoning" in model.lower() or request.model_mode == "fast":
+                    model = fast_browser_model
+            from datetime import datetime, timedelta
+            now_dt = datetime.now()
+            today_str = now_dt.strftime("%d/%m/%Y")
+            tomorrow_dt = now_dt + timedelta(days=1)
+            tomorrow_str = tomorrow_dt.strftime("%d/%m/%Y")
+            day_name = now_dt.strftime("%A")
+            tomorrow_day_name = tomorrow_dt.strftime("%A")
+
             if is_targeted_test:
                 sys_prompt += (
-                    f"\n\nSPECIAL WORKFLOW: TARGETED PROMPT-DIRECTED TESTING & COMPUTER USE\n"
+                    f"\n\nSPECIAL WORKFLOW: AUTONOMOUS TARGETED WEB TESTING & COMPUTER USE\n"
                     f"The user has defined specific testing criteria: \"{request.message}\".\n"
                     f"Target Application: '{target_runtime_url}'.\n"
-                    f"MANDATORY DIRECTIVES:\n"
-                    f"1. STRICT PROMPT SCOPE CONFINEMENT: You must ONLY test the specific features, elements, or flows explicitly specified in the user's prompt (\"{request.message}\").\n"
-                    f"   - DO NOT test unrelated sections.\n"
-                    f"   - DO NOT click random buttons, links, or cards outside the requested scope.\n"
-                    f"   - DO NOT perform an unconstrained full-site scan or crawl unrelated pages.\n"
-                    f"2. SESSION & WEBSITE PERSISTENCE: If the live browser session is already open on this website (or on a subpage like /docs, /mycourses, or a specific view), DO NOT reload or reset the page! Keep the website state, DOM, and open modals/views completely persistent.\n"
-                    f"3. OPEN / REUSE LIVE SESSION: Use `browser_open_live_session(url='{target_runtime_url}')` to inspect interactive elements. If already open on the application, it preserves the current page view.\n"
-                    f"4. EXECUTE & VERIFY SEQUENTIALLY: Use `browser_interact` to execute the full sequence requested (e.g. typing credentials, clicking Next/Login, transitioning to the post-login dashboard, finding and completing the requested test).\n"
-                    f"5. MULTI-STEP COMPLETION: Do NOT stop after typing or clicking login! Continue sequentially across routes until the final requested goal (e.g. completing the specific test) is verified, or an explicit site blocker occurs."
+                    f"TEMPORAL CONTEXT (CURRENT DATES):\n"
+                    f"- Today's Date: {today_str} ({day_name})\n"
+                    f"- Tomorrow's Date: {tomorrow_str} ({tomorrow_day_name})\n"
+                    f"- When relative dates ('tomorrow', 'tomm') are mentioned, the target date is {tomorrow_str}.\n"
+                    f"COGNITIVE REASONING ARCHITECTURE (DEVIN-LIKE THINKING PROTOCOL):\n"
+                    f"You operate as an expert autonomous browser agent using structured Transition State Machine (TSM) reasoning:\n"
+                    f"1. RETROSPECTIVE REFLECTION: At each step, analyze what the last action did. Did the URL change? Did new DOM elements, options, or feedback alerts appear?\n"
+                    f"2. GOAL DECOMPOSITION & CHECKPOINTS: Break down the user's objective into sequential checkpoints:\n"
+                    f"   - [CP-1: Target Surface Discovery & Overlay Clearance]: Locate relevant controls. If ANY modal dialog, alert popup (e.g. language selection alert in Hindi/English), or backdrop mask appears, immediately dismiss it (e.g. click 'English', 'OK', 'Close', or 'Accept') before attempting to interact with underlying inputs.\n"
+                    f"   - [CP-2: Input Entry & Selection]: Fill required fields. CRITICAL AUTOCOMPLETE & AMBIGUITY MANDATE: When typing into an input that provides suggestions (combobox, railway stations, airports, categories):\n"
+                    f"     * If multiple options exist for the query (e.g. Mumbai has CSMT, MMCT, DR, LTT, BDTS) and the user did not specify the exact code, invoke `ask_user_question` with the harvested options to prompt the user with interactive dropdowns in chat!\n"
+                    f"     * If the user was already specific or in autonomous mode, immediately click the matching dropdown suggestion item (`[role='option']` or `ui-autocomplete-list-item`) to select and commit it.\n"
+                    f"   - [CP-3: Primary Action Execution]: Click the primary submission or trigger button (Search, Submit, Next, Login, Book, Filter). NEVER stop after typing without executing the primary action!\n"
+                    f"   - [CP-4: Postcondition Verification]: Wait for results or page transition, inspect the updated state, and extract the required data.\n"
+                    f"3. MODAL & OVERLAY CLEARING: If an advisory modal dialog, language popup, disclaimer, cookie banner, or alert overlay blocks the view, dismiss it (e.g. click 'English', 'OK', 'Close', or 'Accept') before continuing.\n"
+                    f"4. RESILIENT PERCEPTION: Informational advisories, notice banners, and disclaimers are NOT failures. Only stop if a real blocking validation error prevents progression.\n"
+                    f"5. SINGLE-TIER ATOMIC ACTION: Emit exactly one concise sentence of reasoning followed by the next `browser_interact` tool call. Zero hesitation, zero wandering.\n"
+                    f"6. STRICT PROMPT SCOPE CONFINEMENT: Exclusively test what the user requested in \"{request.message}\". Do not click random unrelated elements."
                 )
             else:
                 sys_prompt += (
@@ -2831,7 +2905,32 @@ async def stream_agent_reply(
         
         messages = [{"role": "system", "content": sys_prompt}]
         for turn in request.history[-12:]:
-            messages.append({"role": turn.get("role", "user"), "content": turn.get("content", "")})
+            msg = {"role": turn.get("role", "user"), "content": turn.get("content", "")}
+            if turn.get("tool_calls"):
+                msg["tool_calls"] = []
+                tool_results = []
+                for tc in turn.get("tool_calls"):
+                    # Create the OpenAI format function spec
+                    func_spec = {
+                        "name": tc.get("name", "unknown_tool"),
+                        "arguments": tc.get("arguments") if isinstance(tc.get("arguments"), str) else json.dumps(tc.get("arguments", {}), ensure_ascii=False)
+                    }
+                    tc_id = tc.get("id", f"call_{int(time.time()*1000)}")
+                    msg["tool_calls"].append({
+                        "id": tc_id,
+                        "type": "function",
+                        "function": func_spec
+                    })
+                    if "result" in tc:
+                        tool_results.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": json.dumps(tc["result"], ensure_ascii=False) if isinstance(tc["result"], dict) else str(tc["result"])
+                        })
+                messages.append(msg)
+                messages.extend(tool_results)
+            else:
+                messages.append(msg)
 
         user_content = request.message
         if is_affirmative and has_repair_context and request.deployment_id:
@@ -2846,17 +2945,21 @@ async def stream_agent_reply(
         elif is_browser_test:
             if is_targeted_test:
                 user_content += (
-                    f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user specified exact testing instructions: '{request.message}'.\n"
+                    f"\n\n[MANDATORY SYSTEM DIRECTIVE: The user specified exact testing/browser instructions: '{request.message}'.\n"
                     f"1. Open or connect to the live browser session with `browser_open_live_session(url='{target_runtime_url}')`. "
                     f"If the session is already active on the application, DO NOT reload or reset the page — preserve active page persistence!\n"
-                    f"2. MULTI-STEP GOAL COMPLETION & CONTINUATION PRINCIPLE: You must NEVER stop midway! Continue until the user's desired goal is 100% achieved.\n"
-                    f"   - Sequential Execution: If the prompt requires filling inputs, logging in, and then testing or verifying the page after login:\n"
-                    f"     * Step 1: Type the required credentials/values into the inputs using `browser_interact(action='type', element_id=..., text=...)`.\n"
-                    f"     * Step 2: Click the Submit / Next / Login button using `browser_interact(action='click', element_id=...)`.\n"
-                    f"     * Step 3: WAIT FOR ACTION COMPLETION: The browser driver automatically holds and waits for network requests, authentication API, and page redirection to settle.\n"
-                    f"     * Step 4: CONTINUATION AFTER LOGIN: DO NOT STOP after clicking the Login button! Clicking the button is NOT the end of your task. Once the website completes the login and transitions to the post-login page (e.g. dashboard, courses, settings), inspect the new page controls and CONTINUE executing the remaining instructions until the user's desired goal is reached!\n"
-                    f"     * Step 5: Conclude ONLY after all requested actions on the destination page are verified, or if a blocking error occurs on the site.\n"
-                    f"3. STRICT SCOPE CONFINEMENT: Strictly and exclusively test what the user instructed in their prompt. Do NOT click random elements or crawl unrelated pages.]"
+                    f"2. LIVE BROWSER SANDBOX MANDATE: Do NOT use web search or external tools. Execute the user's request directly inside the live browser sandbox on '{target_runtime_url}'.\n"
+                    f"3. STRUCTURED MULTI-STEP REASONING PROTOCOL:\n"
+                    f"   - Progress through the sequential checkpoints (Clear Modals/Backdrops -> Fill/Select -> Submit/Trigger -> Verify/Extract) until the goal is 100% accomplished.\n"
+                    f"   - MODAL & BACKDROP CLEARANCE: If a modal popup (e.g. language selection alert, advisory, cookie dialog) or backdrop mask is present on screen, immediately dismiss it (e.g. click 'English', 'OK', 'Close', or 'Accept') before typing into or clicking underlying inputs.\n"
+                    f"   - AUTOCOMPLETE & INTERACTIVE QUESTIONS: When typing into an input that provides suggestions (combobox, railway stations, airports):\n"
+                    f"     * If multiple matching options appear (e.g. multiple stations for Mumbai) and clarification is needed, invoke `ask_user_question` with the harvested options to prompt the user with interactive in-chat dropdowns!\n"
+                    f"     * If specific station/item was specified or autonomous mode is active, click the matching dropdown suggestion item (`[role='option']` or `ui-autocomplete-list-item`) to commit it.\n"
+                    f"   - DATE PICKER / VALUES: If a specific or relative date was requested (e.g. tomorrow -> {tomorrow_str}), ensure the date field is set to {tomorrow_str} before submitting.\n"
+                    f"   - EXECUTION MANDATE: After typing inputs or criteria, ALWAYS click the primary action button (e.g. Search, Submit, Continue, Login, Filter) to trigger the query or transition!\n"
+                    f"   - CONTINUATION AFTER TRANSITION: When an action transitions to a new route, modal, or results container, inspect the updated page controls and continue executing remaining steps.\n"
+                    f"   - Conclude only after the final goal state (e.g. search results loaded, confirmation displayed, or requested verification complete) is confirmed on the live page.\n"
+                    f"4. STRICT SCOPE CONFINEMENT: Strictly and exclusively test what the user instructed in their prompt. Do NOT click random elements or crawl unrelated pages.]"
                 )
             else:
                 user_content += (
@@ -2945,6 +3048,55 @@ async def stream_agent_reply(
         reasoning_parts.append(arch_thought)
         yield _sse({"type": "reasoning", "delta": arch_thought})
     
+    # Fast System 1 Auto-Open
+    browser_open_called = any(
+        m.get("role") == "tool" and ("interactive_elements" in str(m.get("content", "")) or "browser_open" in str(m.get("tool_call_id", "")))
+        for m in messages
+    )
+    from .browser_driver import browser_manager
+    active_session = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
+    session_exists = bool(active_session and active_session.is_connected)
+
+    if is_browser_test and target_runtime_url and not session_exists and not browser_open_called:
+        auto_open_args = {"url": target_runtime_url, "session_id": request.session_id or "default"}
+        auto_open_id = f"call_auto_open_{int(time.time()*1000)}"
+        reasoning_open = f"• 🌐 [Autonomous Browser] Connecting to live session for `{target_runtime_url}`...\n"
+        reasoning_parts.append(reasoning_open)
+        yield _sse({"type": "reasoning", "delta": reasoning_open})
+        yield _sse({
+            "type": "tool_call",
+            "name": "browser_open_live_session",
+            "arguments": auto_open_args,
+            "id": auto_open_id,
+        })
+        open_res = await execute_tool_call("browser_open_live_session", auto_open_args, request.user_id or "")
+        yield _sse({
+            "type": "tool_result",
+            "name": "browser_open_live_session",
+            "result": open_res,
+            "id": auto_open_id,
+        })
+        clean_open = {k: v for k, v in open_res.items() if k not in {"frame", "som_frame"}} if isinstance(open_res, dict) else open_res
+        if isinstance(clean_open, dict) and "interactive_elements" in clean_open:
+            clean_open["interactive_elements"] = [
+                {
+                    "id": el.get("id"),
+                    "tag": el.get("tag"),
+                    "text": str(el.get("text") or el.get("aria_label") or el.get("placeholder") or "")[:50],
+                    "role": el.get("role") or "",
+                    "href": el.get("href") or "",
+                }
+                for el in clean_open.get("interactive_elements", [])[:80]
+            ]
+        messages.append({
+            "role": "tool",
+            "tool_call_id": auto_open_id,
+            "content": json.dumps(clean_open, ensure_ascii=False) if not isinstance(clean_open, str) else clean_open,
+        })
+        active_session = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
+        session_exists = bool(active_session and active_session.is_connected)
+        browser_open_called = True
+
     # Autonomous agent loop: UNLIMITED iterative workspace actions until the deployment is verified healthy & running
     MAX_AGENTIC_ITERATIONS = 1000  # Virtually unlimited loop to persistently iterate and heal
     called_tool_signatures: List[str] = []
@@ -2965,11 +3117,274 @@ async def stream_agent_reply(
                 yield _sse({"type": "reasoning", "delta": concl_thought})
                 break
 
+        # Jev-Inspired System 1 Fast Decision Burst
+        # For bounded UI workflows (e.g. search, booking, forms), execute rapid state transitions in 15-200ms
+        # concurrently streaming thoughts and visual actions to the user!
+        if is_browser_test and is_targeted_test and iteration < 15:
+            from .browser_driver import browser_manager
+            from .system1_decision_engine import System1DecisionEngine, extract_goal_intent
+            cur_sess = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
+            if cur_sess and cur_sess.is_connected and cur_sess.interactive_elements:
+                goal_intent = extract_goal_intent(request.message)
+                if goal_intent.get("category") in {"travel_search", "generic_search", "form_submission"} or (goal_intent.get("origin") and goal_intent.get("destination")):
+                    sys1_engine = System1DecisionEngine()
+                    recent_micro_actions: List[Dict[str, Any]] = []
+                    max_sys1_steps = 10
+                    sys1_completed = False
+
+                    sys1_init_thought = f"• ⚡ [System 1 Fast Engine] Initiating high-speed execution pipeline for: '{request.message}'...\n"
+                    reasoning_parts.append(sys1_init_thought)
+                    yield _sse({"type": "reasoning", "delta": sys1_init_thought})
+
+                    for sys1_step in range(max_sys1_steps):
+                        if await is_cancelled():
+                            break
+
+                        allow_questions = (
+                            getattr(request, "allow_agent_questions", True)
+                            if getattr(request, "allow_agent_questions", None) is not None
+                            else (request.runtime.get("permissions", {}) if isinstance(getattr(request, "runtime", None), dict) else {}).get("allow_agent_questions", True)
+                        )
+                        page_state = {
+                            "url": cur_sess.current_url,
+                            "title": cur_sess.page_title,
+                            "interactive_elements": cur_sess.interactive_elements or [],
+                            "autocomplete_suggestions": getattr(cur_sess, "last_autocomplete_suggestions", []) or [],
+                            "allow_agent_questions": allow_questions,
+                            "alerts": getattr(cur_sess, "last_alerts", []) or [],
+                        }
+
+                        decision = await sys1_engine.decide_next_transition(goal_intent, page_state, recent_micro_actions)
+
+                        if decision.action_type == "escalate":
+                            escalate_thought = f"• 🧭 [System 1 -> System 2] Handing off to LLM planner: {decision.reason}\n"
+                            reasoning_parts.append(escalate_thought)
+                            yield _sse({"type": "reasoning", "delta": escalate_thought})
+                            break
+
+                        if decision.action_type == "ask_question":
+                            field_name = decision.input_text or "station"
+                            suggs = getattr(cur_sess, "last_autocomplete_suggestions", []) or []
+                            opt_texts = [s.get("text") for s in suggs if s.get("text")]
+                            if not opt_texts:
+                                opt_texts = [
+                                    (e.get("text") or "").strip()
+                                    for e in (cur_sess.interactive_elements or [])
+                                    if any(c in (e.get("classes") or "").lower() for c in ["autocomplete", "suggestion", "dropdown-item"])
+                                    or e.get("role") in {"option", "menuitem"}
+                                ]
+                            q_question = f"Please select an option for {field_name.title()}:"
+                            q_fields = [{
+                                "id": f"{field_name}_selection",
+                                "label": f"{field_name.title()}:",
+                                "type": "dropdown",
+                                "options": opt_texts[:8] if opt_texts else [decision.input_text],
+                                "default_value": opt_texts[0] if opt_texts else decision.input_text
+                            }]
+                            ask_call_id = f"sys1_q_{iteration}_{sys1_step}_{int(time.time()*1000)}"
+                            ask_args = {
+                                "question": q_question,
+                                "fields": q_fields
+                            }
+                            yield _sse({
+                                "type": "tool_call",
+                                "name": "ask_user_question",
+                                "arguments": ask_args,
+                                "id": ask_call_id,
+                            })
+                            question_id = f"q-{int(time.time() * 1000)}"
+                            yield _sse({
+                                "type": "agent_question",
+                                "question_id": question_id,
+                                "question": q_question,
+                                "fields": q_fields,
+                            })
+                            q_thought = f"• ❓ [Interactive Question] Multiple options detected. Awaiting your selection: {q_question}\n"
+                            reasoning_parts.append(q_thought)
+                            yield _sse({"type": "reasoning", "delta": q_thought})
+                            paused_for_permission = True
+                            sys1_completed = True
+
+                            # Append tool call and placeholder tool message to keep message history valid
+                            messages.append({
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [{
+                                    "id": ask_call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": "ask_user_question",
+                                        "arguments": json.dumps(ask_args, ensure_ascii=False),
+                                    }
+                                }]
+                            })
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": ask_call_id,
+                                "content": json.dumps({"status": "question_presented", "question": q_question, "fields": q_fields}, ensure_ascii=False),
+                            })
+
+                            yield _sse({
+                                "type": "done",
+                                "trace_id": trace_id,
+                                "provider": provider,
+                                "model": model,
+                                "content": "",
+                                "reasoning": "".join(reasoning_parts),
+                                "status": "waiting_for_user_input",
+                                "latency_ms": int((time.perf_counter() - start) * 1000),
+                                "token_usage": total_usage,
+                            })
+                            return
+
+                        if decision.action_type == "noop" and decision.is_terminal:
+                            done_thought = f"• 🎯 [System 1 Fast Engine] Goal Achieved: {decision.reason}\n"
+                            reasoning_parts.append(done_thought)
+                            yield _sse({"type": "reasoning", "delta": done_thought})
+                            sys1_completed = True
+                            break
+
+                        if decision.action_type == "noop" and not decision.is_terminal:
+                            wait_thought = f"• ⏳ [System 1 Fast Engine] {decision.reason}\n"
+                            reasoning_parts.append(wait_thought)
+                            yield _sse({"type": "reasoning", "delta": wait_thought})
+                            recent_micro_actions.append({
+                                "subtask": decision.subtask,
+                                "action_type": decision.action_type,
+                                "target_id": None,
+                                "status": "success",
+                            })
+                            await asyncio.sleep(1.0)
+                            try:
+                                await cur_sess.extract_interactive_tree()
+                            except Exception:
+                                pass
+                            continue
+
+                        # Stream reasoning delta concurrently
+                        step_thought = f"• ⚡ [System 1 Action] {decision.reason}\n"
+                        reasoning_parts.append(step_thought)
+                        yield _sse({"type": "reasoning", "delta": step_thought})
+
+                        call_id = f"sys1_call_{iteration}_{sys1_step}_{int(time.time()*1000)}"
+                        act_args = {}
+                        if decision.action_type == "click" and decision.target_element_id is not None:
+                            act_args = {"action": "click", "element_id": decision.target_element_id, "session_id": cur_sess.session_id}
+                        elif decision.action_type == "type":
+                            act_args = {
+                                "action": "type",
+                                "element_id": decision.target_element_id,
+                                "text": decision.input_text,
+                                "session_id": cur_sess.session_id,
+                            }
+                            if not allow_questions:
+                                act_args["auto_select_suggestion"] = decision.input_text
+                        elif decision.action_type == "press_enter":
+                            act_args = {"action": "press_key", "key": "Enter", "session_id": cur_sess.session_id}
+                        elif decision.action_type == "press_escape":
+                            act_args = {"action": "press_key", "key": "Escape", "session_id": cur_sess.session_id}
+
+                        if act_args:
+                            yield _sse({
+                                "type": "tool_call",
+                                "name": "browser_interact",
+                                "arguments": act_args,
+                                "id": call_id,
+                            })
+
+                            exec_res = await execute_tool_call("browser_interact", act_args, request.user_id or "")
+
+                            yield _sse({
+                                "type": "tool_result",
+                                "name": "browser_interact",
+                                "result": exec_res,
+                                "id": call_id,
+                            })
+
+                            tc_entry = {
+                                "element_id": decision.target_element_id,
+                                "label": decision.reason,
+                                "tag": "input" if decision.action_type == "type" else "button",
+                                "action": decision.action_type,
+                                "status": exec_res.get("status", "passed") if isinstance(exec_res, dict) else "passed",
+                                "target": exec_res.get("target", "") if isinstance(exec_res, dict) else "",
+                                "url": cur_sess.current_url,
+                                "title": cur_sess.page_title,
+                                "result": exec_res,
+                            }
+                            test_cases.append(tc_entry)
+                            yield _sse({"type": "test_case", "data": tc_entry})
+
+                            messages.append({
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [{
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": "browser_interact",
+                                        "arguments": json.dumps(act_args, ensure_ascii=False),
+                                    }
+                                }]
+                            })
+                            clean_res = {k: v for k, v in exec_res.items() if k not in {"frame", "som_frame"}} if isinstance(exec_res, dict) else exec_res
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": call_id,
+                                "content": json.dumps(clean_res, ensure_ascii=False) if not isinstance(clean_res, str) else clean_res,
+                            })
+
+                            called_tool_signatures.append(f"browser_interact:{json.dumps(act_args, sort_keys=True)}")
+                            recent_micro_actions.append({
+                                "subtask": decision.subtask,
+                                "action_type": decision.action_type,
+                                "target_id": decision.target_element_id,
+                                "status": "success",
+                            })
+
+                            # After search/submit button click, allow extended settle time for results page to fully render
+                            if decision.subtask == "click_search":
+                                try:
+                                    await cur_sess.wait_for_quiescence(
+                                        network_idle_ms=200,
+                                        dom_quiet_ms=150,
+                                        scroll_quiet_ms=100,
+                                        max_timeout_s=3.5,
+                                    )
+                                except Exception:
+                                    pass
+                                await asyncio.sleep(0.6)
+                            elif decision.subtask in {"select_origin_suggestion", "select_destination_suggestion"}:
+                                # PrimeNG autocomplete needs time for reactive form binding after mousedown/click
+                                await asyncio.sleep(0.25)
+                            elif decision.subtask.startswith("fill_") or decision.subtask == "set_date":
+                                # type_text() now handles autocomplete harvest+click internally;
+                                # give extra time for the post-selection DOM update
+                                await asyncio.sleep(0.3)
+                            try:
+                                await cur_sess.extract_interactive_tree()
+                                from .system1_decision_engine import extract_page_status_message
+                                status_msg = extract_page_status_message(cur_sess.interactive_elements or [])
+                                if status_msg:
+                                    if any(vkw in status_msg.lower() for vkw in ["mandatory", "required", "enter from", "enter to", "invalid station", "please select", "input is mandatory"]):
+                                        val_thought = f"• ⚠️ [DOM State Perception] Form validation alert: '{status_msg}'. Resolving required inputs...\n"
+                                        reasoning_parts.append(val_thought)
+                                        yield _sse({"type": "reasoning", "delta": val_thought})
+                                    elif any(dkw in status_msg.lower() for dkw in ["downtime", "maintenance", "not available"]):
+                                        down_thought = f"• ⚠️ [DOM State Perception] Service alert: '{status_msg}'\n"
+                                        reasoning_parts.append(down_thought)
+                                        yield _sse({"type": "reasoning", "delta": down_thought})
+                            except Exception:
+                                pass
+
+                    if paused_for_permission or sys1_completed:
+                        break
+
         # Tools remain available continuously on every turn so the agent can iterate and use tools at any time
-        if is_browser_test:
+        if is_browser_test or has_custom_target or has_active_browser_session:
             use_tools = [
                 t for t in AGENT_TOOLS
-                if t["function"]["name"].startswith("browser_") and t["function"]["name"] != "browser_close_session"
+                if (t["function"]["name"].startswith("browser_") or t["function"]["name"] == "ask_user_question") and t["function"]["name"] != "browser_close_session"
             ]
         else:
             use_tools = AGENT_TOOLS
@@ -2977,7 +3392,7 @@ async def stream_agent_reply(
         # Compact older tool outputs to preserve token budget across unlimited iterations
         compacted_messages = []
         num_msgs = len(messages)
-        keep_uncompacted = 4 if is_browser_test else 12
+        keep_uncompacted = 1 if is_targeted_test else (2 if is_browser_test else 12)
         for m_idx, m in enumerate(messages):
             if m.get("role") == "tool" and m_idx < (num_msgs - keep_uncompacted):
                 content_str = str(m.get("content", ""))
@@ -2997,13 +3412,21 @@ async def stream_agent_reply(
                     continue
             compacted_messages.append(m)
 
+        # For browser actions, generate concise tool calls instantly without rambling internal monologue
+        gen_tokens = (
+            256 if is_targeted_test else
+            (512 if is_browser_test else (8192 if request.model_mode == "thinking" else 4096))
+        )
+        gen_temp = 0.0 if is_targeted_test else (0.2 if request.model_mode == "fast" else 0.1)
+        effective_mode = "fast" if is_browser_test else request.model_mode
+
         payload = chat_payload(
             model,
             messages=compacted_messages,
-            temperature=0.2 if request.model_mode == "fast" else 0.1,
-            model_mode=request.model_mode,
+            temperature=gen_temp,
+            model_mode=effective_mode,
             stream=True,
-            max_tokens=8192 if request.model_mode == "thinking" else 4096,
+            max_tokens=gen_tokens,
             tools=use_tools,
         )
 
@@ -3418,16 +3841,18 @@ async def stream_agent_reply(
                 # or when the website has freshly transitioned to a new route that has not yet been verified:
                 should_continue_browser = False
                 continuation_msg = ""
-                if is_browser_test and is_targeted_test and iteration < 20:
+                if is_browser_test and is_targeted_test and iteration < 35:
                     from .browser_driver import browser_manager
                     cur_sess = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
                     if cur_sess and cur_sess.is_connected:
                         req_lower = (request.message or "").lower()
-                        has_creds = bool(re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", req_lower) or any(k in req_lower for k in ["email", "password", "login", "signin", "sign in", "log in"]))
-                        has_target_action = any(k in req_lower for k in ["test", "complete", "solve", "start", "check", "verify", "go to", "open", "course", "assessment", "dashboard", "after", "then", "continue", "next"])
-                        wants_multistep = has_creds or has_target_action or any(w in req_lower for w in [
-                            "then", "after", "continue", "next", "dashboard", "into the page", "check", "test", "verify", "explore", "go into"
-                        ])
+                        has_creds = bool(re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", req_lower) or any(k in req_lower for k in ["email", "password", "login", "signin", "sign in", "log in", "prefil", "prefill", "pre-fill", "credential", "customer"]))
+                        # Universal multi-step intent detection
+                        wants_multistep = any(k in req_lower for k in [
+                            "search", "find", "filter", "query", "check", "test", "verify", "solve",
+                            "fill", "enter", "type", "submit", "book", "buy", "order", "reserve",
+                            "login", "signin", "auth", "select", "choose", "navigate", "open", "go to"
+                        ]) or any(w in req_lower for w in ["then", "after", "continue", "next", "to", "from"])
 
                         nudge_count = sum(1 for m in messages if "[AUTONOMOUS MULTI-STEP CONTINUATION DIRECTIVE]" in str(m.get("content", "")))
                         curr_url_lower = (cur_sess.current_url or "").lower()
@@ -3435,26 +3860,82 @@ async def stream_agent_reply(
 
                         last_tool_msg = next((m for m in reversed(messages) if m.get("role") == "tool"), None)
                         tool_body = str(last_tool_msg.get("content", "")).lower() if last_tool_msg else ""
-                        just_interacted = any(k in tool_body for k in ["login", "signin", "submit", "password", "email", "auth", "click", "type", "next"])
+                        just_interacted = any(k in tool_body for k in [
+                            "click", "type", "select", "submit", "navigated to", "transitioned to", "input"
+                        ])
                         route_nav = "navigated to" in tool_body or "transitioned to" in tool_body
 
-                        if wants_multistep and nudge_count < 10 and (still_in_auth or just_interacted or route_nav or len(called_tool_signatures) < 8):
+                        # Universal Goal Fulfilled & Continuation State Machine:
+                        has_typed_input = any("action='type'" in sig or 'action="type"' in sig or "type" in sig.lower() for sig in called_tool_signatures)
+                        has_clicked_action = any(
+                            any(kw in sig.lower() for kw in ["submit", "search", "btn", "button", "continue", "next", "login", "confirm", "proceed", "pay", "filter", "apply"])
+                            for sig in called_tool_signatures
+                        )
+
+                        # Inspect current interactive elements for action affordances
+                        interactive_controls = cur_sess.interactive_elements or []
+                        compacted_controls = _compact_interactive_elements(interactive_controls, max_count=60)
+                        controls_summary = []
+                        primary_action_cand = None
+                        open_combobox_cand = None
+
+                        for el in compacted_controls:
+                            el_txt = (el.get("text") or el.get("placeholder") or el.get("aria_label") or "").strip()
+                            tag = (el.get("tag") or "").lower()
+                            role = (el.get("role") or "").lower()
+                            etype = (el.get("type") or "").lower()
+                            if el_txt:
+                                controls_summary.append(f"- ID {el.get('id')}: <{el.get('tag')}> \"{el_txt}\"")
+                            if role in {"option", "menuitem"} or any(c in (el.get("classes") or "").lower() for c in ["autocomplete", "dropdown-item", "suggestion"]):
+                                if not open_combobox_cand:
+                                    open_combobox_cand = f"ID {el.get('id')} ('{el_txt}')"
+                            if not primary_action_cand and (
+                                etype == "submit" or
+                                ((tag in {"button", "a", "input"} or role in {"button", "link"}) and any(kw in el_txt.lower() for kw in [
+                                    "search", "find", "submit", "continue", "next", "proceed", "confirm", "login", "sign in", "book", "apply", "filter"
+                                ]))
+                            ):
+                                if not any(skip in el_txt.lower() for skip in ["explore", "help", "support", "advisory", "notice", "skip", "close"]):
+                                    primary_action_cand = f"ID {el.get('id')} ('{el_txt}')"
+
+                        controls_text = "\n".join(controls_summary) if controls_summary else "No interactive controls found in viewport."
+
+                        # If user typed into fields, but hasn't clicked action/submit yet, and a primary button is present: definitely NOT fulfilled!
+                        unsubmitted_form = has_typed_input and not has_clicked_action and primary_action_cand is not None
+                        unresolved_combobox = open_combobox_cand is not None
+
+                        # Goal fulfilled check
+                        goal_fulfilled = False
+                        if not unsubmitted_form and not unresolved_combobox and has_clicked_action:
+                            if any(k in req_lower for k in ["book", "buy", "ticket", "checkout", "order"]) and (
+                                "/checkout" in curr_url_lower or "checkout" in curr_url_lower or "payment" in curr_url_lower or "confirmed" in tool_body or "success" in tool_body
+                            ):
+                                goal_fulfilled = True
+                            elif any(k in req_lower for k in ["search", "find", "query", "filter", "available", "schedule"]):
+                                if has_clicked_action and (route_nav or "result" in tool_body or len(called_tool_signatures) >= 3):
+                                    goal_fulfilled = True
+
+                        if wants_multistep and not goal_fulfilled and nudge_count < 25 and (unsubmitted_form or unresolved_combobox or still_in_auth or just_interacted or route_nav or len(called_tool_signatures) < 20):
                             should_continue_browser = True
-                            interactive_controls = cur_sess.interactive_elements or []
-                            controls_summary = []
-                            for el in interactive_controls[:25]:
-                                el_txt = (el.get("text") or el.get("placeholder") or el.get("aria_label") or "").strip()
-                                if el_txt:
-                                    controls_summary.append(f"- ID {el.get('id')}: <{el.get('tag')}> \"{el_txt}\"")
-                            controls_text = "\n".join(controls_summary) if controls_summary else "No interactive controls found in viewport."
+                            specific_guidance = ""
+                            if unresolved_combobox:
+                                specific_guidance = (
+                                    f"CRITICAL: Dropdown suggestion options are currently open ({open_combobox_cand}). "
+                                    f"You MUST call browser_interact(action='click', element_id=...) on the matching suggestion to select it before continuing!\n"
+                                )
+                            elif unsubmitted_form and primary_action_cand:
+                                specific_guidance = (
+                                    f"CRITICAL: You have entered input criteria, but you HAVE NOT CLICKED the primary execution button yet! "
+                                    f"You MUST call browser_interact(action='click', element_id=...) on {primary_action_cand} to execute the action and view the results!\n"
+                                )
 
                             continuation_msg = (
-                                f"[AUTONOMOUS MULTI-STEP CONTINUATION DIRECTIVE: You have not finished the user's requested goal yet!\n"
-                                f"User Instruction: '{request.message}'\n"
+                                f"[AUTONOMOUS MULTI-STEP CONTINUATION DIRECTIVE: You have not completed the user's goal yet!\n"
+                                f"Goal: '{request.message}'\n"
                                 f"Current Active Route: '{cur_sess.current_url}' ('{cur_sess.page_title}')\n"
-                                f"DO NOT conclude or output premature claims of completion. You MUST proceed to the next step.\n"
-                                f"Interactive elements available on current page:\n{controls_text}\n\n"
-                                f"Call `browser_interact` NOW with the next action to advance toward completing the user's goal!]"
+                                f"{specific_guidance}"
+                                f"SPEED & IMMEDIATE ACTION: Do not output long thinking or claims of error. Directly call `browser_interact` NOW with the next step toward completing the user's goal!\n"
+                                f"Available controls on current page:\n{controls_text}\n]"
                             )
 
                 if should_continue_browser:
@@ -3584,6 +4065,66 @@ async def stream_agent_reply(
                 "trigger_build",
             }
 
+            allow_agent_questions = (
+                getattr(request, "allow_agent_questions", True)
+                if getattr(request, "allow_agent_questions", None) is not None
+                else runtime_perms.get("allow_agent_questions", True)
+            )
+
+            if func_name == "ask_user_question":
+                q_text = str(func_args.get("question") or "Please clarify:")
+                q_fields = func_args.get("fields") or []
+                
+                # If interactive questions are disabled in settings (Autonomous Mode):
+                if not allow_agent_questions:
+                    auto_selected = {}
+                    for f in q_fields:
+                        opts = f.get("options") or []
+                        auto_selected[f.get("id", "choice")] = opts[0] if opts else f.get("default_value", "")
+                    
+                    tool_res = {
+                        "status": "autonomous_fallback",
+                        "selected": auto_selected,
+                        "note": "Autonomous mode active (interactive questions disabled in settings). Automatically selected first option."
+                    }
+                    step_desc = f"• [Autonomous Choice] Selected default option for: {q_text}\n"
+                    reasoning_parts.append(step_desc)
+                    yield _sse({"type": "reasoning", "delta": step_desc})
+                    yield _sse({"type": "tool_call", "name": func_name, "arguments": func_args, "id": tc_id})
+                    yield _sse({"type": "tool_result", "name": func_name, "result": tool_res, "id": tc_id})
+                    tool_calls_accumulator.append({
+                        "name": func_name,
+                        "arguments": func_args,
+                        "result": tool_res,
+                        "id": tc_id
+                    })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": json.dumps(tool_res, ensure_ascii=False),
+                    })
+                    continue
+                else:
+                    # Interactive question mode enabled: prompt the user with interactive in-chat card!
+                    yield _sse({
+                        "type": "tool_call",
+                        "name": func_name,
+                        "arguments": func_args,
+                        "id": tc_id,
+                    })
+                    question_id = f"q-{int(time.time() * 1000)}"
+                    yield _sse({
+                        "type": "agent_question",
+                        "question_id": question_id,
+                        "question": q_text,
+                        "fields": q_fields,
+                    })
+                    q_thought = f"• ❓ [Interactive Question] Awaiting user selection for: {q_text}\n"
+                    reasoning_parts.append(q_thought)
+                    yield _sse({"type": "reasoning", "delta": q_thought})
+                    paused_for_permission = True
+                    break
+
             needs_permission = False
             if is_mutating_tool:
                 if agent_access_mode == "ask":
@@ -3693,7 +4234,7 @@ async def stream_agent_reply(
                         "href": el.get("href") or "",
                         "is_external": bool(el.get("is_external")),
                     }
-                    for el in clean_result.get("interactive_elements", [])[:35]
+                    for el in clean_result.get("interactive_elements", [])[:80]
                 ]
                 llm_tool_content = {
                     **clean_result,
@@ -3707,11 +4248,11 @@ async def stream_agent_reply(
                         {
                             "id": el.get("id"),
                             "tag": el.get("tag"),
-                            "text": str(el.get("text") or el.get("aria_label") or "")[:35],
+                            "text": str(el.get("text") or el.get("aria_label") or "")[:50],
                             "href": el.get("href") or "",
                             "is_external": bool(el.get("is_external")),
                         }
-                        for el in clean_tool_content["interactive_elements"][:35]
+                        for el in clean_tool_content["interactive_elements"][:80]
                     ]
                 llm_tool_content = clean_tool_content
 
@@ -3745,13 +4286,42 @@ async def stream_agent_reply(
                     "result": result,
                 })
 
+            # Closed-loop perceptual verification: re-extract tree and perceptual alerts between actions
+            _cur_sess = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session() if is_browser_test else None
+            if func_name.startswith("browser_") and _cur_sess and _cur_sess.is_connected:
+                try:
+                    await _cur_sess.extract_interactive_tree()
+                    from .apv_engine import ActionPerceptionVerification
+                    post_snap = await ActionPerceptionVerification.capture_snapshot(_cur_sess)
+                    if post_snap.alerts:
+                        val_alerts = [a for a in post_snap.alerts if any(k in a.lower() for k in ["mandatory", "required", "invalid", "error", "select station"])]
+                        if val_alerts:
+                            alert_text = "; ".join(val_alerts)
+                            val_thought = f"• ⚠️ [Closed-Loop Verification] Form validation rejected action: '{alert_text}'. Halting subsequent batched actions to reconcile.\n"
+                            reasoning_parts.append(val_thought)
+                            yield _sse({"type": "reasoning", "delta": val_thought})
+                            # Append synthetic skipped tool results for remaining unexecuted tool calls
+                            remaining_indices = [k for k in tool_calls.keys() if k > idx]
+                            for rem_idx in remaining_indices:
+                                rem_tc = tool_calls[rem_idx]
+                                rem_call_id = rem_tc.get("id", f"call_{rem_idx}")
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": rem_call_id,
+                                    "content": json.dumps({"status": "skipped", "reason": f"Halted: preceding validation error: {alert_text}"}, ensure_ascii=False),
+                                })
+                            break
+                except Exception:
+                    pass
+
         if paused_for_permission:
             break
             
     # loop ends
 
     if paused_for_permission:
-        # Authorization required for a tool; halt generation immediately without synthesis
+        # Authorization required for a tool or awaiting user question input; halt generation immediately without synthesis
+        status_to_emit = "waiting_for_user_input" if getattr(request, "awaiting_user_question", False) or any("Awaiting user selection" in r for r in reasoning_parts) else "waiting_for_permission"
         yield _sse(
             {
                 "type": "done",
@@ -3760,7 +4330,7 @@ async def stream_agent_reply(
                 "model": model,
                 "content": "",
                 "reasoning": "".join(reasoning_parts),
-                "status": "waiting_for_permission",
+                "status": status_to_emit,
                 "latency_ms": int((time.perf_counter() - start) * 1000),
                 "token_usage": total_usage,
             }
@@ -3777,46 +4347,6 @@ async def stream_agent_reply(
     from .browser_driver import browser_manager
     active_session = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
     session_exists = bool(active_session and active_session.is_connected)
-
-    if is_browser_test and not session_exists and not browser_open_called:
-        auto_open_args = {"url": target_runtime_url, "session_id": request.session_id or "default"}
-        auto_open_id = f"call_auto_open_{int(time.time()*1000)}"
-        reasoning_open = f"• 🌐 [Autonomous Browser] Connecting to live session for `{target_runtime_url}`...\n"
-        reasoning_parts.append(reasoning_open)
-        yield _sse({"type": "reasoning", "delta": reasoning_open})
-        yield _sse({
-            "type": "tool_call",
-            "name": "browser_open_live_session",
-            "arguments": auto_open_args,
-            "id": auto_open_id,
-        })
-        open_res = await execute_tool_call("browser_open_live_session", auto_open_args, request.user_id or "")
-        yield _sse({
-            "type": "tool_result",
-            "name": "browser_open_live_session",
-            "result": open_res,
-            "id": auto_open_id,
-        })
-        clean_open = {k: v for k, v in open_res.items() if k not in {"frame", "som_frame"}} if isinstance(open_res, dict) else open_res
-        if isinstance(clean_open, dict) and "interactive_elements" in clean_open:
-            clean_open["interactive_elements"] = [
-                {
-                    "id": el.get("id"),
-                    "tag": el.get("tag"),
-                    "text": str(el.get("text") or el.get("aria_label") or el.get("placeholder") or "")[:50],
-                    "role": el.get("role") or "",
-                    "href": el.get("href") or "",
-                }
-                for el in clean_open.get("interactive_elements", [])[:80]
-            ]
-        messages.append({
-            "role": "tool",
-            "tool_call_id": auto_open_id,
-            "content": json.dumps(clean_open, ensure_ascii=False) if not isinstance(clean_open, str) else clean_open,
-        })
-        active_session = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
-        session_exists = bool(active_session and active_session.is_connected)
-        browser_open_called = True
 
     # Filter out any accidental skip-links or non-meaningful clicks
     test_cases = [
@@ -4417,7 +4947,7 @@ async def stream_agent_reply(
                             ext_check = await active_session.send_command("Runtime.evaluate", {
                                 "expression": """(() => {
                                     const title = document.title || '';
-                                    const bodyText = (document.body?.innerText || '').substring(0, 300).toLowerCase();
+                                    const bodyText = (document.body?.textContent || '').substring(0, 300).toLowerCase();
                                     const is404 = bodyText.includes('404') || bodyText.includes('not found') || bodyText.includes('page not found') || bodyText.includes('does not exist');
                                     const isError = bodyText.includes('error') && (bodyText.includes('500') || bodyText.includes('server error') || bodyText.includes('something went wrong'));
                                     const isForbidden = bodyText.includes('403') || bodyText.includes('forbidden') || bodyText.includes('access denied');
@@ -4797,7 +5327,58 @@ async def stream_agent_reply(
     has_executed_tools = any(m.get("role") == "tool" for m in messages)
     if has_executed_tools or not text or is_pseudo_tool_call(text) or is_scratchpad_thought(text):
         content_parts.clear()
-        if has_browser_tests:
+        if is_targeted_test:
+            from .system1_decision_engine import extract_listing_entities, extract_page_status_message
+            from .browser_driver import browser_manager
+            active_sess = browser_manager.sessions.get(request.session_id or "default") or browser_manager.get_active_session()
+            live_entities = extract_listing_entities(active_sess.interactive_elements or []) if active_sess else []
+            curr_url = active_sess.current_url if active_sess else target_runtime_url
+            page_title = active_sess.page_title if active_sess else ""
+
+            # Extract live page body text for DOM context awareness (maintenance banners, error toasts)
+            body_text = ""
+            if active_sess and active_sess.is_connected:
+                try:
+                    body_text = await active_sess.evaluate("document.body?.textContent?.substring(0, 3000) || ''") or ""
+                except Exception:
+                    pass
+
+            # Detect live site status messages (maintenance downtime, validation errors, alert banners)
+            page_status = extract_page_status_message(active_sess.interactive_elements or [], body_text) if active_sess else None
+            
+            # Extract real executed actions
+            executed_actions_summary = ""
+            if test_cases:
+                action_lines = []
+                for tc in test_cases:
+                    action_lines.append(f"- Action: {tc.get('action')} on '{tc.get('label')}' (target: {tc.get('target', '')}) -> status: {tc.get('status')}")
+                executed_actions_summary = "Actions physically executed in the browser:\n" + "\n".join(action_lines) + "\n"
+
+            results_info = ""
+            if live_entities:
+                entity_rows = "\n".join([f"- **{e.get('title', 'Item')}**: {e.get('raw_text', '')}" for e in live_entities])
+                results_info = f"\nVerified live search results/listings extracted directly from the webpage ({len(live_entities)} items):\n{entity_rows}\n"
+            else:
+                results_info = "\nNO LIVE SEARCH RESULTS OR LISTINGS WERE EXTRACTED FROM THE CURRENT PAGE DOM. You MUST explicitly state to the user that no listings/results were found on the current page, and detail what the current page is showing.\n"
+
+            status_info = ""
+            if page_status:
+                status_info = f"\n⚠️ LIVE PAGE STATUS ALERT (extracted from DOM): {page_status}\n"
+
+            synth_prompt = (
+                f"Browser session on '{curr_url}' ('{page_title}') for user request: \"{request.message}\".\n\n"
+                f"{executed_actions_summary}\n"
+                f"{status_info}"
+                f"{results_info}\n"
+                f"Present a strictly factual and accurate summary to the user in clean Markdown:\n"
+                f"1. Detail the exact actions physically executed in the browser session.\n"
+                f"2. Present the live search results: If listings or items are listed above, generate a clear structured summary of all available options/results (Titles, Attributes, Pricing/Details, Actions).\n"
+                f"CRITICAL GROUNDING MANDATE: You MUST NEVER invent, hallucinate, or output placeholder brackets (such as '[Product Name]', '[Price]', '[Details]', '[Train Name]')! "
+                f"Report only real verified data. If results were not yet visible or an advisory dialog was present, truthfully report the current page status.\n"
+                f"3. If a LIVE PAGE STATUS ALERT was detected (maintenance downtime, error banner, validation message), report it VERBATIM to the user as the reason results may not be available.\n"
+                f"4. State the current active page URL (`{curr_url}`)."
+            )
+        elif has_browser_tests:
             synth_prompt = (
                 "All live browser test interactions, UI button clicks, and DOM verifications have completed.\n"
                 "Format a comprehensive Markdown Test Report detailing the entire testing session.\n\n"
@@ -4850,15 +5431,6 @@ async def stream_agent_reply(
                 "### 🚀 Verification & Live Service Status\n"
                 "Detail the rebuild verification results, the final deployment status, and the runtime URL (if available).\n\n"
                 "IMPORTANT: Do NOT output raw scratchpad thinking, JSON, tool calls, or pseudo tool blocks. Provide your entire response in clear Markdown prose."
-            )
-        elif is_targeted_test:
-            synth_prompt = (
-                f"All browser interactions for targeted instruction: \"{request.message}\" have finished.\n"
-                f"Now present your comprehensive, clear, and accurate response to the user in clean Markdown:\n"
-                f"1. Detail each action executed in sequence (e.g. credentials entered, Next/Login clicked, post-login navigation to Courses/Dashboard, opening the target test).\n"
-                f"2. Explicitly report the exact status of the user's requested goal (e.g. whether 2027_Infosys_CSMT / 2nd test was reached, attempt details, questions, marks, or test status).\n"
-                f"3. State the current active page URL and next steps if applicable.\n\n"
-                f"IMPORTANT: Do NOT output JSON, raw code, or pseudo tool blocks. Provide your response in clear Markdown prose."
             )
         else:
             synth_prompt = (
@@ -5445,24 +6017,45 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
         try:
             if ev.get("type") == "frame":
                 metadata = ev.get("metadata") or {}
+                codec = metadata.get("codec")
+                is_h264 = codec in {"h264", "avc1"}
                 is_kf = bool(metadata.get("isKeyFrame", False))
 
-                if frame_queue.full():
-                    # Severe network congestion: clear stale GOP and await next clean keyframe
-                    while not frame_queue.empty():
+                if not is_h264:
+                    # JPEG / CDP screencast frames: each frame is completely self-contained.
+                    # Never drop until keyframe. Always maintain a fresh sliding window.
+                    _dropping_until_kf[0] = False
+                    if frame_queue.full():
                         try:
                             frame_queue.get_nowait()
                         except asyncio.QueueEmpty:
-                            break
-                    _dropping_until_kf[0] = True
-
-                if _dropping_until_kf[0]:
+                            pass
+                    frame_queue.put_nowait(ev)
+                else:
+                    # H.264 video frame handling
                     if is_kf:
                         _dropping_until_kf[0] = False
+                        # Flush stale delta backlog to eliminate latency buffer bloat
+                        while not frame_queue.empty():
+                            try:
+                                frame_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
                         frame_queue.put_nowait(ev)
-                    # Suppress orphaned delta frames until next IDR keyframe arrives
-                else:
-                    frame_queue.put_nowait(ev)
+                    elif _dropping_until_kf[0]:
+                        # Suppress orphaned delta frames until next clean IDR keyframe arrives
+                        pass
+                    else:
+                        if frame_queue.full():
+                            # Queue saturated: flush stale frames and await next IDR keyframe
+                            while not frame_queue.empty():
+                                try:
+                                    frame_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            _dropping_until_kf[0] = True
+                        else:
+                            frame_queue.put_nowait(ev)
             elif ev.get("type") == "cursor_action" and ev.get("action") == "move":
                 # Smooth 60 FPS cursor positioning
                 now = time.time()
@@ -5552,7 +6145,9 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
                             "title": session.page_title,
                             "elements": session.interactive_elements,
                         })
-                        if getattr(session, "_last_raw_jpeg", None):
+                        if getattr(session, "_last_keyframe_packet", None):
+                            await safe_send_bytes(session._last_keyframe_packet)
+                        elif getattr(session, "_last_raw_jpeg", None):
                             ts_ms = int(time.time() * 1000)
                             header = struct.pack(">2sIQH", b"SP", session._frame_seq, ts_ms, 2)
                             packet = header + b"{}" + session._last_raw_jpeg
@@ -5602,6 +6197,25 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
                         session.remove_listener(on_browser_event)
                     active_session.add_listener(on_browser_event)
                     session = active_session
+
+                # Deliver instant-on keyframe or latest snapshot immediately upon attach
+                try:
+                    if getattr(active_session, "_last_keyframe_packet", None):
+                        await safe_send_bytes(active_session._last_keyframe_packet)
+                    elif getattr(active_session, "_last_raw_jpeg", None):
+                        ts_ms = int(time.time() * 1000)
+                        header = struct.pack(">2sIQH", b"SP", active_session._frame_seq, ts_ms, 2)
+                        packet = header + b"{}" + active_session._last_raw_jpeg
+                        await safe_send_bytes(packet)
+                    elif active_session.latest_frame:
+                        await safe_send_json({
+                            "type": "frame",
+                            "data": active_session.latest_frame,
+                            "seq": active_session._frame_seq,
+                            "timestamp": time.time(),
+                        })
+                except Exception:
+                    pass
 
                 async def fetch_page_state(sess):
                     try:
@@ -5655,8 +6269,11 @@ async def websocket_browser_stream(websocket: WebSocket, session_id: str):
                 elif msg_type == "user_navigate":
                     url = str(msg.get("url", ""))
                     if url:
-                        await active_session.navigate(url)
-                        await active_session.extract_interactive_tree()
+                        curr_clean = (active_session.current_url or "").rstrip("/").lower()
+                        req_clean = url.rstrip("/").lower()
+                        if curr_clean != req_clean:
+                            await active_session.navigate(url)
+                            await active_session.extract_interactive_tree()
                 elif msg_type == "refresh_elements":
                     state = await active_session.extract_interactive_tree()
                     await safe_send_json({

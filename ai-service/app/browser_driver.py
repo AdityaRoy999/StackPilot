@@ -371,7 +371,7 @@ class BrowserSession:
         except Exception:
             pass
 
-    async def send_command(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 10.0) -> Any:
+    async def send_command(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 3.5) -> Any:
         if not self.cdp_ws or not self.is_connected:
             raise RuntimeError("CDP WebSocket is not connected.")
         msg_id = self._next_id()
@@ -565,37 +565,33 @@ class BrowserSession:
             pass
 
     async def connect(self):
-        """Creates a browser tab via CDP HTTP endpoint and connects via WebSocket."""
-        # 1. Reuse existing tab if available, clean up stale background tabs
+        """Creates or reuses a browser tab via CDP HTTP endpoint and connects via WebSocket."""
         headers = {"Host": "localhost"}
         async with httpx.AsyncClient(timeout=6.0, headers=headers) as client:
+            target_data = None
             try:
                 list_resp = await client.get(f"{CHROME_HOST}/json/list")
                 if list_resp.status_code == 200:
-                    tabs = list_resp.json()
-                    page_tabs = [t for t in tabs if t.get("type") == "page"]
+                    page_tabs = [t for t in list_resp.json() if t.get("type") == "page"]
                     if page_tabs:
-                        first_tab = page_tabs[0]
-                        self.target_id = first_tab.get("id")
-                        raw_ws = first_tab.get("webSocketDebuggerUrl")
-                        # Close extra background tabs that waste CPU and memory
-                        for extra_tab in page_tabs[1:]:
+                        target_data = page_tabs[0]
+                        # Close orphan extra popup tabs in the background
+                        for tab in page_tabs[1:]:
                             try:
-                                await client.put(f"{CHROME_HOST}/json/close/{extra_tab.get('id')}")
+                                await client.put(f"{CHROME_HOST}/json/close/{tab.get('id')}")
                             except Exception:
                                 pass
             except Exception as e:
-                logger.debug(f"Tab cleanup notice: {e}")
+                logger.debug(f"Tab list notice: {e}")
 
-            if not self.target_id:
-                resp = await client.put(f"{CHROME_HOST}/json/new?{self.target_url}")
-                if resp.status_code != 200:
-                    resp = await client.put(f"{CHROME_HOST}/json/new")
-                data = resp.json()
-                self.target_id = data.get("id")
-                raw_ws = data.get("webSocketDebuggerUrl")
-                if not raw_ws:
-                    raise RuntimeError(f"Could not get webSocketDebuggerUrl from Chromium: {data}")
+            if not target_data:
+                resp = await client.put(f"{CHROME_HOST}/json/new")
+                target_data = resp.json()
+
+            self.target_id = target_data.get("id")
+            raw_ws = target_data.get("webSocketDebuggerUrl")
+            if not raw_ws:
+                raise RuntimeError(f"Could not get webSocketDebuggerUrl from Chromium: {target_data}")
 
             # Correct hostname if running in docker
             # Chromium may report ws://127.0.0.1:9222, rewrite to CHROME_HOST host/port
@@ -644,6 +640,26 @@ class BrowserSession:
                 "source": """
                 (() => {
                     try {
+                        // WebGL Defensive Polyfill: Prevent Three.js/Canvas crashes on headless Chromium software contexts
+                        if (typeof WebGLRenderingContext !== 'undefined') {
+                            const origGetParam = WebGLRenderingContext.prototype.getParameter;
+                            WebGLRenderingContext.prototype.getParameter = function(p) {
+                                if (p === this.VERSION || p === 0x1F02) {
+                                    return origGetParam.apply(this, arguments) || 'WebGL 1.0 (OpenGL ES 2.0 Chromium)';
+                                }
+                                return origGetParam.apply(this, arguments);
+                            };
+                        }
+                        if (typeof WebGL2RenderingContext !== 'undefined') {
+                            const origGetParam2 = WebGL2RenderingContext.prototype.getParameter;
+                            WebGL2RenderingContext.prototype.getParameter = function(p) {
+                                if (p === this.VERSION || p === 0x1F02) {
+                                    return origGetParam2.apply(this, arguments) || 'WebGL 2.0 (OpenGL ES 3.0 Chromium)';
+                                }
+                                return origGetParam2.apply(this, arguments);
+                            };
+                        }
+
                         window.open = function(url) {
                             if (url) window.location.href = url;
                             return window;
@@ -994,13 +1010,6 @@ class BrowserSession:
         except Exception as e:
             logger.warning(f"Failed to inject scroll & ripple scripts: {e}")
 
-        # Guarantee initial navigation to target URL if specified
-        if self.target_url and self.target_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
-            try:
-                await self.navigate(self.target_url)
-            except Exception as e:
-                logger.warning(f"Initial navigation in connect() failed: {e}")
-
     async def capture_screenshot(self, quality: int = 60, use_cache: bool = False) -> Optional[str]:
         """Captures a direct JPEG screenshot from Chromium via CDP or returns cached frame."""
         if use_cache and self.latest_frame:
@@ -1143,32 +1152,61 @@ class BrowserSession:
 
     async def check_active_modal_or_overlay(self) -> Dict[str, Any]:
         """
-        Checks if a modal dialog, drawer, or subview overlay is actively visible on the page.
+        Checks if a modal dialog, drawer, alert popup, or subview overlay is actively visible on the page.
         Returns:
             {"is_modal": bool, "type": str, "title": str, "back_btn_text": str}
         """
         try:
             res = await self.send_command("Runtime.evaluate", {
                 "expression": """(() => {
-                    // 1. Explicit ARIA / Dialog elements
-                    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open], .modal.show, [class*="modal"][class*="open"], [class*="Modal_open"]'));
+                    // 1. Explicit ARIA / Dialog elements (including PrimeNG, Angular CDK, SweetAlert2, AntD, Bootstrap)
+                    const dialogSelectors = [
+                        '[role="dialog"]',
+                        '[role="alertdialog"]',
+                        '[aria-modal="true"]',
+                        'dialog[open]',
+                        '.ui-dialog',
+                        '.p-dialog',
+                        '.cdk-overlay-pane',
+                        '.swal2-container',
+                        '.modal.show',
+                        '.ant-modal-wrap',
+                        '[class*="modal"][class*="open"]',
+                        '[class*="Modal_open"]',
+                        '[class*="dialog-content"]',
+                        '[class*="modal-content"]'
+                    ];
+                    const dialogs = Array.from(document.querySelectorAll(dialogSelectors.join(', ')));
                     for (const dialog of dialogs) {
                         const style = window.getComputedStyle(dialog);
                         if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0.1) {
                             const rect = dialog.getBoundingClientRect();
-                            if (rect.width > 150 && rect.height > 100) {
-                                const heading = dialog.querySelector('h1, h2, h3, h4, [class*="title"]');
+                            if (rect.width > 120 && rect.height > 80) {
+                                const heading = dialog.querySelector('h1, h2, h3, h4, [class*="title"], [class*="header"]');
                                 return {
                                     is_modal: true,
                                     type: 'dialog',
-                                    title: heading ? heading.innerText.trim() : 'Modal Dialog',
+                                    title: heading ? (heading.textContent || '').trim() : 'Modal Dialog',
                                     back_btn_text: ''
                                 };
                             }
                         }
                     }
 
-                    // 2. Fixed/absolute overlay covering substantial viewport with high z-index
+                    // 2. Fixed/absolute overlay covering substantial viewport with high z-index or active mask
+                    const masks = Array.from(document.querySelectorAll('.ui-dialog-mask, .p-dialog-mask, .modal-backdrop, .cdk-overlay-backdrop')).filter(m => {
+                        const style = window.getComputedStyle(m);
+                        return style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0.05;
+                    });
+                    if (masks.length > 0) {
+                        return {
+                            is_modal: true,
+                            type: 'dialog_mask',
+                            title: 'Active Dialog Overlay',
+                            back_btn_text: ''
+                        };
+                    }
+
                     const fixedEls = Array.from(document.querySelectorAll('div, section, aside, article')).filter(el => {
                         const style = window.getComputedStyle(el);
                         if (style.position === 'fixed' || (style.position === 'absolute' && parseInt(style.zIndex, 10) >= 10)) {
@@ -1188,19 +1226,19 @@ class BrowserSession:
                     });
                     if (fixedEls.length > 0) {
                         const topEl = fixedEls[fixedEls.length - 1];
-                        const heading = topEl.querySelector('h1, h2, h3, h4');
+                        const heading = topEl.querySelector('h1, h2, h3, h4, [class*="title"]');
                         const backBtn = topEl.querySelector('button, a');
                         return {
                             is_modal: true,
                             type: 'fixed_overlay',
-                            title: heading ? heading.innerText.trim() : 'Active Overlay',
-                            back_btn_text: backBtn ? backBtn.innerText.trim() : ''
+                            title: heading ? (heading.textContent || '').trim() : 'Active Overlay',
+                            back_btn_text: backBtn ? (backBtn.textContent || '').trim() : ''
                         };
                     }
 
                     // 3. In-page Subview with prominent "Back to..." / "← Back" button near top of screen
                     const candidateBacks = Array.from(document.querySelectorAll('button, a')).filter(b => {
-                        const t = (b.innerText || '').trim().toLowerCase();
+                        const t = (b.textContent || '').trim().toLowerCase();
                         return t.includes('back to') || t.includes('← back') || t === 'back' || t.includes('return to');
                     });
                     for (const b of candidateBacks) {
@@ -1209,8 +1247,8 @@ class BrowserSession:
                             return {
                                 is_modal: true,
                                 type: 'subview_with_back',
-                                title: b.innerText.trim(),
-                                back_btn_text: b.innerText.trim()
+                                title: (b.textContent || '').trim(),
+                                back_btn_text: (b.textContent || '').trim()
                             };
                         }
                     }
@@ -1227,38 +1265,59 @@ class BrowserSession:
             return {"is_modal": False, "type": "none", "title": "", "back_btn_text": ""}
 
     async def dismiss_active_modal(self) -> bool:
-        """Dismisses any open modal or overlay via in-page close button, back button, in-DOM Escape dispatch, and CDP Escape key."""
+        """
+        Dismisses any open modal or overlay via:
+        1. In-modal acknowledgment/continue/language buttons (English, Hindi, OK, Accept, Got it, Continue, Close).
+        2. Close buttons and 'X' icons (including PrimeNG .ui-dialog-titlebar-close, .p-dialog-header-close).
+        3. In-page back buttons for subviews/case studies.
+        4. In-DOM and CDP Escape keyboard event dispatch.
+        5. Removal of stale or blocking backdrop masks.
+        """
         try:
             res = await self.send_command("Runtime.evaluate", {
                 "expression": """(() => {
                     if (window.__EXPLORER_ENGINE__ && typeof window.__EXPLORER_ENGINE__.dismissModal === 'function') {
                         if (window.__EXPLORER_ENGINE__.dismissModal()) return true;
                     }
-                    // 1. Try in-page back buttons for subviews/case studies (e.g. "Back to Projects")
-                    const backButtons = Array.from(document.querySelectorAll('button, a')).filter(el => {
-                        const txt = (el.innerText || '').trim().toLowerCase();
-                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                        return (
-                            txt.includes('back to') ||
-                            txt.includes('← back') ||
-                            txt === 'back' ||
-                            txt.includes('return to') ||
-                            txt.includes('close case study') ||
-                            txt.includes('close modal') ||
-                            aria.includes('back') ||
-                            aria.includes('close')
-                        );
+
+                    // 1. Multilingual Acknowledgement / Confirmation / Language buttons
+                    const confirmKeywords = [
+                        'english', 'ok', 'okay', 'got it', 'accept', 'agree', 'i agree', 'continue',
+                        'proceed', 'confirm', 'enter', 'yes', 'allow', 'done', 'close', 'dismiss', 'skip',
+                        'हिंदी', 'स्वीकार', 'जारी रखें', 'ठीक है', 'बंद करें', 'आगे बढ़ें', 'सहमति'
+                    ];
+
+                    const modalContainers = Array.from(document.querySelectorAll(
+                        '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open], ' +
+                        '.ui-dialog, .p-dialog, .swal2-container, .modal.show, .ant-modal, .cdk-overlay-pane, ' +
+                        '[class*="modal"][class*="open"], [class*="Modal_open"]'
+                    )).filter(el => {
+                        const s = window.getComputedStyle(el);
+                        return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') > 0.1;
                     });
-                    for (const btn of backButtons) {
-                        const rect = btn.getBoundingClientRect();
-                        if (rect.width > 0 && rect.height > 0 && rect.top <= 300) {
-                            btn.click();
-                            return true;
+
+                    for (const modal of modalContainers) {
+                        const btns = Array.from(modal.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]'));
+                        // Priority A: 'English' or standard 'OK' / 'Got it'
+                        for (const b of btns) {
+                            const txt = (b.textContent || b.getAttribute('aria-label') || b.value || '').trim().toLowerCase();
+                            if (txt === 'english' || txt.includes('english') || txt === 'ok' || txt === 'okay' || txt === 'got it' || txt === 'accept' || txt === 'agree' || txt === 'i agree' || txt === 'continue' || txt === 'proceed') {
+                                try { b.click(); return true; } catch(e) {}
+                            }
+                        }
+                        // Priority B: Other confirmation keywords including multilingual
+                        for (const b of btns) {
+                            const txt = (b.textContent || b.getAttribute('aria-label') || b.value || '').trim().toLowerCase();
+                            if (confirmKeywords.some(kw => txt === kw || txt.includes(kw))) {
+                                try { b.click(); return true; } catch(e) {}
+                            }
                         }
                     }
 
-                    // 2. Standard modal close button selectors
+                    // 2. Standard modal close button selectors (including PrimeNG and Angular CDK)
                     const closeSelectors = [
+                        '.ui-dialog-titlebar-close',
+                        '.p-dialog-header-close',
                         '[role="dialog"] [class*="close"]',
                         '[role="dialog"] button[aria-label*="close" i]',
                         '[aria-modal="true"] [class*="close"]',
@@ -1280,10 +1339,44 @@ class BrowserSession:
                             return true;
                         }
                     }
+
+                    // 3. Try in-page back buttons for subviews/case studies (e.g. "Back to Projects")
+                    const backButtons = Array.from(document.querySelectorAll('button, a')).filter(el => {
+                        const txt = (el.textContent || '').trim().toLowerCase();
+                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                        return (
+                            txt.includes('back to') ||
+                            txt.includes('← back') ||
+                            txt === 'back' ||
+                            txt.includes('return to') ||
+                            txt.includes('close case study') ||
+                            txt.includes('close modal') ||
+                            aria.includes('back') ||
+                            aria.includes('close')
+                        );
+                    });
+                    for (const btn of backButtons) {
+                        const rect = btn.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0 && rect.top <= 300) {
+                            btn.click();
+                            return true;
+                        }
+                    }
+
+                    // 4. In-DOM Escape dispatch
                     const esc = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
                     window.dispatchEvent(esc);
                     document.dispatchEvent(esc);
                     if (document.activeElement) document.activeElement.dispatchEvent(esc);
+
+                    // 5. Hide leftover backdrop masks that intercept clicks
+                    document.querySelectorAll('.ui-dialog-mask, .p-dialog-mask, .modal-backdrop, .cdk-overlay-backdrop').forEach(m => {
+                        try {
+                            m.style.display = 'none';
+                            m.style.pointerEvents = 'none';
+                        } catch(e) {}
+                    });
+
                     return true;
                 })()""",
                 "returnByValue": True
@@ -1311,17 +1404,23 @@ class BrowserSession:
         except Exception:
             pass
 
-        # Ensure no persistent blocking modals remain visible
+        # Ensure no persistent blocking modals or masks remain visible
         try:
             await self.send_command("Runtime.evaluate", {
                 "expression": """(() => {
-                    const openModals = Array.from(document.querySelectorAll('[role="dialog"], dialog[open], .modal.active, .modal.show'))
+                    const openModals = Array.from(document.querySelectorAll('[role="dialog"], dialog[open], .ui-dialog, .p-dialog, .modal.active, .modal.show'))
                         .filter(m => window.getComputedStyle(m).display !== 'none');
                     for (const m of openModals) {
                         if (typeof m.close === 'function') m.close();
                         m.classList.remove('active');
                         m.classList.remove('show');
                     }
+                    document.querySelectorAll('.ui-dialog-mask, .p-dialog-mask, .modal-backdrop, .cdk-overlay-backdrop').forEach(m => {
+                        try {
+                            m.style.display = 'none';
+                            m.style.pointerEvents = 'none';
+                        } catch(e) {}
+                    });
                     return true;
                 })()""",
                 "returnByValue": True
@@ -1330,6 +1429,127 @@ class BrowserSession:
             return True
         except Exception:
             return True
+
+    async def auto_dismiss_startup_modals(self) -> bool:
+        """
+        Universally inspects and dismisses startup modal dialogs, alert popups, language selection modals,
+        and cookie banners that appear immediately on page load across any framework and language.
+        """
+        dismiss_js = """
+        (() => {
+            const confirmKeywords = [
+                'english', 'ok', 'okay', 'got it', 'accept', 'agree', 'i agree', 'continue', 'proceed', 'confirm',
+                'enter', 'yes', 'allow', 'done', 'close', 'dismiss', 'skip',
+                'हिंदी', 'स्वीकार', 'जारी रखें', 'ठीक है', 'बंद करें', 'आगे बढ़ें', 'सहमति'
+            ];
+
+            const modalSelectors = [
+                '[role="dialog"]',
+                '[role="alertdialog"]',
+                '[aria-modal="true"]',
+                'dialog[open]',
+                '.ui-dialog',
+                '.p-dialog',
+                '.cdk-overlay-pane',
+                '.swal2-container',
+                '.modal.show',
+                '.ant-modal-wrap',
+                '[class*="modal"][class*="open"]',
+                '[class*="alert"][class*="dialog"]'
+            ];
+
+            let activeModal = null;
+            for (const sel of modalSelectors) {
+                const els = Array.from(document.querySelectorAll(sel));
+                for (const el of els) {
+                    const style = window.getComputedStyle(el);
+                    if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0.1) {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width >= 120 && rect.height >= 80) {
+                            activeModal = el;
+                            break;
+                        }
+                    }
+                }
+                if (activeModal) break;
+            }
+
+            if (!activeModal) {
+                const fixedEls = Array.from(document.querySelectorAll('div, section, aside')).filter(el => {
+                    const style = window.getComputedStyle(el);
+                    if (style.position === 'fixed' || (style.position === 'absolute' && parseInt(style.zIndex, 10) >= 100)) {
+                        const z = parseInt(style.zIndex, 10);
+                        if (!isNaN(z) && z >= 100) {
+                            const rect = el.getBoundingClientRect();
+                            return (
+                                rect.width >= window.innerWidth * 0.35 &&
+                                rect.height >= window.innerHeight * 0.25 &&
+                                style.visibility !== 'hidden' &&
+                                style.display !== 'none' &&
+                                parseFloat(style.opacity || '1') > 0.5
+                            );
+                        }
+                    }
+                    return false;
+                });
+                if (fixedEls.length > 0) {
+                    activeModal = fixedEls[fixedEls.length - 1];
+                }
+            }
+
+            if (!activeModal) return false;
+
+            const candidates = Array.from(activeModal.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]'));
+            
+            // Priority A: Preferred language button (English) or universal OK/Got it/Accept button
+            for (const btn of candidates) {
+                const txt = (btn.textContent || btn.getAttribute('aria-label') || btn.value || '').trim().toLowerCase();
+                if (txt === 'english' || txt.includes('english') || txt === 'ok' || txt === 'okay' || txt === 'got it' || txt === 'i agree' || txt === 'accept' || txt === 'agree' || txt === 'continue' || txt === 'proceed') {
+                    try {
+                        btn.click();
+                        return { dismissed: true, target: txt, type: 'button_click' };
+                    } catch(e) {}
+                }
+            }
+
+            // Priority B: Hindi / Multilingual buttons
+            for (const btn of candidates) {
+                const txt = (btn.textContent || btn.getAttribute('aria-label') || btn.value || '').trim().toLowerCase();
+                for (const kw of confirmKeywords) {
+                    if (txt === kw || txt.includes(kw)) {
+                        try {
+                            btn.click();
+                            return { dismissed: true, target: txt, type: 'multilingual_click' };
+                        } catch(e) {}
+                    }
+                }
+            }
+
+            // Priority C: Close / 'X' buttons
+            const closeBtn = activeModal.querySelector('.ui-dialog-titlebar-close, .p-dialog-header-close, button[aria-label*="close" i], button[title*="close" i], .close, .modal-close, [class*="close"], [data-dismiss="modal"]');
+            if (closeBtn && typeof closeBtn.click === 'function') {
+                closeBtn.click();
+                return { dismissed: true, target: 'close_btn', type: 'close_click' };
+            }
+
+            // Priority D: Fallback Escape event
+            const esc = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
+            activeModal.dispatchEvent(esc);
+            document.dispatchEvent(esc);
+
+            return { dismissed: true, target: 'escape', type: 'escape_dispatched' };
+        })()
+        """
+        try:
+            res = await self.send_command("Runtime.evaluate", {"expression": dismiss_js, "returnByValue": True}, timeout=1.5)
+            val = res.get("result", {}).get("value")
+            if isinstance(val, dict) and val.get("dismissed"):
+                logger.info(f"Auto-dismissed startup modal/alert on '{self.current_url}': {val}")
+                await self.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=0.8, fast_mode=True)
+                return True
+        except Exception as e:
+            logger.debug(f"auto_dismiss_startup_modals notice: {e}")
+        return False
 
     async def force_fresh_frame(self) -> Optional[str]:
         """Forces Chromium to render and capture an immediate fresh frame, broadcasting it to live stream listeners."""
@@ -1370,14 +1590,14 @@ class BrowserSession:
             logger.debug(f"force_fresh_frame notice: {e}")
         return self.latest_frame
 
-    async def evaluate(self, expression: str) -> Any:
+    async def evaluate(self, expression: str, timeout: float = 2.5) -> Any:
         """Evaluates a JavaScript expression in the page context and returns the value."""
         try:
             res = await self.send_command("Runtime.evaluate", {
                 "expression": expression,
                 "returnByValue": True,
                 "awaitPromise": True,
-            })
+            }, timeout=timeout)
             return res.get("result", {}).get("value")
         except Exception as e:
             logger.debug(f"evaluate error: {e}")
@@ -1499,10 +1719,15 @@ class BrowserSession:
                 pass
 
         # 1. Network quiescence check
-        while (time.time() - start) < (max_timeout_s * 0.3):
+        now_ts = time.time()
+        stale_keys = [k for k, start_t in self._inflight_requests.items() if (now_ts - start_t) > 1.5]
+        for k in stale_keys:
+            self._inflight_requests.pop(k, None)
+
+        while (time.time() - start) < (max_timeout_s * 0.25):
             inflight = len(self._inflight_requests)
             quiet_time = (time.time() - self._last_network_activity) * 1000
-            if inflight == 0 and quiet_time >= (network_idle_ms * 0.3):
+            if inflight == 0 or quiet_time >= (network_idle_ms * 0.3):
                 break
             await asyncio.sleep(0.01)
 
@@ -1623,38 +1848,36 @@ class BrowserSession:
         self,
         pre_url: str = "",
         is_transition: bool = False,
-        min_grace_ms: int = 350,
-        max_timeout_s: float = 10.0,
+        min_grace_ms: int = 35,
+        max_timeout_s: float = 1.2,
+        fast_mode: bool = False,
     ) -> bool:
         """
         Wait until an action (form submission, login, button click, route navigation)
-        has completely finished executing on the website.
-        
-        1. Grace Period: Pause min_grace_ms (350ms) to allow Blink event loop, React dispatchers,
-           and network fetch/XHR calls to register in CDP _inflight_requests.
-        2. Network Quiescence: If requests are in flight, wait until _inflight_requests drops to 0
-           and stays quiet for at least 200ms.
-        3. Document & Visual Settling:
-           - Check document.readyState === 'complete'.
-           - Detect loading spinners, progress bars, aria-busy="true", or disabled submitting buttons.
-           - Wait until all busy states clear.
-        4. SPA / Route Transition Settling:
-           - If window.location.href changed from pre_url, wait an additional 400ms
-             for React components to mount, hydrate, and layout.
-        5. Quad-Phase DOM quiescence (double RAF + mutation settling).
+        has completely finished executing on the website with sub-second responsiveness.
         """
+        if fast_mode:
+            min_grace_ms = min(min_grace_ms, 15)
+            max_timeout_s = min(max_timeout_s, 0.25)
         start = time.time()
-        # 1. Mandatory grace period for action dispatch and event initiation
+        # 1. Brief grace period for action dispatch and event initiation
         await asyncio.sleep(min_grace_ms / 1000.0)
 
-        # 2. Wait for in-flight network requests (up to max_timeout_s)
-        network_wait_limit = max_timeout_s if is_transition else min(3.0, max_timeout_s)
+        # 2. Purge stale inflight requests and wait for short-lived network activity
+        now_ts = time.time()
+        stale_keys = [k for k, start_t in self._inflight_requests.items() if (now_ts - start_t) > 1.5]
+        for k in stale_keys:
+            self._inflight_requests.pop(k, None)
+
+        network_wait_limit = min(max_timeout_s, 0.25 if is_transition else (0.05 if fast_mode else 0.12))
         while (time.time() - start) < network_wait_limit:
             inflight = len(self._inflight_requests)
-            quiet_time = (time.time() - self._last_network_activity) * 1000
-            if inflight == 0 and quiet_time >= 200:
+            if inflight == 0:
                 break
-            await asyncio.sleep(0.05)
+            quiet_time = (time.time() - self._last_network_activity) * 1000
+            if quiet_time >= (15 if fast_mode else 35):
+                break
+            await asyncio.sleep(0.01)
 
         # 3. Check for document loading or visible spinners / busy states in DOM
         busy_check_js = """
@@ -1669,31 +1892,34 @@ class BrowserSession:
             }
             const disBtns = Array.from(document.querySelectorAll('button[disabled], input[type="submit"][disabled]'));
             for (const b of disBtns) {
-                const t = (b.innerText || b.value || '').toLowerCase();
-                if (t.includes('log') || t.includes('wait') || t.includes('load') || t.includes('submit')) return true;
+                const t = (b.innerText || b.value || '').toLowerCase().trim();
+                // Never treat static disabled buttons (e.g. waitlist, unauthenticated login) as loading spinners
+                if (t.includes('waitlist') || t === 'log in' || t === 'login' || t.includes('log in')) continue;
+                if (t.includes('submitting...') || t.includes('processing...') || t.includes('please wait') || t.includes('loading...')) return true;
             }
             return false;
         })()
         """
-        while (time.time() - start) < max_timeout_s:
+        busy_limit = min(max_timeout_s, 0.6 if is_transition else 0.15)
+        while (time.time() - start) < busy_limit:
             try:
                 chk = await self.send_command("Runtime.evaluate", {
                     "expression": busy_check_js,
                     "returnByValue": True
-                }, timeout=1.0)
+                }, timeout=0.4)
                 is_busy = bool(chk.get("result", {}).get("value"))
                 if not is_busy:
                     break
             except Exception:
                 break
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.03)
 
         # 4. Check if route changed (window.location.href vs pre_url)
         try:
             url_res = await self.send_command("Runtime.evaluate", {
                 "expression": "window.location.href",
                 "returnByValue": True
-            }, timeout=0.8)
+            }, timeout=0.4)
             live_href = str(url_res.get("result", {}).get("value") or "")
             if live_href and "chrome-error://" not in live_href:
                 disp_url = to_frontend_display_url(live_href)
@@ -1701,33 +1927,64 @@ class BrowserSession:
                 norm_pre = (pre_url or "").rstrip("/").lower()
                 if norm_pre and norm_live and norm_live != norm_pre:
                     self.current_url = disp_url
-                    # Route changed: wait 400ms for fresh page hydration and mounting
-                    await asyncio.sleep(0.4)
+                    # Route changed: brief wait for hydration
+                    await asyncio.sleep(0.08)
         except Exception:
             pass
 
-        # 5. Final Quad-Phase DOM quiescence & layout commit
+        # 5. Fast DOM quiescence & layout commit
         await self.wait_for_quiescence(
-            network_idle_ms=80,
-            dom_quiet_ms=40,
-            scroll_quiet_ms=60,
-            max_timeout_s=2.0,
-            fast_mode=False
+            network_idle_ms=40,
+            dom_quiet_ms=20,
+            scroll_quiet_ms=30,
+            max_timeout_s=0.35,
+            fast_mode=True
         )
         return True
 
-    async def navigate(self, url: str) -> Dict[str, Any]:
+    async def navigate(self, url: str, force: bool = False) -> Dict[str, Any]:
         """Navigate to URL and wait for tri-phase quiescence (network idle, DOM mutations quiet, double RAF)."""
         internal_url = to_container_accessible_url(url)
         display_url = to_frontend_display_url(url)
+        norm_target = display_url.rstrip("/").lower()
+        norm_curr = (self.current_url or "").rstrip("/").lower()
+        if not force and norm_curr and norm_target == norm_curr and norm_target not in {"about:blank", ""}:
+            # Already on this exact URL, skip redundant reload
+            return {"url": self.current_url}
+
         self.current_url = display_url
         # Suppress stale keepalive re-broadcast during navigation
         self._navigating = True
         self._last_raw_jpeg = None  # Clear raw screenshot cache
         # Retain self.latest_frame so screencast clients have smooth persistent visuals until next frame paints
         self._notify_listeners({"type": "action", "action": "navigate", "url": display_url})
-        res = await self.send_command("Page.navigate", {"url": internal_url})
-        await self.wait_for_quiescence(network_idle_ms=100, dom_quiet_ms=50, max_timeout_s=3.0)
+        self._lifecycle_events.clear()
+        res = None
+        try:
+            res = await self.send_command("Page.navigate", {"url": internal_url}, timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"Page.navigate timed out after 15s for {internal_url}; checking if navigation committed...")
+            try:
+                curr_href = await self.evaluate("window.location.href", timeout=1.5)
+                if curr_href and curr_href != "about:blank":
+                    res = {"url": curr_href}
+                else:
+                    raise
+            except Exception:
+                raise
+
+        for _ in range(30):
+            if "DOMContentLoaded" in self._lifecycle_events or "load" in self._lifecycle_events:
+                break
+            try:
+                state = await self.evaluate("document.readyState", timeout=0.25)
+                if state in {"interactive", "complete"}:
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(0.08)
+
+        await self.wait_for_quiescence(network_idle_ms=80, dom_quiet_ms=30, max_timeout_s=1.2, fast_mode=True)
 
         # Fast hydration check (up to 400ms max, breaks immediately once controls exist)
         for _ in range(5):
@@ -1735,7 +1992,7 @@ class BrowserSession:
                 chk = await self.send_command("Runtime.evaluate", {
                     "expression": """
                     (() => {
-                        const txt = (document.body ? document.body.innerText : '') || '';
+                        const txt = (document.body ? document.body.textContent : '') || '';
                         const hasControls = document.querySelectorAll('button, input, a[href], [role="button"]').length >= 2;
                         if (hasControls) return false; // Ready immediately!
                         const isHydrating = txt.includes('Loading') || (txt.length < 50 && txt.toLowerCase().includes('loading'));
@@ -1745,12 +2002,17 @@ class BrowserSession:
                     "returnByValue": True
                 }, timeout=0.4)
                 if chk.get("result", {}).get("value") is True:
-                    await asyncio.sleep(0.08)
+                    await asyncio.sleep(0.06)
                 else:
                     break
             except Exception:
                 break
 
+
+        try:
+            await self.auto_dismiss_startup_modals()
+        except Exception:
+            pass
 
         try:
             await self.extract_interactive_tree()
@@ -1770,7 +2032,6 @@ class BrowserSession:
             self._navigating = False
             try:
                 await self.force_fresh_frame()
-                await self.capture_screenshot(quality=65, use_cache=False)
             except Exception:
                 pass
         return res
@@ -1782,12 +2043,36 @@ class BrowserSession:
             const elements = [];
             const seen = new Set();
             
-            // Ultra-fast persistent in-browser DOM node cache (preserves DOM identity across steps)
-            const cache = window.__spFast = window.__spFast || { ids: new WeakMap(), nodes: new Map(), next: 1 };
+            // Persistent in-browser DOM node cache with WeakMap identity preservation
+            const cache = window.__spFast = window.__spFast || {
+                ids: new WeakMap(),
+                nodes: new Map(),
+                nextId: 1
+            };
             // Clean up disconnected nodes to prevent memory leaks
             for (const [id, e] of cache.nodes) {
                 if (!e || !e.isConnected) cache.nodes.delete(id);
             }
+
+            // Global persistent ID allocator (shared by tree extraction & autocomplete harvester)
+            window.__spGetOrAssignId = function(node) {
+                if (!node) return null;
+                let id = cache.ids.get(node);
+                if (id === undefined) {
+                    const attr = node.getAttribute('data-sp-id');
+                    const parsed = attr ? parseInt(attr, 10) : null;
+                    if (parsed && !cache.nodes.has(parsed)) {
+                        id = parsed;
+                        if (id >= cache.nextId) cache.nextId = id + 1;
+                    } else {
+                        id = cache.nextId++;
+                    }
+                    cache.ids.set(node, id);
+                }
+                cache.nodes.set(id, node);
+                try { node.setAttribute('data-sp-id', String(id)); } catch(e) {}
+                return id;
+            };
 
             const isVisible = (e) => {
                 if (!e || !e.isConnected) return false;
@@ -1799,18 +2084,20 @@ class BrowserSession:
                 return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
             };
 
-            function collectNodes(root) {
+            function collectNodes(root, depth = 0) {
                 const list = [];
-                const selector = 'button, a, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="switch"], [role="checkbox"], [tabindex="0"], summary, details, [class*="btn"], [class*="button"], [class*="cursor-pointer"]';
+                if (depth > 2 || !root || !root.querySelectorAll) return list;
+                const selector = 'button, a[href], input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="switch"], [role="checkbox"], [role="combobox"], [role="option"], [role="menuitem"], [role="alert"], [role="status"], [contenteditable="true"], [tabindex="0"], summary, details, li.ui-autocomplete-list-item, li.p-autocomplete-item, [class*="autocomplete-item"], [class*="suggestion-item"], [class*="dropdown-item"], .ui-message-error, .invalid-feedback, .alert, .toast, .pac-item';
                 try {
                     const matched = root.querySelectorAll(selector);
-                    for (let i = 0; i < matched.length; i++) {
+                    for (let i = 0; i < matched.length && list.length < 350; i++) {
                         list.push(matched[i]);
                     }
-                    const allEls = root.querySelectorAll('*');
-                    for (let i = 0; i < allEls.length; i++) {
-                        if (allEls[i].shadowRoot) {
-                            list.push(...collectNodes(allEls[i].shadowRoot));
+                    // For shadow DOM, inspect custom elements with shadow roots (limit sample to 60)
+                    const shadowHosts = root.querySelectorAll(':not(:defined)');
+                    for (let i = 0; i < Math.min(shadowHosts.length, 60); i++) {
+                        if (shadowHosts[i].shadowRoot) {
+                            list.push(...collectNodes(shadowHosts[i].shadowRoot, depth + 1));
                         }
                     }
                 } catch(e) {}
@@ -1818,7 +2105,6 @@ class BrowserSession:
             }
 
             const nodes = collectNodes(document);
-            let counter = 1;
             const scrollY = Math.round(window.scrollY || window.pageYOffset || 0);
             const scrollX = Math.round(window.scrollX || window.pageXOffset || 0);
             const winH = window.innerHeight || 720;
@@ -1842,7 +2128,7 @@ class BrowserSession:
 
                 let text = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
                 if (!text) {
-                    text = (el.innerText || el.placeholder || el.value || el.name || el.id || '').trim();
+                    text = (el.textContent || el.placeholder || el.value || el.name || el.id || '').trim();
                 }
                 text = text.replace(/\s+/g, ' ').slice(0, 80);
                 const href = el.getAttribute('href') || '';
@@ -1850,14 +2136,14 @@ class BrowserSession:
                     continue;
                 }
                 const isInViewport = (rect.bottom > 0 && rect.top < winH && rect.right > 0 && rect.left < winW);
-                const pageY = Math.round(rect.top + scrollY);
-                const pageX = Math.round(rect.left + scrollX);
                 const cx = Math.round(rect.left + rect.width / 2);
                 const cy = Math.round(rect.top + rect.height / 2);
+                const pageX = cx + scrollX;
+                const pageY = cy + scrollY;
 
-                // Hit-testing / point occlusion verification to detect overlays, modals, and sticky headers
+                // Hit-testing / point occlusion verification (limited to top visible elements to prevent layout thrashing)
                 let isOccluded = false;
-                if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH) {
+                if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH && elements.length < 35) {
                     try {
                         const topNode = document.elementFromPoint(cx, cy);
                         if (topNode && topNode !== el && !el.contains(topNode) && !topNode.contains(el)) {
@@ -1869,19 +2155,18 @@ class BrowserSession:
                 const tagL = (el.tagName || '').toLowerCase();
                 const hasPop = el.getAttribute('aria-haspopup') === 'true' || el.hasAttribute('data-toggle') || (el.className && typeof el.className === 'string' && (el.className.includes('dropdown') || el.className.includes('has-sub')));
                 const isHoverCand = hasPop || (el.closest('nav, header, [role="navigation"], [class*="menu"]') !== null && (tagL === 'a' || tagL === 'button' || el.getAttribute('role') === 'menuitem'));
+                const isInsideModal = Boolean(el.closest && el.closest('[role="dialog"], [role="alertdialog"], .ui-dialog, .p-dialog, .swal2-container, .modal.show, .ant-modal, .cdk-overlay-pane'));
                 
                 const parentForm = el.closest('form');
                 const formId = parentForm ? (parentForm.id || parentForm.getAttribute('name') || ('form_' + Array.from(document.querySelectorAll('form')).indexOf(parentForm))) : '';
-                const parentCard = el.parentElement ? el.parentElement.closest('[class*="card"], [class*="item"], [class*="box"], [class*="tile"], [class*="product"], [class*="service"], article, section, li') : null;
+                const parentCard = el.parentElement ? el.parentElement.closest('[class*="card"], [class*="item"], [class*="box"], [class*="tile"], article, section') : null;
                 let cardHeading = '';
                 if (parentCard) {
-                    const h = parentCard.querySelector('h1, h2, h3, h4, h5, h6, [class*="title"], [class*="heading"], strong, b');
-                    if (h) cardHeading = (h.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+                    const h = parentCard.querySelector('h1, h2, h3, h4, [class*="title"], [class*="heading"], strong');
+                    if (h) cardHeading = (h.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
                 }
 
-                const elemId = counter++;
-                // Register in persistent in-browser map for 0ms direct pointer resolution
-                cache.nodes.set(elemId, el);
+                const elemId = window.__spGetOrAssignId(el);
                 let isExternalLink = false;
                 if (href && !href.startsWith('#') && !href.startsWith('javascript:') && !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('/')) {
                     try {
@@ -1903,15 +2188,19 @@ class BrowserSession:
                     tag: tagL,
                     role: el.getAttribute('role') || tagL,
                     type: el.type || '',
+                    classes: (typeof el.className === 'string') ? el.className : '',
                     href: href,
                     is_external: isExternalLink,
                     text: text,
                     name: el.name || '',
                     input_id: el.id || '',
                     placeholder: el.placeholder || '',
+                    value: (el.value || '').slice(0, 80),
+                    checked: Boolean(el.checked || el.getAttribute('aria-checked') === 'true'),
                     disabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
                     is_in_viewport: isInViewport,
                     is_occluded: isOccluded,
+                    is_inside_modal: isInsideModal,
                     is_hover_candidate: Boolean(isHoverCand),
                     has_popup: Boolean(hasPop),
                     form_id: formId,
@@ -1921,9 +2210,14 @@ class BrowserSession:
                     x: cx,
                     y: cy,
                     w: Math.round(rect.width),
-                    h: Math.round(rect.height)
+                    h: Math.round(rect.height),
+                    box: [Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)]
                 });
                 if (elements.length >= 600) break;
+            }
+
+            if (elements.some(e => e.is_inside_modal)) {
+                elements.sort((a, b) => (b.is_inside_modal ? 1 : 0) - (a.is_inside_modal ? 1 : 0));
             }
 
             // Collect any text/buttons recorded by the Canvas 2D interception hook
@@ -2191,6 +2485,30 @@ class BrowserSession:
             "skg_summary": skg_summary_val,
         }
 
+    def update_element_viewport_coordinates(self, scroll_x: int, scroll_y: int):
+        """Updates live viewport coordinates of all interactive elements using absolute page coordinates after scroll."""
+        self.scroll_x = scroll_x
+        self.scroll_y = scroll_y
+        win_h = getattr(self, "viewport_height", 720) or 720
+        win_w = getattr(self, "viewport_width", 1280) or 1280
+        for el in (self.interactive_elements or []):
+            if "page_x" in el and "page_y" in el:
+                # page_x/page_y are center coordinates in document space
+                new_cx = el["page_x"] - scroll_x
+                new_cy = el["page_y"] - scroll_y
+                el_w = el.get("w", 0)
+                el_h = el.get("h", 0)
+                el["x"] = new_cx
+                el["y"] = new_cy
+                # Update bounding box (left, top, w, h)
+                el["box"] = [new_cx - el_w // 2, new_cy - el_h // 2, el_w, el_h]
+                # Element is in viewport if its bounding rect intersects the viewport
+                el_top = new_cy - el_h // 2
+                el_bottom = new_cy + el_h // 2
+                el_left = new_cx - el_w // 2
+                el_right = new_cx + el_w // 2
+                el["is_in_viewport"] = (el_bottom > 0 and el_top < win_h and el_right > 0 and el_left < win_w)
+
     def _generate_bezier_path(self, start_x: int, start_y: int, end_x: int, end_y: int, fast_mode: bool = False) -> List[tuple[int, int]]:
         """Generates an organic Cubic Bézier cursor trajectory with randomized control points."""
         dx = end_x - start_x
@@ -2220,18 +2538,25 @@ class BrowserSession:
             path.append((int(round(bx)), int(round(by))))
         return path
 
-    async def click(self, x: int, y: int, label: str = "", fast_mode: bool = False):
+    async def click(self, x: int, y: int, label: str = "", fast_mode: bool = False, exact_coords: bool = False):
         """Simulate fast organic cursor glide and realistic click with in-DOM visual ripple."""
-        # 8px Euclidean Radius Snapping to eliminate vision downscaling discretization drift
-        if self.interactive_elements:
+        # 8px Euclidean Radius Snapping to eliminate vision downscaling discretization drift (bypassed if exact_coords or fast_mode)
+        if not exact_coords and not fast_mode and self.interactive_elements:
+            best_el = None
+            best_dist = 8.0
             for el in self.interactive_elements:
+                if el.get("disabled") or el.get("is_occluded") or not el.get("is_in_viewport", True):
+                    continue
                 el_x = el.get("x", -999)
                 el_y = el.get("y", -999)
-                if ((x - el_x)**2 + (y - el_y)**2)**0.5 < 8.0:
-                    x, y = el_x, el_y
-                    if not label:
-                        label = f"Clicking {el.get('text') or el.get('tag') or ''}"
-                    break
+                dist = ((x - el_x)**2 + (y - el_y)**2)**0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    best_el = el
+            if best_el:
+                x, y = best_el["x"], best_el["y"]
+                if not label:
+                    label = f"Clicking {best_el.get('text') or best_el.get('tag') or ''}"
 
         path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y, fast_mode=fast_mode)
 
@@ -2280,23 +2605,26 @@ class BrowserSession:
             "clickCount": 1,
         })
 
-        # Settle click action (awaits in-flight requests and route transitions)
-        pre_url = (self.current_url or "").rstrip("/")
-        matched_el = None
-        if self.interactive_elements:
-            for el in self.interactive_elements:
-                el_x = el.get("x", -999)
-                el_y = el.get("y", -999)
-                if ((x - el_x)**2 + (y - el_y)**2)**0.5 < 15.0:
-                    matched_el = el
-                    break
-        is_trans = is_transitioning_or_submit_action(matched_el, label=label, action="click")
-        await self.wait_for_action_quiescence(
-            pre_url=pre_url,
-            is_transition=is_trans,
-            min_grace_ms=300 if is_trans else 120,
-            max_timeout_s=8.0 if is_trans else 2.0
-        )
+        # Settle click action (only if not in fast_mode/APV which manages its own quiescence)
+        if not fast_mode:
+            pre_url = (self.current_url or "").rstrip("/")
+            matched_el = None
+            if self.interactive_elements:
+                for el in self.interactive_elements:
+                    el_x = el.get("x", -999)
+                    el_y = el.get("y", -999)
+                    if ((x - el_x)**2 + (y - el_y)**2)**0.5 < 15.0:
+                        matched_el = el
+                        break
+            is_trans = is_transitioning_or_submit_action(matched_el, label=label, action="click")
+            await self.wait_for_action_quiescence(
+                pre_url=pre_url,
+                is_transition=is_trans,
+                min_grace_ms=80 if is_trans else 40,
+                max_timeout_s=1.2 if is_trans else 0.4
+            )
+        else:
+            await asyncio.sleep(0.04)
 
     async def hover(self, x: int, y: int, duration: float = 0.35, label: str = "") -> Dict[str, Any]:
         """Simulate organic cursor glide to (x, y) and dwell to trigger CSS :hover and pointer events, capturing ephemeral UI."""
@@ -2505,10 +2833,13 @@ class BrowserSession:
         await asyncio.sleep(0.04)
 
     async def toggle_checkbox(self, element_id: int) -> bool:
-        """Toggles a checkbox or switch element."""
+        """Toggles a checkbox or switch element reliably without double-reversion."""
         el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
         if el and el.get("x") is not None and el.get("y") is not None:
+            await self.scroll_to_element(element_id)
             await self.click(el["x"], el["y"], label=f"Toggle {el.get('text') or 'checkbox'}", fast_mode=True)
+            return True
+
         toggle_js = f"""
         (() => {{
             try {{
@@ -2579,6 +2910,12 @@ class BrowserSession:
             pass
         await self.wait_for_scroll_settled(min_quiet_ms=180, max_timeout_s=2.5)
         await self.force_fresh_frame()
+        try:
+            curr_scroll = await self.evaluate("[window.scrollX || 0, window.scrollY || 0]", timeout=0.5)
+            if isinstance(curr_scroll, list) and len(curr_scroll) >= 2:
+                self.update_element_viewport_coordinates(int(curr_scroll[0]), int(curr_scroll[1]))
+        except Exception:
+            pass
         if extract_tree:
             try:
                 await self.extract_interactive_tree()
@@ -2603,10 +2940,16 @@ class BrowserSession:
             }}
             return false;
         }})()
-        """)
+        """, timeout=1.5)
         if scrolled == 'scrolled':
-            await self.wait_for_scroll_settled(min_quiet_ms=180, max_timeout_s=2.5)
+            await self.wait_for_scroll_settled(min_quiet_ms=50, max_timeout_s=0.35)
             await self.force_fresh_frame()
+            try:
+                curr_scroll = await self.evaluate("[window.scrollX || 0, window.scrollY || 0]", timeout=0.5)
+                if isinstance(curr_scroll, list) and len(curr_scroll) >= 2:
+                    self.update_element_viewport_coordinates(int(curr_scroll[0]), int(curr_scroll[1]))
+            except Exception:
+                pass
             return True
         elif scrolled == 'in_view':
             return True
@@ -2614,7 +2957,7 @@ class BrowserSession:
         el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
         if not el:
             return False
-        curr_y = await self.evaluate("window.scrollY || 0") or 0
+        curr_y = await self.evaluate("window.scrollY || 0", timeout=1.0) or 0
         page_y = el.get("page_y", el.get("y", 0) + curr_y)
         target_scroll = max(0, page_y - 280)
         await self.scroll_to(target_scroll, extract_tree=False)
@@ -2625,6 +2968,11 @@ class BrowserSession:
         el = next((e for e in (self.interactive_elements or []) if str(e.get("id")) == str(element_id)), None)
         target_name = label or (el.get("text") if el else f"Element #{element_id}")
         is_transition = is_transitioning_or_submit_action(el, label=target_name, action="click")
+        # Scroll element into viewport center before capturing snapshot & clicking
+        try:
+            await self.scroll_to_element(element_id)
+        except Exception:
+            pass
 
         # 1. Capture Pre-action Perception Snapshot
         pre_snap = await ActionPerceptionVerification.capture_snapshot(self)
@@ -2636,8 +2984,9 @@ class BrowserSession:
         await self.wait_for_action_quiescence(
             pre_url=pre_snap.url,
             is_transition=is_transition,
-            min_grace_ms=350 if is_transition else 180,
-            max_timeout_s=10.0 if is_transition else 2.5
+            min_grace_ms=80 if is_transition else (15 if fast_mode else 40),
+            max_timeout_s=1.5 if is_transition else (0.25 if fast_mode else 0.6),
+            fast_mode=fast_mode,
         )
 
         # 4. Refresh interactive tree
@@ -2717,8 +3066,14 @@ class BrowserSession:
 
         return True
 
-    async def type_text(self, text: str, element_id: Optional[int] = None, clear_first: bool = True):
-        """Types text into an input or textarea with universal framework binding (Angular Reactive Forms, React 18, Vue, Svelte) and native CDP event propagation."""
+    async def type_text(self, text: str, element_id: Optional[int] = None, clear_first: bool = True, auto_select_suggestion: Optional[str] = None):
+        """Types text into an input or textarea with universal framework binding (Angular Reactive Forms, React 18, Vue, Svelte) and native CDP event propagation.
+
+        Args:
+            auto_select_suggestion: If set, after typing, automatically click the best-matching
+                autocomplete suggestion whose text contains this value (case-insensitive).
+                Used by System 1 engine to skip LLM round-trip for autocomplete selection.
+        """
         if element_id:
             await self.scroll_to_element(element_id)
             coords = await self.evaluate(f"""
@@ -2741,6 +3096,17 @@ class BrowserSession:
                 if el:
                     await self.click(el["x"], el["y"], label=f"Focusing {el.get('text') or el.get('placeholder') or el.get('tag')}", fast_mode=True)
 
+        # Universal clear_first via CDP keystroke stream
+        if clear_first:
+            try:
+                await self.send_command("Input.dispatchKeyEvent", {"type": "rawKeyDown", "windowsVirtualKeyCode": 65, "modifiers": 2, "key": "a", "code": "KeyA"})
+                await self.send_command("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 65, "modifiers": 2, "key": "a", "code": "KeyA"})
+                await asyncio.sleep(0.02)
+                await self.send_command("Input.dispatchKeyEvent", {"type": "rawKeyDown", "windowsVirtualKeyCode": 8, "key": "Backspace", "code": "Backspace"})
+                await self.send_command("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 8, "key": "Backspace", "code": "Backspace"})
+            except Exception:
+                pass
+
         self._notify_listeners({
             "type": "cursor_action",
             "action": "type",
@@ -2755,9 +3121,21 @@ class BrowserSession:
         framework_type_js = f"""
         (() => {{
             const el = ({el_target_js}document.activeElement);
-            if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) return false;
+            if (!el) return false;
             try {{ el.focus(); }} catch(e) {{}}
             const val = {escaped_text};
+
+            if (el.isContentEditable) {{
+                return 'contenteditable';
+            }}
+
+            // Universal bypass for readonly inputs (e.g. calendar/date pickers)
+            if (el.readOnly) {{
+                try {{
+                    el.readOnly = false;
+                    el.removeAttribute('readonly');
+                }} catch(e) {{}}
+            }}
 
             // Prototype value setter for HTMLInputElement / HTMLTextAreaElement
             const proto = (el instanceof HTMLTextAreaElement) ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
@@ -2778,24 +3156,48 @@ class BrowserSession:
             el.dispatchEvent(new InputEvent('input', {{ bubbles: true, cancelable: true, inputType: 'insertText', data: val }}));
             el.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
             el.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
-            el.dispatchEvent(new Event('blur', {{ bubbles: true, cancelable: true }}));
+            // NOTE: Do NOT dispatch 'blur' here as it prematurely closes autocomplete overlays like PrimeNG p-autoComplete
             return el.value === val;
         }})()
         """
+        eval_res = None
         try:
-            await self.send_command("Runtime.evaluate", {"expression": framework_type_js, "returnByValue": True})
+            res = await self.send_command("Runtime.evaluate", {"expression": framework_type_js, "returnByValue": True})
+            eval_res = res.get("result", {}).get("value")
         except Exception:
             pass
 
-        # 2. Native instant text insertion via CDP for Blink input stream and screen render
-        try:
-            await self.send_command("Input.insertText", {"text": text})
-        except Exception:
-            for char in text:
-                try:
-                    await self.send_command("Input.dispatchKeyEvent", {"type": "char", "text": char})
-                except Exception:
-                    pass
+        # 2. CDP character-by-character keystroke dispatch (CRITICAL for Angular/PrimeNG reactive forms)
+        # The prototype setter above sets the value instantly, but Angular's ControlValueAccessor
+        # and PrimeNG's p-autoComplete listen for real keyboard events to trigger their debounced
+        # HTTP search. We dispatch CDP keystrokes for the characters to trigger the framework's
+        # input event listeners.
+        if eval_res != 'contenteditable':
+            trigger_chars = text[-4:] if len(text) > 4 else text
+            try:
+                for char in trigger_chars:
+                    await self.send_command("Input.dispatchKeyEvent", {
+                        "type": "keyDown", "text": char, "key": char,
+                        "windowsVirtualKeyCode": ord(char.upper()) if char.isalpha() else 0
+                    })
+                    await asyncio.sleep(0.015)
+                    await self.send_command("Input.dispatchKeyEvent", {
+                        "type": "keyUp", "key": char,
+                        "windowsVirtualKeyCode": ord(char.upper()) if char.isalpha() else 0
+                    })
+            except Exception:
+                pass
+
+        # 2b. If contenteditable or fallback required, insert text via CDP
+        if eval_res == 'contenteditable' or not eval_res:
+            try:
+                await self.send_command("Input.insertText", {"text": text})
+            except Exception:
+                for char in text:
+                    try:
+                        await self.send_command("Input.dispatchKeyEvent", {"type": "char", "text": char})
+                    except Exception:
+                        pass
 
         # 3. Final seal & re-verification
         verify_js = f"""
@@ -2818,8 +3220,161 @@ class BrowserSession:
         except Exception:
             pass
 
-        # Settle input state with quiescence
-        await self.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=0.8, fast_mode=True)
+        # 4. Autocomplete harvest with progressive retry loop
+        # Angular/PrimeNG autocompletes have debounce timers (typically 200-500ms) before
+        # firing HTTP requests for suggestions. We retry harvesting with increasing delays.
+        harvest_js = """
+        (() => {
+            const selectors = [
+                'ul.ui-autocomplete-items li',
+                'ul.p-autocomplete-items li',
+                '.ui-autocomplete-panel li',
+                '.p-autocomplete-panel li',
+                'p-autocomplete li',
+                'li.ui-autocomplete-list-item',
+                'li.p-autocomplete-item',
+                '[role="listbox"] [role="option"]',
+                'li[role="option"]',
+                '[role="combobox"] ~ ul li',
+                '.autocomplete-suggestions > *',
+                '.pac-container .pac-item',
+                '.dropdown-menu.show > *',
+                '[class*="autocomplete"] li',
+                '[class*="suggestion"] li',
+                '[class*="option-list"] > *',
+                'div[id*="autocomplete"] li',
+                'mat-option',
+                '.ant-select-item-option',
+                '.select2-results__option'
+            ];
+            for (const sel of selectors) {
+                const items = Array.from(document.querySelectorAll(sel)).filter(el => {
+                    const s = window.getComputedStyle(el);
+                    return s.display !== 'none' && s.visibility !== 'hidden' && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
+                });
+                if (items.length > 0) {
+                    return items.slice(0, 15).map((el, idx) => {
+                        let spId = el.getAttribute('data-sp-id');
+                        if (!spId && window.__spGetOrAssignId) {
+                            spId = String(window.__spGetOrAssignId(el));
+                        } else if (!spId && window.__spFast) {
+                            spId = String(window.__spFast.nextId++);
+                            window.__spFast.nodes.set(Number(spId), el);
+                            try { el.setAttribute('data-sp-id', spId); } catch(e) {}
+                        }
+                        const rect = el.getBoundingClientRect();
+                        return {
+                            id: spId ? Number(spId) : null,
+                            text: (el.textContent || '').trim().replace(/\\s+/g, ' '),
+                            index: idx,
+                            x: Math.round(rect.left + rect.width / 2),
+                            y: Math.round(rect.top + rect.height / 2)
+                        };
+                    });
+                }
+            }
+            return [];
+        })()
+        """
+
+        self.last_autocomplete_suggestions = []
+        harvest_delays = [0.2, 0.35, 0.6, 0.8]  # Progressive retry delays for async suggestions
+
+        for delay in harvest_delays:
+            await asyncio.sleep(delay)
+            try:
+                sugg_res = await self.send_command("Runtime.evaluate", {"expression": harvest_js, "returnByValue": True}, timeout=1.0)
+                val = sugg_res.get("result", {}).get("value")
+                if isinstance(val, list) and val:
+                    self.last_autocomplete_suggestions = val
+                    logger.info(f"Autocomplete harvest: {len(val)} suggestions found after {delay}s delay")
+                    break
+            except Exception:
+                pass
+
+        # 5. Auto-select matching suggestion if requested (System 1 fast path)
+        if auto_select_suggestion and self.last_autocomplete_suggestions:
+            query_lower = auto_select_suggestion.strip().lower()
+            best_match = None
+            best_score = -1
+
+            for sugg in self.last_autocomplete_suggestions:
+                sugg_text = (sugg.get("text") or "").strip().lower()
+                if not sugg_text:
+                    continue
+                # Exact substring match gets highest priority
+                if query_lower in sugg_text:
+                    score = 100 + (1.0 / max(len(sugg_text), 1))  # Prefer shorter matches
+                    if score > best_score:
+                        best_score = score
+                        best_match = sugg
+                else:
+                    # Word overlap scoring
+                    q_words = set(query_lower.split())
+                    s_words = set(sugg_text.split())
+                    overlap = len(q_words & s_words)
+                    if overlap > best_score:
+                        best_score = overlap
+                        best_match = sugg
+
+            if not best_match and self.last_autocomplete_suggestions:
+                best_match = self.last_autocomplete_suggestions[0]
+
+            if best_match:
+                match_text = best_match.get("text", "")
+                logger.info(f"Auto-selecting suggestion: '{match_text}' for query '{auto_select_suggestion}'")
+
+                # Click the suggestion element using its coordinates or element_id
+                sugg_x = best_match.get("x")
+                sugg_y = best_match.get("y")
+                sugg_id = best_match.get("id")
+
+                if sugg_x and sugg_y:
+                    await self.click(sugg_x, sugg_y, label=f"Selecting '{match_text[:40]}'", fast_mode=True, exact_coords=True)
+                
+                # Also dispatch direct DOM event sequence to guarantee Angular/PrimeNG (onClick)/(select) binding
+                if sugg_id:
+                    click_js = f"""
+                    (() => {{
+                        const el = (window.__spFast && window.__spFast.nodes.get({sugg_id})) || document.querySelector('[data-sp-id="{sugg_id}"]');
+                        if (el) {{
+                            el.dispatchEvent(new MouseEvent('mousedown', {{bubbles: true, cancelable: true, view: window}}));
+                            el.dispatchEvent(new MouseEvent('mouseup', {{bubbles: true, cancelable: true, view: window}}));
+                            el.click();
+                            return true;
+                        }}
+                        return false;
+                    }})()
+                    """
+                    try:
+                        await self.send_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True})
+                    except Exception:
+                        pass
+
+                # Only dispatch Escape to close dropdown if still open (avoid Enter which submits forms prematurely)
+                try:
+                    dropdown_still_open = await self.evaluate("""
+                    (() => {
+                        const sels = ['ul.ui-autocomplete-items', '.p-autocomplete-panel', '[role="listbox"]:not([style*="display: none"])',
+                                       '.autocomplete-dropdown', '.dropdown-menu.show', '.mat-autocomplete-panel', '.ng-dropdown-panel'];
+                        return sels.some(s => { const el = document.querySelector(s); return el && el.offsetHeight > 0; });
+                    })()
+                    """, timeout=0.3)
+                    if dropdown_still_open:
+                        await self.send_command("Input.dispatchKeyEvent", {"type": "rawKeyDown", "windowsVirtualKeyCode": 27, "key": "Escape", "code": "Escape"})
+                        await self.send_command("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 27, "key": "Escape", "code": "Escape"})
+                except Exception:
+                    pass
+
+                await asyncio.sleep(0.25)
+
+                self._notify_listeners({
+                    "type": "cursor_action",
+                    "action": "click",
+                    "text": match_text,
+                    "label": f"Selected '{match_text[:40]}'",
+                })
+
         return True
 
     async def press_key(self, key: str, modifiers: Optional[List[str]] = None) -> bool:
@@ -3000,7 +3555,7 @@ class BrowserSession:
             }
 
             if (rawTexts.length === 0 && document.body) {
-                rawTexts.push(document.body.innerText.slice(0, 4000));
+                rawTexts.push(document.body.textContent.slice(0, 4000));
             }
 
             let harvested = { email: null, username: null, password: null, quick_button_id: null, quick_button_label: null };
@@ -3008,7 +3563,7 @@ class BrowserSession:
             // Look for 1-click demo filler buttons: e.g. "Use Demo Account", "Fill Admin", "Auto Fill"
             const buttons = Array.from(document.querySelectorAll('button, a, [role="button"]'));
             for (const btn of buttons) {
-                const bText = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase().trim();
+                const bText = (btn.textContent || btn.getAttribute('aria-label') || '').toLowerCase().trim();
                 if (bText && (bText.includes('demo') || bText.includes('test account') || bText.includes('fill cred') || bText.includes('guest login') || bText.includes('quick login'))) {
                     harvested.quick_button_id = btn.id || btn.className || bText;
                     harvested.quick_button_label = bText;
@@ -3060,9 +3615,9 @@ class BrowserSession:
             const ogDesc = document.querySelector('meta[property="og:description"]')?.content || "";
             const metaDesc = document.querySelector('meta[name="description"]')?.content || "";
             const title = document.title || "";
-            const h1s = Array.from(document.querySelectorAll('h1, h2')).map(h => (h.innerText || '').trim()).filter(Boolean).slice(0, 6);
-            const navLinks = Array.from(document.querySelectorAll('nav a, header a')).map(a => (a.innerText || '').trim()).filter(Boolean).slice(0, 10);
-            const bodySample = (document.body ? document.body.innerText.slice(0, 2000) : "").toLowerCase();
+            const h1s = Array.from(document.querySelectorAll('h1, h2')).map(h => (h.textContent || '').trim()).filter(Boolean).slice(0, 6);
+            const navLinks = Array.from(document.querySelectorAll('nav a, header a')).map(a => (a.textContent || '').trim()).filter(Boolean).slice(0, 10);
+            const bodySample = (document.body ? document.body.textContent.slice(0, 2000) : "").toLowerCase();
             return { title, ogTitle, ogDesc, metaDesc, headings: h1s, navLinks, bodySample };
         })()
         """
@@ -3228,7 +3783,7 @@ class BrowserManager:
         session = BrowserSession(session_id=session_id, target_url=url)
         await session.connect()
         self.sessions[session_id] = session
-        if url and url != "about:blank" and (session.current_url != norm_url or session.current_url in {"about:blank", ""}):
+        if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
             await session.navigate(url)
         return session
 

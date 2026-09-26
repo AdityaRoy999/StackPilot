@@ -93,6 +93,8 @@ export function InteractiveBrowserCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctx2dRef = useRef<CanvasRenderingContext2D | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mainViewRef = useRef<HTMLDivElement | null>(null);
+  const [canvasDisplaySize, setCanvasDisplaySize] = useState<{ width: number; height: number } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const [connected, setConnected] = useState(false);
@@ -191,10 +193,46 @@ export function InteractiveBrowserCanvas({
     return () => clearInterval(interval);
   }, [isOpen, connected]);
 
+  // Dynamically compute exact 16:9 canvas dimensions fitting inside the main live view area
+  // This guarantees zero letterbox dead space and 100% pixel-perfect mouse coordinate mapping
+  useEffect(() => {
+    if (!isOpen) return;
+    const updateSize = () => {
+      if (!mainViewRef.current) return;
+      const { clientWidth, clientHeight } = mainViewRef.current;
+      if (!clientWidth || !clientHeight) return;
+      const targetAspect = 1280 / 720;
+      const currentAspect = clientWidth / clientHeight;
+      let w: number;
+      let h: number;
+      if (currentAspect > targetAspect) {
+        h = clientHeight;
+        w = Math.round(clientHeight * targetAspect);
+      } else {
+        w = clientWidth;
+        h = Math.round(clientWidth / targetAspect);
+      }
+      setCanvasDisplaySize({ width: w, height: h });
+    };
+
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    if (mainViewRef.current) {
+      ro.observe(mainViewRef.current);
+    }
+    return () => ro.disconnect();
+  }, [isOpen, isMaximized, consoleHeight, showConsole]);
+
   // Sync with initialUrl prop changes (e.g. when user selects a project with runtime_url)
   useEffect(() => {
     if (initialUrl && initialUrl !== prevInitialUrlRef.current) {
       prevInitialUrlRef.current = initialUrl;
+      const normInit = initialUrl.replace(/\/+$/, "").toLowerCase();
+      const normCurr = (currentUrlRef.current || currentUrl || "").replace(/\/+$/, "").toLowerCase();
+      // If browser is already at this URL or route, do NOT send user_navigate to prevent page reload
+      if (normInit && normInit === normCurr) {
+        return;
+      }
       setCurrentUrl(initialUrl);
       setUrlInput(initialUrl);
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
@@ -206,7 +244,7 @@ export function InteractiveBrowserCanvas({
         );
       }
     }
-  }, [initialUrl]);
+  }, [initialUrl, currentUrl]);
 
   // Console dragging listeners
   useEffect(() => {
@@ -485,17 +523,11 @@ export function InteractiveBrowserCanvas({
                             frame.close();
                             return;
                           }
-                          const canvas = canvasRef.current;
-                          if (canvas) {
-                            try {
-                              const ctx2d = canvas.getContext("2d", { alpha: false, desynchronized: true });
-                              if (ctx2d) {
-                                ctx2d.drawImage(frame, 0, 0, canvas.width, canvas.height);
-                                frameCountRef.current += 1;
-                              }
-                            } catch {}
+                          // Pass to vsync-locked renderLoop
+                          if (nextVideoFrameRef.current) {
+                            nextVideoFrameRef.current.close();
                           }
-                          frame.close();
+                          nextVideoFrameRef.current = frame;
                         },
                         error: (err: any) => {
                           console.warn("[BrowserCanvas] VideoDecoder reset notice:", err);
@@ -506,10 +538,17 @@ export function InteractiveBrowserCanvas({
                           fallbackDecoderRef.current = null;
                         },
                       });
-                      fallbackDecoderRef.current.configure({
-                        codec: "avc1.420029",
-                        optimizeForLatency: true,
-                      });
+                      try {
+                        fallbackDecoderRef.current.configure({
+                          codec: "avc1.42c029",
+                          optimizeForLatency: true,
+                        });
+                      } catch {
+                        fallbackDecoderRef.current.configure({
+                          codec: "avc1.420029",
+                          optimizeForLatency: true,
+                        });
+                      }
                     } catch {
                       fallbackDecoderRef.current = null;
                     }
@@ -661,6 +700,7 @@ export function InteractiveBrowserCanvas({
             } else if (msg.type === "page_state") {
               if (msg.url && !msg.url.includes("chrome-error://")) {
                 currentUrlRef.current = msg.url;
+                prevInitialUrlRef.current = msg.url;
                 setCurrentUrl(msg.url);
                 setUrlInput(msg.url);
                 if (typeof onUrlChange === "function") {
@@ -680,6 +720,7 @@ export function InteractiveBrowserCanvas({
             } else if (msg.type === "navigated" && msg.url) {
               if (!msg.url.includes("chrome-error://")) {
                 currentUrlRef.current = msg.url;
+                prevInitialUrlRef.current = msg.url;
                 setCurrentUrl(msg.url);
                 setUrlInput(msg.url);
                 if (typeof onUrlChange === "function") {
@@ -923,11 +964,12 @@ export function InteractiveBrowserCanvas({
   // Coordinate translation from display CSS pixels to 1280x720 canvas coordinates
   const getCanvasCoords = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return { x: 640, y: 360 };
     const scaleX = 1280 / rect.width;
     const scaleY = 720 / rect.height;
     return {
-      x: Math.round((e.clientX - rect.left) * scaleX),
-      y: Math.round((e.clientY - rect.top) * scaleY),
+      x: Math.max(0, Math.min(1280, Math.round((e.clientX - rect.left) * scaleX))),
+      y: Math.max(0, Math.min(720, Math.round((e.clientY - rect.top) * scaleY))),
     };
   }, []);
 
@@ -1067,6 +1109,12 @@ export function InteractiveBrowserCanvas({
               <span className="font-mono text-[11px] text-foreground/90">
                 {connected ? (fps > 0 || networkFps > 0 ? `Live • ${fps > 0 ? fps : networkFps} fps` : "Live • Standby") : "Connecting..."}
               </span>
+              {connected && latencyMs > 0 && (
+                <>
+                  <span className="text-muted-foreground/60">•</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">{latencyMs}ms</span>
+                </>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
@@ -1075,7 +1123,7 @@ export function InteractiveBrowserCanvas({
                 className="bg-purple-500/20 text-purple-300 border-purple-500/50 flex items-center gap-1.5 h-7 px-2.5 shadow-sm"
               >
                 <Film className="h-3.5 w-3.5 text-purple-400 animate-pulse" />
-                <span className="font-semibold text-xs">Replay Mode</span>
+                <span className="font-semibold text-xs">Replay Mode ({playbackSpeed}x)</span>
               </Badge>
               <Button
                 size="sm"
@@ -1105,13 +1153,13 @@ export function InteractiveBrowserCanvas({
 
           {!isPlaybackMode && (
             <Button
-              size="sm"
+              size="icon"
               variant={takeOver ? "default" : "outline"}
               className={cn(
-                "h-7 px-2.5 text-xs font-semibold gap-1.5 transition-all shadow-sm",
+                "h-7 w-7 transition-all shadow-sm shrink-0",
                 takeOver
                   ? "bg-amber-500 hover:bg-amber-600 text-black border-amber-400"
-                  : "bg-background/80 text-foreground/80 hover:text-foreground"
+                  : "bg-background/80 text-foreground/80 hover:text-foreground hover:bg-muted"
               )}
               onClick={() => {
                 const nextState = !takeOver;
@@ -1126,17 +1174,12 @@ export function InteractiveBrowserCanvas({
                   });
                 }
               }}
+              title={takeOver ? "Human Driving (Click to return to AI Autopilot)" : "AI Driving (Click to take over manual control)"}
             >
               {takeOver ? (
-                <>
-                  <User className="h-3.5 w-3.5" />
-                  <span>Manual Control</span>
-                </>
+                <User className="h-3.5 w-3.5 text-black" />
               ) : (
-                <>
-                  <Bot className="h-3.5 w-3.5 text-sky-400" />
-                  <span>AI Driving</span>
-                </>
+                <Bot className="h-3.5 w-3.5 text-sky-400" />
               )}
             </Button>
           )}
@@ -1222,61 +1265,32 @@ export function InteractiveBrowserCanvas({
       </div>
 
       {/* ─── Main Live View Area ─── */}
-      <div className="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
+      <div
+        ref={mainViewRef}
+        className="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden p-0"
+      >
         <div
+          style={
+            canvasDisplaySize
+              ? { width: `${canvasDisplaySize.width}px`, height: `${canvasDisplaySize.height}px` }
+              : undefined
+          }
           className={cn(
-            "relative aspect-video w-full max-h-full select-none cursor-pointer",
+            "relative select-none cursor-pointer shrink-0",
+            !canvasDisplaySize && "aspect-video w-full max-h-full",
             takeOver && "cursor-crosshair"
           )}
           onClick={handleCanvasClick}
           onMouseMove={handleCanvasMouseMove}
           onWheel={handleWheel}
         >
-          {/* Hardware-accelerated Canvas */}
+          {/* Hardware-accelerated Canvas with exact 1:1 pixel mapping */}
           <canvas
             ref={canvasRef}
             width={1280}
             height={720}
-            className="w-full h-full object-contain block bg-zinc-950 shadow-inner"
+            className="w-full h-full block bg-zinc-950 shadow-inner"
           />
-
-          {/* Real-time Telemetry HUD (FPS & Latency) */}
-          {connected && (
-            <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/80 border border-white/10 text-[10px] font-mono text-zinc-300 backdrop-blur pointer-events-none z-30 shadow-lg">
-              {isPlaybackMode ? (
-                <span className="flex items-center gap-1.5 text-purple-300 font-semibold">
-                  <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-pulse" />
-                  <span>REPLAY MODE ({playbackSpeed}x)</span>
-                </span>
-              ) : (
-                <>
-                  <span className="flex items-center gap-1">
-                    <span
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        fps >= 25 ? "bg-emerald-400 animate-pulse" : (connected ? "bg-emerald-500" : "bg-zinc-500")
-                      )}
-                    />
-                    <span className="font-semibold text-white">
-                      {fps > 0 ? `${fps} FPS` : (networkFps > 0 ? `${networkFps} net` : (connected ? "LIVE" : "OFFLINE"))}
-                    </span>
-                  </span>
-                  {networkFps > 0 && networkFps !== fps && (
-                    <>
-                      <span className="text-zinc-600">•</span>
-                      <span>{networkFps} net</span>
-                    </>
-                  )}
-                  {latencyMs > 0 && (
-                    <>
-                      <span className="text-zinc-600">•</span>
-                      <span>{latencyMs}ms</span>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          )}
 
           {/* Interactive Element Tags Overlay */}
           {showElementTags &&
@@ -1312,7 +1326,7 @@ export function InteractiveBrowserCanvas({
                 left: `${((isPlaybackMode ? currentPlaybackFrame?.cursor.x ?? 640 : cursorPos.x) / 1280) * 100}%`,
                 top: `${((isPlaybackMode ? currentPlaybackFrame?.cursor.y ?? 360 : cursorPos.y) / 720) * 100}%`,
               }}
-              className="absolute pointer-events-none -translate-x-1 -translate-y-1 transition-all duration-150 ease-out z-30"
+              className="absolute pointer-events-none -translate-x-[3px] -translate-y-[3px] transition-all duration-150 ease-out z-30"
             >
               <div className="relative">
                 <svg
@@ -1633,12 +1647,12 @@ export function InteractiveBrowserCanvas({
                   <div
                     key={i}
                     className={cn(
-                      "px-2 py-1 rounded leading-relaxed border-l-2",
+                      "px-2.5 py-1.5 rounded-md leading-relaxed transition-colors",
                       log.type === "error"
-                        ? "bg-destructive/10 border-destructive text-destructive"
+                        ? "bg-destructive/10 text-destructive"
                         : log.type === "warn"
-                        ? "bg-amber-500/10 border-amber-500 text-amber-400"
-                        : "bg-muted/20 border-border/40 text-foreground/80"
+                        ? "bg-amber-500/10 text-amber-400"
+                        : "bg-muted/20 text-foreground/80"
                     )}
                   >
                     <span className="opacity-50 mr-2">[{log.type.toUpperCase()}]</span>

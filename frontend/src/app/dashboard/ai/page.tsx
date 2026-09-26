@@ -36,6 +36,7 @@ import {
   Maximize2,
   Minimize2,
   CornerDownLeft,
+  HelpCircle,
   X,
   Zap,
 } from "lucide-react";
@@ -59,6 +60,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { StatusVerb } from "@/components/ui/status-verb";
@@ -1113,6 +1116,19 @@ export default function AiAgentPage() {
     action: () => Promise<void> | void;
     onDecline: () => void;
   } | null>(null);
+  const [pendingAgentQuestion, setPendingAgentQuestion] = useState<{
+    id: string;
+    question: string;
+    fields: Array<{
+      id: string;
+      label: string;
+      type: "dropdown" | "text" | "radio";
+      options?: string[];
+      placeholder?: string;
+      default_value?: string;
+    }>;
+  } | null>(null);
+  const [agentQuestionAnswers, setAgentQuestionAnswers] = useState<Record<string, string>>({});
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [selectedDeploymentId, setSelectedDeploymentId] = useState("");
   const [customTargetUrl, setCustomTargetUrl] = useState("");
@@ -1167,6 +1183,11 @@ export default function AiAgentPage() {
           setRemoteTerminalPermission(savedTerminal);
         }
 
+        const savedAllowQuestions = window.localStorage.getItem("ai-agent-allow-questions");
+        if (savedAllowQuestions !== null) {
+          setAllowAgentQuestions(savedAllowQuestions === "true");
+        }
+
         const savedOrb = window.localStorage.getItem("ai-thinking-orb-style");
         if (savedOrb) {
           setOrbStyle(savedOrb as ThinkingOrbStyle);
@@ -1200,6 +1221,7 @@ export default function AiAgentPage() {
   const [customModelList, setCustomModelList] = useState<AiModel[] | null>(null);
   const [agentAccessMode, setAgentAccessMode] = useState<"ask" | "auto_review" | "full_access">("ask");
   const [remoteTerminalPermission, setRemoteTerminalPermission] = useState<"ask" | "allow">("ask");
+  const [allowAgentQuestions, setAllowAgentQuestions] = useState<boolean>(true);
   const [orbStyle, setOrbStyle] = useState<ThinkingOrbStyle>("solving");
   const [isListening, setIsListening] = useState(false);
   const [isDesktop, setIsDesktop] = useState(true);
@@ -1593,12 +1615,13 @@ export default function AiAgentPage() {
     try {
       window.localStorage.setItem("ai-agent-access-mode", agentAccessMode);
       window.localStorage.setItem("ai-agent-remote-terminal", remoteTerminalPermission);
+      window.localStorage.setItem("ai-agent-allow-questions", String(allowAgentQuestions));
       window.localStorage.setItem("ai-thinking-orb-style", orbStyle);
       if (selectedModel) {
         window.localStorage.setItem("ai-default-model", selectedModel);
       }
     } catch {}
-  }, [agentAccessMode, remoteTerminalPermission, orbStyle, selectedModel]);
+  }, [agentAccessMode, remoteTerminalPermission, allowAgentQuestions, orbStyle, selectedModel]);
 
   const startListening = async () => {
     if (typeof window === "undefined") return;
@@ -1762,6 +1785,8 @@ export default function AiAgentPage() {
     setActiveSessionId("");
     setMessages(starterMessages);
     setPendingApproval(null);
+    setPendingAgentQuestion(null);
+    setAgentQuestionAnswers({});
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", "/dashboard/ai");
       const defaultModel = window.localStorage.getItem("ai-default-model");
@@ -1776,36 +1801,65 @@ export default function AiAgentPage() {
     const data = res.data as { session?: AiChatSession; messages?: AiChatMessage[] };
     setActiveSessionId(sessionId);
     setPendingApproval(null);
+    setPendingAgentQuestion(null);
+    setAgentQuestionAnswers({});
     if (data.session?.last_model) {
       setSelectedModel(data.session.last_model);
       if (typeof window !== "undefined") {
         window.localStorage.setItem("ai-default-model", data.session.last_model);
       }
     }
-    setMessages(
-      (data.messages || [])
-        .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "system")
-        .map((message) => {
-          const meta = (message.metadata || {}) as Record<string, any>;
-          const usage = (meta.token_usage || {}) as Record<string, number>;
-          return {
-            id: message.id,
-            role: message.role as Role,
-            content: message.content,
-            reasoning: typeof meta.reasoning === "string" && meta.reasoning.trim() ? meta.reasoning : undefined,
-            toolCalls: Array.isArray(meta.tool_calls) && meta.tool_calls.length > 0 ? meta.tool_calls : undefined,
-            stats: {
-              latencyMs: typeof meta.latency_ms === "number" ? meta.latency_ms : undefined,
-              promptTokens: usage.prompt_tokens,
-              completionTokens: usage.completion_tokens,
-              totalTokens: usage.total_tokens,
-              model: typeof meta.model === "string" ? meta.model : undefined,
-              provider: typeof meta.provider === "string" ? meta.provider : undefined,
-              traceId: typeof meta.trace_id === "string" ? meta.trace_id : undefined,
-            },
-          };
-        })
-    );
+    const mappedMessages = (data.messages || [])
+      .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "system")
+      .map((message) => {
+        const meta = (message.metadata || {}) as Record<string, any>;
+        const usage = (meta.token_usage || {}) as Record<string, number>;
+        return {
+          id: message.id,
+          role: message.role as Role,
+          content: message.content,
+          reasoning: typeof meta.reasoning === "string" && meta.reasoning.trim() ? meta.reasoning : undefined,
+          toolCalls: Array.isArray(meta.tool_calls) && meta.tool_calls.length > 0 ? meta.tool_calls : undefined,
+          stats: {
+            latencyMs: typeof meta.latency_ms === "number" ? meta.latency_ms : undefined,
+            promptTokens: usage.prompt_tokens,
+            completionTokens: usage.completion_tokens,
+            totalTokens: usage.total_tokens,
+            model: typeof meta.model === "string" ? meta.model : undefined,
+            provider: typeof meta.provider === "string" ? meta.provider : undefined,
+            traceId: typeof meta.trace_id === "string" ? meta.trace_id : undefined,
+          },
+        };
+      });
+      
+    setMessages(mappedMessages);
+
+    if (mappedMessages.length > 0) {
+      const lastMsg = mappedMessages[mappedMessages.length - 1];
+      if (lastMsg.role === "assistant" && lastMsg.toolCalls && lastMsg.toolCalls.length > 0) {
+        const lastTool = lastMsg.toolCalls[lastMsg.toolCalls.length - 1];
+        if (lastTool.name === "ask_user_question" && !lastTool.result) {
+          try {
+            const args = typeof lastTool.arguments === "string" 
+              ? JSON.parse(lastTool.arguments) 
+              : (lastTool.arguments || {});
+            
+            const qFields = args.fields || [];
+            const initialAnswers: Record<string, string> = {};
+            qFields.forEach((f: any) => {
+              initialAnswers[f.id] = f.default_value || (f.options && f.options[0]) || "";
+            });
+            setAgentQuestionAnswers(initialAnswers);
+            setPendingAgentQuestion({
+              id: `q-restored-${Date.now()}`,
+              question: args.question || "Please clarify:",
+              fields: qFields,
+            });
+          } catch (e) {}
+        }
+      }
+    }
+
     if (typeof window !== "undefined") {
       window.history.replaceState(null, "", `/dashboard/ai?session_id=${sessionId}`);
     }
@@ -2651,7 +2705,7 @@ export default function AiAgentPage() {
     }
   }, [streamReasoning, streamToolCalls, streamSubagents, streamContent, isStreaming]);
 
-  const sendStreaming = async (prompt: string, images?: string[]) => {
+  const sendStreaming = async (prompt: string, images?: string[], continueThread: boolean = false) => {
     isUserScrolledUpRef.current = false;
     setShowScrollBottom(false);
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -2735,24 +2789,47 @@ export default function AiAgentPage() {
       ? `Analyzing deployment context and files for \`${parsedCommand}\`...`
       : "Analyzing request and inspecting project workspace...";
 
-    setStreamReasoning(initReasoning);
-    setStreamContent("");
-    setStreamToolCalls([]);
-    setStreamSubagents([]);
+    let prevContent = "";
+    let prevReasoning = initReasoning + "\n";
+    let prevToolCalls: ToolCall[] = [];
+    let prevSubagents: SubagentTask[] = [];
+
+    if (continueThread) {
+      setMessages((current) => {
+        const newMsgs = [...current];
+        for (let i = newMsgs.length - 1; i >= 0; i--) {
+          if (newMsgs[i].role === "assistant") {
+            const removed = newMsgs.splice(i, 1)[0];
+            prevContent = removed.content || "";
+            prevReasoning = removed.reasoning ? removed.reasoning + "\n" : "";
+            prevToolCalls = removed.toolCalls || [];
+            prevSubagents = removed.subagents || [];
+            break;
+          }
+        }
+        return newMsgs;
+      });
+    }
+
+    // React state update is async, so we set the initial stream state to match
+    setStreamReasoning(continueThread ? prevReasoning : initReasoning);
+    setStreamContent(continueThread ? prevContent : "");
+    setStreamToolCalls(continueThread ? prevToolCalls : []);
+    setStreamSubagents(continueThread ? prevSubagents : []);
     setIsStreaming(true);
 
     const controller = new AbortController();
     streamAbortRef.current = controller;
 
-    let reasoning = initReasoning + "\n";
-    let content = "";
-    let toolCalls: ToolCall[] = [];
-    let subagents: SubagentTask[] = [];
+    let reasoning = continueThread ? prevReasoning : initReasoning + "\n";
+    let content = continueThread ? prevContent : "";
+    let toolCalls: ToolCall[] = continueThread ? [...prevToolCalls] : [];
+    let subagents: SubagentTask[] = continueThread ? [...prevSubagents] : [];
     let stats: ChatMessage["stats"] = {};
     let messageAppended = false;
 
-    let contentBuffer = "";
-    let reasoningBuffer = initReasoning + "\n";
+    let contentBuffer = content;
+    let reasoningBuffer = reasoning;
     let streamRafId: number | null = null;
 
     const flushStream = () => {
@@ -2813,6 +2890,7 @@ export default function AiAgentPage() {
         provider,
         agentAccessMode,
         remoteTerminal: remoteTerminalPermission,
+        allowAgentQuestions,
         images,
         sandboxMode: browserSandboxMode,
         signal: controller.signal,
@@ -2920,6 +2998,17 @@ export default function AiAgentPage() {
                 });
               },
             });
+          } else if (event.type === "agent_question") {
+            const initialAnswers: Record<string, string> = {};
+            (event.fields || []).forEach((f) => {
+              initialAnswers[f.id] = f.default_value || (f.options && f.options[0]) || "";
+            });
+            setAgentQuestionAnswers(initialAnswers);
+            setPendingAgentQuestion({
+              id: event.question_id || `q-${Date.now()}`,
+              question: event.question,
+              fields: event.fields || [],
+            });
           } else if (event.type === "content") {
             contentBuffer += event.delta;
             content = contentBuffer;
@@ -2972,7 +3061,7 @@ export default function AiAgentPage() {
         messageAppended = true;
         appendMessage({
           role: "assistant",
-          content: content.trim() ? content : (toolCalls.length > 0 ? "Completed workspace actions. See details above." : "_The model returned nothing._"),
+          content: content.trim() ? content : (toolCalls.length > 0 && toolCalls[toolCalls.length - 1].name === "ask_user_question" ? "Waiting for your input..." : (toolCalls.length > 0 ? "Completed workspace actions. See details above." : "_The model returned nothing._")),
           reasoning: reasoning.trim() ? reasoning : undefined,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           subagents: subagents.length > 0 ? subagents : undefined,
@@ -3448,7 +3537,7 @@ export default function AiAgentPage() {
 
         <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
           <div className="mx-auto flex max-w-5xl flex-col gap-6">
-            {messages.map((message, messageIndex) => (
+            {messages.filter(m => !(m.role === "user" && m.content.startsWith("[System]"))).map((message, messageIndex) => (
               <div
                 key={message.id}
                 className={cn("flex gap-3", message.role === "user" ? "justify-end" : "justify-start")}
@@ -3495,6 +3584,77 @@ export default function AiAgentPage() {
                             onAllow={handleAllowToolCall}
                             onDeny={handleDenyToolCall}
                           />
+                        )}
+                        {message.role === "assistant" && pendingAgentQuestion && messageIndex === messages.filter(m => !(m.role === "user" && m.content.startsWith("[System]"))).length - 1 && (
+                          <div className="mt-3 rounded-xl border border-border bg-card p-4 shadow-sm animate-in fade-in slide-in-from-bottom-2">
+                            <div className="flex items-start gap-3.5">
+                              <div className="rounded-md border border-border bg-muted p-2.5 text-foreground shrink-0">
+                                <HelpCircle className="h-4 w-4" />
+                              </div>
+                              <div className="flex-1 space-y-3 min-w-0">
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <h4 className="font-medium text-foreground text-sm">{pendingAgentQuestion.question}</h4>
+                                  <Badge variant="secondary" className="text-[10px] uppercase tracking-wider font-mono">
+                                    Clarification Needed
+                                  </Badge>
+                                </div>
+
+                                <div className="space-y-3 pt-1">
+                                  {pendingAgentQuestion.fields.map((field) => (
+                                    <div key={field.id} className="space-y-1.5">
+                                      <label className="text-xs font-medium text-foreground/90 block">
+                                        {field.label}
+                                      </label>
+                                      {field.type === "dropdown" || (field.options && field.options.length > 0) ? (
+                                        <Select
+                                          value={agentQuestionAnswers[field.id] || field.default_value || (field.options && field.options[0]) || ""}
+                                          onValueChange={(val: string) => setAgentQuestionAnswers((prev) => ({ ...prev, [field.id]: val || "" }))}
+                                        >
+                                          <SelectTrigger className="w-full h-9">
+                                            <SelectValue placeholder="Select an option..." />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {(field.options || []).map((opt, oIdx) => (
+                                              <SelectItem key={oIdx} value={opt}>
+                                                {opt}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      ) : (
+                                        <Input
+                                          type="text"
+                                          value={agentQuestionAnswers[field.id] || ""}
+                                          placeholder={field.placeholder || "Enter value..."}
+                                          onChange={(e) => setAgentQuestionAnswers((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                                          className="h-9"
+                                        />
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div className="flex items-center gap-2 pt-2">
+                                  <Button
+                                    size="sm"
+                                    className="h-8 px-4 gap-1.5 text-xs shadow-sm"
+                                    onClick={async () => {
+                                      const answers = { ...agentQuestionAnswers };
+                                      setPendingAgentQuestion(null);
+                                      setAgentQuestionAnswers({});
+                                      const replyStr = Object.entries(answers)
+                                        .map(([k, v]) => `${k}: ${v}`)
+                                        .join("\\n");
+                                      await sendStreaming(`[System] User answered the question:\\n${replyStr}`, undefined, true);
+                                    }}
+                                  >
+                                    Submit & Continue
+                                    <ArrowRight className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         )}
                         {message.role === "user" ? (
                           <div className="space-y-2">
@@ -4840,6 +5000,37 @@ export default function AiAgentPage() {
                   Allow remote terminal
                 </Button>
               </div>
+
+              <div className="space-y-1.5 pt-3 border-t border-border/50">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold text-foreground">Interactive Questions by AI Agent</Label>
+                  <Badge variant="outline" className={cn("text-[10px] font-mono", allowAgentQuestions ? "border-sky-500/40 text-sky-400" : "border-amber-500/40 text-amber-400")}>
+                    {allowAgentQuestions ? "Interactive" : "Autonomous"}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  When ambiguous choices are encountered (e.g. multiple railway stations or airport codes for a city like Mumbai), the AI will prompt you with interactive dropdowns directly in chat.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2 pt-1">
+                  <Button
+                    type="button"
+                    variant={allowAgentQuestions ? "default" : "outline"}
+                    className={allowAgentQuestions ? "bg-sky-600 hover:bg-sky-700 text-white font-medium text-xs h-8" : "text-xs h-8"}
+                    onClick={() => setAllowAgentQuestions(true)}
+                  >
+                    Ask when needed (Recommended)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={!allowAgentQuestions ? "default" : "outline"}
+                    className={!allowAgentQuestions ? "bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs h-8" : "text-xs h-8"}
+                    onClick={() => setAllowAgentQuestions(false)}
+                  >
+                    Autonomous (Never ask)
+                  </Button>
+                </div>
+              </div>
+
               <p className="text-xs text-muted-foreground">
                 {agentAccessMode === "full_access"
                   ? "Full access lets natural-language deploy requests create deployments and queue builds."

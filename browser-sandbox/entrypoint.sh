@@ -28,7 +28,6 @@ done
 echo "[Entrypoint] Starting Chromium on DISPLAY=:99 (port 9223)..."
 /usr/lib/chromium/chromium \
   --no-sandbox \
-  --disable-dev-shm-usage \
   --test-type \
   --disable-infobars \
   --no-first-run \
@@ -44,12 +43,16 @@ echo "[Entrypoint] Starting Chromium on DISPLAY=:99 (port 9223)..."
   --window-size=1280,720 \
   --window-position=0,0 \
   --start-maximized \
-  --disable-gpu \
-  --disable-gpu-rasterization \
-  --disable-software-rasterizer \
-  --run-all-compositor-stages-before-draw \
-  --enable-surface-synchronization \
-  --disable-threaded-scrolling \
+  --ignore-gpu-blocklist \
+  --enable-webgl \
+  --enable-unsafe-swiftshader \
+  --use-gl=angle \
+  --use-angle=swiftshader \
+  --disable-gpu-watchdog \
+  --enable-features=CanvasOopRasterization \
+  --enable-threaded-compositing \
+  --enable-gpu-rasterization \
+  --enable-zero-copy \
   --blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4 \
   --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows \

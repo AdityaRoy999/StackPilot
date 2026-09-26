@@ -32,15 +32,82 @@ def normalize_element_text(raw_text: str) -> str:
     return cleaned.strip()
 
 
-def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int = 60) -> List[Dict[str, Any]]:
-    """Generates a token-optimized, compact representation of interactive elements for the LLM.
-    Prioritizes in-viewport elements and omits pixel coordinates while keeping IDs and semantic labels."""
+def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int = 80) -> List[Dict[str, Any]]:
+    """Generates a token-optimized, priority-ranked representation of interactive elements for the LLM.
+    Prioritizes critical workflow actions (search, submit, continue, confirm, next, auth, select),
+    deduplicates/samples repetitive numeric grids, and guarantees primary controls are never truncated."""
     if not elements:
         return []
-    in_viewport = [e for e in elements if e.get("is_in_viewport") and not e.get("is_occluded")]
-    occluded_in_viewport = [e for e in elements if e.get("is_in_viewport") and e.get("is_occluded")]
-    out_viewport = [e for e in elements if not e.get("is_in_viewport")]
-    ordered = in_viewport + occluded_in_viewport + out_viewport
+
+    # Universal action keywords that represent state transitions in any web application
+    action_keywords = (
+        "search", "find", "query", "filter", "review", "pay", "proceed", "confirm", "checkout",
+        "submit", "send", "save", "update", "create", "delete", "remove", "add", "apply",
+        "login", "log in", "signin", "sign in", "sign up", "register", "logout", "book", "buy",
+        "purchase", "order", "continue", "next", "back", "previous", "finish", "done", "select",
+        "choose", "accept", "agree", "close", "dismiss", "ok"
+    )
+
+    def _matches_action_keyword(text: str) -> bool:
+        if not text:
+            return False
+        # Avoid social links matching keywords
+        if any(social in text for social in ["facebook", "twitter", "instagram", "youtube", "linkedin", "telegram", "pinterest", "whatsapp"]):
+            return False
+        for kw in action_keywords:
+            if re.search(rf"\b{re.escape(kw)}\b", text, re.IGNORECASE):
+                return True
+        return False
+
+    def _get_element_priority(el: Dict[str, Any], numeric_seat_count: int) -> tuple[int, int]:
+        text = str(el.get("text") or el.get("aria_label") or el.get("placeholder") or "").strip().lower()
+        tag = str(el.get("tag") or "").lower()
+        role = str(el.get("role") or "").lower()
+        etype = str(el.get("type") or "").lower()
+        is_in_viewport = bool(el.get("is_in_viewport"))
+        is_occluded = bool(el.get("is_occluded"))
+
+        # Tier 0: Critical workflow conversion / action buttons (always top priority)
+        is_action_btn = (
+            (tag in {"button", "a", "input"} or role in {"button", "link", "combobox"} or etype in {"submit", "button"})
+            and _matches_action_keyword(text)
+        )
+        if is_action_btn:
+            return (0, 0 if is_in_viewport else 1)
+
+        # Repetitive numeric grid detection (e.g. numeric "1", "10", "18" or "A1", "B10")
+        is_numeric_grid = bool(re.match(r"^[a-zA-Z]?-?\d{1,3}$", text))
+        if is_numeric_grid:
+            # Keep the first 12 numeric elements at Tier 1; demote remaining repetitive elements to Tier 3
+            if numeric_seat_count <= 12 and is_in_viewport and not is_occluded:
+                return (1, 0)
+            return (3, 0 if is_in_viewport else 1)
+
+        # Tier 1: In-viewport inputs, links, cards, tabs, and unique buttons
+        if is_in_viewport and not is_occluded:
+            return (1, 0)
+
+        # Tier 2: Occluded in-viewport elements
+        if is_in_viewport and is_occluded:
+            return (2, 0)
+
+        # Tier 4: Out of viewport / below fold
+        return (4, 0)
+
+    # First pass: count repetitive numeric elements to assign priorities
+    numeric_count = 0
+    scored_elements = []
+    for el in elements:
+        text = str(el.get("text") or el.get("aria_label") or el.get("placeholder") or "").strip()
+        is_numeric = bool(re.match(r"^[a-zA-Z]?-?\d{1,3}$", text))
+        if is_numeric:
+            numeric_count += 1
+        priority = _get_element_priority(el, numeric_count)
+        scored_elements.append((priority, el))
+
+    # Stable sort by priority tier
+    scored_elements.sort(key=lambda x: x[0])
+    ordered = [el for _, el in scored_elements]
 
     compacted = []
     for el in ordered[:max_count]:
@@ -57,8 +124,16 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
             item["type"] = el.get("type")
         if el.get("placeholder"):
             item["placeholder"] = el.get("placeholder")[:40]
+        if el.get("value") is not None and str(el.get("value")).strip():
+            item["value"] = str(el.get("value"))[:40]
+        if el.get("checked") is not None:
+            item["checked"] = bool(el.get("checked"))
+        if el.get("disabled"):
+            item["disabled"] = True
         if el.get("href"):
             item["href"] = el.get("href")[:60]
+        if el.get("box"):
+            item["box"] = el.get("box")
         if el.get("is_external"):
             item["is_external"] = True
         if el.get("card_context"):
@@ -496,6 +571,43 @@ AGENT_TOOLS = [
                 "required": ["fields"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_user_question",
+            "description": "Prompt the user with an interactive question card directly in the chat with dropdown selectors, radio choices, or fill-in-the-blank inputs. Use when an ambiguous choice is detected during web navigation (e.g. multiple train stations or airport codes for a city like Mumbai: CSMT, MMCT, DR, LTT, BDTS; date ambiguities; or ambiguous options). Only ask when clarification is genuinely required. If the user's prompt was already specific, proceed autonomously without asking.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the user (e.g. 'Select departure station in Mumbai:')"
+                    },
+                    "fields": {
+                        "type": "array",
+                        "description": "Form fields for the user to answer with",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "Field identifier (e.g. 'from_station')"},
+                                "label": {"type": "string", "description": "Label displayed above dropdown/input"},
+                                "type": {"type": "string", "enum": ["dropdown", "text", "radio"], "description": "Field type"},
+                                "options": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "List of available options (e.g. live stations captured from autocomplete list)"
+                                },
+                                "placeholder": {"type": "string", "description": "Placeholder text"},
+                                "default_value": {"type": "string", "description": "Default selected option"}
+                            },
+                            "required": ["id", "label", "type"]
+                        }
+                    }
+                },
+                "required": ["question", "fields"]
+            }
+        }
     }
 ]
 
@@ -668,7 +780,7 @@ def resolve_target_project_runtime_url(
         u = custom_url.strip()
         if u not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
             if not u.startswith("http://") and not u.startswith("https://"):
-                u = f"http://{u}"
+                u = f"https://{u}"
             return u
 
     # 1. Regex check for explicit URL in user_message (e.g. "test https://example.com", "http://localhost:52249")
@@ -678,6 +790,13 @@ def resolve_target_project_runtime_url(
             found_url = url_match.group(0).rstrip(".,;)")
             if "localhost:3000" not in found_url and "127.0.0.1:3000" not in found_url:
                 return found_url
+
+        # Universal domain name detection for web queries (e.g. "on example.com", "open amazon.in", "test myapp.vercel.app")
+        domain_match = re.search(r"\b([a-zA-Z0-9-]+\.(?:com|org|in|io|co|net|dev|ai|app|gov|edu|me)(?:/[^\s]*)?)\b", user_message)
+        if domain_match:
+            d = domain_match.group(1).rstrip(".,;)")
+            if not d.startswith("localhost") and not d.startswith("127.0.0.1"):
+                return f"https://{d}"
 
     # 2. Check active browser canvas session in browser_manager
     try:
@@ -797,7 +916,9 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
         }
 
     if tool_name == "browser_open_live_session":
-        url = str(arguments.get("url", "about:blank"))
+        url = str(arguments.get("url", "about:blank")).strip()
+        if url and not url.startswith(("http://", "https://", "about:", "data:", "chrome:")):
+            url = f"https://{url}"
         session_id = str(arguments.get("session_id") or "default")
         # If generic, localhost:3000, or blank URL is provided, automatically resolve the actual project runtime URL
         if not url or url in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3000/", "http://127.0.0.1:3000/"}:
@@ -824,18 +945,6 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 (_active and _active.is_connected)
             )
             session = await browser_manager.get_or_create_session(session_id=session_id, url=url)
-            if url and url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
-                curr = (session.current_url or "").rstrip("/").strip()
-                norm = url.rstrip("/").strip()
-                curr_parsed = urlparse(curr) if curr else None
-                norm_parsed = urlparse(norm) if norm else None
-                same_origin = bool(
-                    curr_parsed and norm_parsed and
-                    curr_parsed.netloc and norm_parsed.netloc and
-                    curr_parsed.netloc == norm_parsed.netloc
-                )
-                if (curr in {"about:blank", ""} or not same_origin) and norm:
-                    await session.navigate(url)
             page_state = await session.extract_interactive_tree()
             try:
                 frame_data = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
@@ -887,7 +996,10 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "hint": hint_text,
             }
         except Exception as e:
-            return {"error": f"Failed to open browser session: {str(e)}"}
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[Tools] Failed to open browser session: {e}\n{tb}", flush=True)
+            return {"error": f"Failed to open browser session: {type(e).__name__}: {str(e)}", "traceback": tb}
 
     if tool_name == "browser_interact":
         session_id = str(arguments.get("session_id") or "default")
@@ -1060,6 +1172,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             elif action == "type":
                 text = str(arguments.get("text", ""))
                 element_id = arguments.get("element_id")
+                auto_select = arguments.get("auto_select_suggestion")
                 el = None
                 if element_id is not None:
                     el = next((e for e in session.interactive_elements if str(e.get("id")) == str(element_id)), None)
@@ -1071,11 +1184,11 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                     norm_text = normalize_element_text(el.get("text") or el.get("placeholder") or el.get("name") or "")
                     target_name = norm_text[:30] if norm_text else f"Input #{el['id']}"
                     label = f"Type '{text[:25]}' into {target_name}"
-                    await session.type_text(text, element_id=el["id"])
+                    await session.type_text(text, element_id=el["id"], auto_select_suggestion=auto_select)
                 else:
                     target_name = "active field"
                     label = f"Type '{text[:25]}'"
-                    await session.type_text(text, element_id=None)
+                    await session.type_text(text, element_id=None, auto_select_suggestion=auto_select)
 
             elif action in {"scroll", "scroll_to"}:
                 scroll_y = arguments.get("scroll_y")
@@ -1153,8 +1266,9 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             else:
                 return {"error": f"Unknown action '{action}'. Supported: click, hover, double_click, right_click, drag_and_drop, type, scroll, scroll_to, navigate_back, get_theme, press_key, navigate, toggle_checkbox, select_option."}
 
-            # Read cached tree if already refreshed by driver action handler, avoiding duplicate DOM walks
-            if not session.interactive_elements or action in {"navigate", "navigate_back"}:
+            # Ensure fresh interactive tree on mutation actions so subsequent agent decisions reflect live DOM changes
+            mutation_actions = {"type", "click", "hover", "double_click", "right_click", "drag_and_drop", "scroll", "scroll_to", "select_option", "toggle_checkbox", "press_key", "navigate", "navigate_back"}
+            if action in mutation_actions or not session.interactive_elements:
                 try:
                     tree = await session.extract_interactive_tree()
                 except Exception:
@@ -1167,7 +1281,10 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                     "subpages": session.discovered_subpages,
                 }
             try:
-                frame_data = await session.capture_screenshot(quality=65, use_cache=False) or session.latest_frame or ""
+                if action in mutation_actions:
+                    frame_data = await session.capture_screenshot(quality=60, use_cache=False) or ""
+                else:
+                    frame_data = session.latest_frame or await session.capture_screenshot(quality=60, use_cache=True) or ""
             except Exception:
                 frame_data = session.latest_frame or ""
             frame_url = f"data:image/jpeg;base64,{frame_data}" if frame_data else ""
@@ -1199,35 +1316,82 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "login", "log in", "signin", "sign in", "submit", "register", "signup", "auth"
             ])
 
-            if route_changed:
+            clean_lower = clean_target.lower()
+
+            # Universal Modal / Dialog Overlay Detection
+            active_modal_btn = None
+            modal_title = ""
+            for e in tree.get("elements", []):
+                t = (e.get("text") or e.get("aria_label") or "").strip().lower()
+                tag = (e.get("tag") or "").lower()
+                role = (e.get("role") or "").lower()
+                classes = (e.get("classes") or "").lower()
+                is_modal_element = "modal" in classes or "dialog" in classes or "popup" in classes or role in {"dialog", "alertdialog"}
+                if is_modal_element and not modal_title and len(t) > 3:
+                    modal_title = t[:40]
+                if any(kw in t for kw in ["close", "dismiss", "accept", "ok", "got it", "i agree", "agree", "continue", "proceed"]) and (tag in {"button", "a"} or role in {"button", "link"}):
+                    if is_modal_element or any(m in classes for m in ["close", "dismiss", "btn-close"]):
+                        active_modal_btn = f"'{e.get('text')}' (id: {e['id']})"
+                        break
+
+            if active_modal_btn and ("modal" in (tree.get("title", "").lower()) or any("modal" in (e.get("classes") or "").lower() for e in tree.get("elements", []))):
+                hint_interact = f"An overlay dialog or modal is open. If it is blocking, click {active_modal_btn} to dismiss or confirm."
+            elif route_changed:
                 hint_interact = (
-                    f"Action '{action}' on '{clean_target}' succeeded! The website completed the transition and navigated to '{session.current_url}' ('{tree.get('title', '')}'). "
-                    f"CONTINUE GOAL: You are now on the destination page. Do NOT stop now! Inspect the new interactive controls on this page and CONTINUE executing the remaining instructions to complete the user's desired goal."
+                    f"Action '{action}' on '{clean_target}' succeeded! Page navigated to '{session.current_url}' ('{tree.get('title', '')}'). "
+                    f"CONTINUE GOAL: Inspect the updated interactive controls on this page and continue executing the next step to achieve your goal."
                 )
-            elif is_login_or_submit:
+            elif is_login_or_submit or verif.get("new_alerts"):
                 if verif.get("new_alerts"):
                     hint_interact = (
-                        f"Form submission / Login on '{clean_target}' finished with feedback alerts: {', '.join(verif['new_alerts'])}. "
-                        f"Inspect the alerts to verify success or diagnose any credentials/validation errors before proceeding."
+                        f"Action '{action}' on '{clean_target}' completed with feedback alerts: {', '.join(verif['new_alerts'])}. "
+                        f"Inspect the alerts to verify success or diagnose validation feedback before proceeding."
                     )
                 else:
                     hint_interact = (
-                        f"Submission / Login on '{clean_target}' executed and settled on '{session.current_url}'. "
-                        f"Check if the desired page or state has been reached. If further actions are needed, CONTINUE immediately until the goal is fully accomplished."
+                        f"Action '{action}' on '{clean_target}' executed and settled on '{session.current_url}'. "
+                        f"Check if the desired state has been reached. If further actions are needed, CONTINUE immediately until the goal is fully accomplished."
                     )
             elif action == "type":
-                submit_candidate = None
-                for e in tree.get("elements", []):
-                    t = (e.get("text") or e.get("aria_label") or "").lower()
-                    tag = (e.get("tag") or "").lower()
-                    etype = (e.get("type") or "").lower()
-                    if etype == "submit" or tag == "button" or any(kw in t for kw in ["submit", "send", "save", "book", "register", "contact", "apply", "test", "login", "sign in", "next", "continue", "proceed", "verify"]):
-                        submit_candidate = f"'{e.get('text') or 'Submit'}' (id: {e['id']})"
-                        break
-                if submit_candidate:
-                    hint_interact = f"Input typed successfully into {clean_target}. Now call browser_interact(action='click', element_id=...) on submission/login/next button {submit_candidate} and wait for the website to complete."
+                # Check if typing opened an autocomplete dropdown list or combobox options
+                harvested_suggs = getattr(session, "last_autocomplete_suggestions", []) or []
+                dom_suggs = [
+                    e for e in tree.get("elements", [])
+                    if any(c in (e.get("classes") or "").lower() for c in ["autocomplete", "dropdown-item", "suggestion", "listbox", "option"])
+                    or e.get("role") in {"option", "menuitem"}
+                    or (e.get("tag") == "li" and "autocomplete" in (e.get("classes") or ""))
+                ]
+                all_sugg_texts = [s.get("text") for s in harvested_suggs if s.get("text")]
+                for ds in dom_suggs:
+                    txt = ds.get("text")
+                    if txt and txt not in all_sugg_texts:
+                        all_sugg_texts.append(txt)
+
+                if all_sugg_texts:
+                    sugg_str = ", ".join([f"'{txt}'" for txt in all_sugg_texts[:5]])
+                    hint_interact = (
+                        f"Typed into '{clean_target}'. Autocomplete suggestions open: {sugg_str}. "
+                        f"If user input is ambiguous or requires choice (e.g. multiple stations for a city), call ask_user_question with these options. "
+                        f"Otherwise, call browser_interact(action='click', element_id=...) on the matching suggestion to select it!"
+                    )
                 else:
-                    hint_interact = f"Input typed successfully into {clean_target}. Continue to next field or submit button."
+                    candidates = []
+                    for e in tree.get("elements", []):
+                        t = (e.get("text") or e.get("aria_label") or "").strip().lower()
+                        tag = (e.get("tag") or "").lower()
+                        etype = (e.get("type") or "").lower()
+                        if any(skip in t for skip in ["explore", "beta", "help", "support", "advisory", "notice", "skip"]):
+                            continue
+                        if any(kw in t for kw in ["search", "find", "submit", "login", "sign in", "continue", "next", "proceed", "save", "apply"]):
+                            candidates.append((0, f"'{e.get('text')}' (id: {e['id']})"))
+                        elif (etype == "submit" or tag == "button") and len(t) > 1:
+                            candidates.append((1, f"'{e.get('text') or 'Submit'}' (id: {e['id']})"))
+                    candidates.sort(key=lambda x: x[0])
+                    submit_candidate = candidates[0][1] if candidates else None
+                    if submit_candidate:
+                        hint_interact = f"Input typed successfully into '{clean_target}'. Next step: fill remaining inputs or call browser_interact(action='click', element_id=...) on button {submit_candidate} to proceed!"
+                    else:
+                        hint_interact = f"Input typed successfully into '{clean_target}'. Continue to next field or submit button."
             elif next_untested:
                 hint_interact = f"Action '{action}' on '{clean_target}' completed. Next untested elements: {', '.join(next_untested[:5])}. Continue testing until your goal is reached."
             else:
@@ -1237,7 +1401,7 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             arch_str = arch_val.value if hasattr(arch_val, "value") else str(arch_val)
             pda_depth_val = getattr(session.pda, "depth", 1) if hasattr(session, "pda") else 1
 
-            return {
+            ret_payload = {
                 "frame": frame_url,
                 "som_frame": som_url,
                 "status": "passed",
@@ -1255,6 +1419,9 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
                 "console_errors_count": len([l for l in session.console_logs if l.get("type") == "error"]),
                 "hint": hint_interact,
             }
+            if action == "type" and 'all_sugg_texts' in locals() and all_sugg_texts:
+                ret_payload["autocomplete_suggestions"] = all_sugg_texts[:12]
+            return ret_payload
         except Exception as e:
             return {"error": f"Browser interaction failed: {str(e)}"}
 
@@ -1452,6 +1619,15 @@ async def execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: 
             return {"status": "closed", "session_id": session_id}
         except Exception as e:
             return {"error": f"Failed to close session: {str(e)}"}
+
+    if tool_name == "ask_user_question":
+        question = str(arguments.get("question") or "Please select an option:")
+        fields = arguments.get("fields") or []
+        return {
+            "status": "question_asked",
+            "question": question,
+            "fields": fields
+        }
 
     backend_url = (os.getenv("BACKEND_INTERNAL_URL") or os.getenv("STACKPILOT_INTERNAL_API", "http://backend:8090")).rstrip("/")
     token = os.getenv("STACKPILOT_AI_SERVICE_TOKEN", "").strip()

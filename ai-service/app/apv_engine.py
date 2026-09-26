@@ -78,15 +78,21 @@ class ActionPerceptionVerification:
             };
             const modals = Array.from(document.querySelectorAll('[role="dialog"], dialog[open], .modal.show, [aria-modal="true"]'))
                 .filter(m => isVisible(m));
-            const alerts = Array.from(document.querySelectorAll('[role="alert"], .alert, .toast, .success, .error, [class*="toast"], [class*="alert"]'))
+            const infoKeywords = ['advisory', 'guideline', 'guidelines', 'covid', 'concession', 'disclaimer', 'bulletin', 'announcement', 'railway board', 'please note', 'caution', 'explore beta', 'advertisement', 'copyright', 'all rights reserved'];
+            const alerts = Array.from(document.querySelectorAll('[role="alert"], .alert, .toast, .success, .error, [class*="toast"], [class*="alert"], .ui-message-error, .invalid-feedback'))
                 .filter(a => isVisible(a))
-                .map(a => (a.innerText || a.textContent || '').trim())
-                .filter(Boolean)
+                .map(a => (a.textContent || '').trim())
+                .filter(t => {
+                    if (!t || t.length < 3) return false;
+                    const low = t.toLowerCase();
+                    if (infoKeywords.some(kw => low.includes(kw))) return false;
+                    return true;
+                })
                 .slice(0, 5);
             const activeEl = document.activeElement;
             const focusedId = activeEl ? (activeEl.getAttribute('data-sp-id') || activeEl.id || activeEl.name || '') : null;
             const keyText = Array.from(document.querySelectorAll('h1, h2, h3, [role="tab"][aria-selected="true"]'))
-                .map(h => (h.innerText || '').trim())
+                .map(h => (h.textContent || '').trim())
                 .filter(Boolean)
                 .slice(0, 10)
                 .join('|');
@@ -132,8 +138,11 @@ class ActionPerceptionVerification:
 
         cur_scroll_y = val.get("scrollY", scroll_y)
         cur_scroll_x = val.get("scrollX", 0)
+        session.scroll_x = cur_scroll_x
+        session.scroll_y = cur_scroll_y
         modals_count = val.get("modalsCount", 0)
         alerts = val.get("alerts", [])
+        session.last_alerts = alerts
         focused_id = val.get("focusedId")
         key_text = val.get("keyText", "")
         dom_hash = hashlib.md5(f"{len(session.interactive_elements)}:{key_text}".encode()).hexdigest()[:12]
@@ -164,24 +173,29 @@ class ActionPerceptionVerification:
         - Tier 1: High-precision synthetic CDP input events at bounding box center.
         - Tier 2: Native Blink DOM synthetic event sequence with bubbling.
         """
-        # Scroll element into center view
-        await session.scroll_to_element(element_id)
-
         # Retrieve exact bounding box and element text
         coords = await session.evaluate(f"""
         (() => {{
             const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
             if (!el) return null;
             const r = el.getBoundingClientRect();
+            const winH = window.innerHeight || 720;
+            const winW = window.innerWidth || 1280;
             const cx = Math.round(r.left + r.width / 2);
             const cy = Math.round(r.top + r.height / 2);
-            const topEl = document.elementFromPoint(cx, cy);
-            const isOccluded = topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el);
+            // Check if element center is actually within the viewport (do NOT clamp offscreen elements)
+            const isInViewport = (r.bottom > 0 && r.top < winH && r.right > 0 && r.left < winW);
+            let isOccluded = false;
+            if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH) {{
+                const topEl = document.elementFromPoint(cx, cy);
+                isOccluded = topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el);
+            }}
             return {{
                 x: cx,
                 y: cy,
-                text: (el.innerText || el.getAttribute('aria-label') || '').trim(),
-                is_occluded: Boolean(isOccluded)
+                text: (el.textContent || el.getAttribute('aria-label') || '').trim(),
+                is_occluded: Boolean(isOccluded),
+                is_in_viewport: isInViewport
             }};
         }})()
         """)
@@ -203,43 +217,64 @@ class ActionPerceptionVerification:
         display_label = f"Click: {clean_target}" if clean_target else "Click"
 
         clicked = False
-        # Tier 1: High-precision native CDP Hardware Mouse Event Sequence (if unoccluded)
-        if coords and coords.get("x") is not None and coords.get("y") is not None and not coords.get("is_occluded"):
+        # Tier 1: High-precision native CDP Hardware Mouse Event Sequence (if unoccluded AND in viewport)
+        if coords and coords.get("is_in_viewport") and coords.get("x") is not None and coords.get("y") is not None and not coords.get("is_occluded"):
             click_x = coords["x"]
             click_y = coords["y"]
-            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode)
+            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode, exact_coords=True)
             clicked = True
-        elif coords and coords.get("x") is not None and coords.get("y") is not None:
-            # If occluded by a small header or badge, try hardware click first then fall back to Tier 2
+        elif coords and coords.get("is_in_viewport") and coords.get("x") is not None and coords.get("y") is not None:
+            # If in viewport but occluded, try hardware click then fall back to Tier 2
             click_x = coords["x"]
             click_y = coords["y"]
-            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode)
+            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode, exact_coords=True)
             clicked = True
         else:
-            el = next((e for e in session.interactive_elements if str(e.get("id")) == str(element_id)), None)
+            # Element not found via JS or not in viewport — use cached center coordinates (page_x/page_y are centers now)
+            el = next((e for e in (session.interactive_elements or []) if str(e.get("id")) == str(element_id)), None)
             if el and el.get("x") is not None and el.get("y") is not None:
-                await session.click(el["x"], el["y"], label=display_label, fast_mode=fast_mode)
+                # x/y are already viewport center coords (updated by update_element_viewport_coordinates)
+                await session.click(el["x"], el["y"], label=display_label, fast_mode=fast_mode, exact_coords=True)
                 clicked = True
 
-        # Tier 2: Synthetic DOM Event Fallback (if hardware click failed or target was occluded)
-        if not clicked or (coords and coords.get("is_occluded")):
+        # Full Synthetic Mouse Event Cycle for Combobox/Dropdown Options (Angular, React, Vue, PrimeNG)
+        try:
             await session.evaluate(f"""
             (() => {{
                 const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
                 if (!el) return;
-                try {{
-                    const targetBtn = el.tagName === 'BUTTON' ? el : (el.querySelector('button') || el);
-                    if (typeof targetBtn.click === 'function') {{
-                        targetBtn.click();
-                    }}
-                    const opts = {{ bubbles: true, cancelable: true, composed: true, view: window }};
-                    targetBtn.dispatchEvent(new MouseEvent('click', opts));
-                    if (targetBtn !== el) {{
-                        el.dispatchEvent(new MouseEvent('click', opts));
-                    }}
-                }} catch(e) {{}}
+                const isOption = el.getAttribute('role') === 'option' || el.tagName === 'LI' || el.closest('[role="listbox"], [role="menu"], ul.ui-autocomplete-items');
+                if (isOption) {{
+                    el.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+                    el.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
+                    el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+                }}
             }})()
             """)
+        except Exception:
+            pass
+
+        # Tier 2: Fallback to Native DOM Click ONLY if hardware mouse click was not possible or element is occluded
+        if not clicked or (coords and coords.get("is_occluded")):
+            try:
+                await session.evaluate(f"""
+                (() => {{
+                    const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
+                    if (!el) return;
+                    try {{
+                        const targetBtn = (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT') ? el : (el.querySelector('button, a, input') || el);
+                        targetBtn.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
+                        targetBtn.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
+                        if (typeof targetBtn.click === 'function') {{
+                            targetBtn.click();
+                        }} else {{
+                            targetBtn.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
+                        }}
+                    }} catch(e) {{}}
+                }})()
+                """)
+            except Exception:
+                pass
 
         return True
 
