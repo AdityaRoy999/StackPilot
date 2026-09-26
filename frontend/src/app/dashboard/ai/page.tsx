@@ -39,6 +39,7 @@ import {
   HelpCircle,
   X,
   Zap,
+  ArrowRight,
 } from "lucide-react";
 import { AppIcon } from "@/lib/custom-icons";
 import ReactMarkdown from "react-markdown";
