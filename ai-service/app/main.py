@@ -76,7 +76,7 @@ class AgentRequest(BaseModel):
     project_id: Optional[str] = None
     deployment_id: Optional[str] = None
     session_id: Optional[str] = None
-    history: List[Dict[str, str]] = Field(default_factory=list)
+    history: List[Dict[str, Any]] = Field(default_factory=list)
     memory: Dict[str, Any] = Field(default_factory=dict)
     confidence_threshold: float = 0.72
     agent_access_mode: Optional[str] = None
