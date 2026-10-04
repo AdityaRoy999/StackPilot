@@ -11,13 +11,47 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  website-cli:
+    name: Website and CLI — installation contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: stackpilot-web/package-lock.json
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: stackpilot-cli/pyproject.toml
+      - run: python -m pip install ./stackpilot-cli
+      - run: python -m unittest discover -s stackpilot-cli/tests -v
+      - run: bash -n scripts/install.sh
+      - run: npm ci
+        working-directory: stackpilot-web
+      - run: npm test
+        working-directory: stackpilot-web
+      - run: npm run build
+        working-directory: stackpilot-web
+      - name: Verify website navigation in Chrome
+        working-directory: stackpilot-web
+        env:
+          STACKPILOT_WEBSITE_URL: http://127.0.0.1:4173
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/stackpilot-website.log 2>&1 &
+          node scripts/navigation-smoke.mjs
   ai-agent:
     name: AI agent — browser testing regressions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -39,14 +73,14 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint || true
+      - run: npm run lint
       - run: npm test
       - run: npm run build
 
@@ -54,7 +88,7 @@ jobs:
     name: Backend — C++ unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@v3
       # The unit-tests stage builds on top of `builder`, so this warms the same
       # layer cache the runtime image uses.
@@ -74,7 +108,7 @@ jobs:
     name: Compose config validity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Generate a throwaway .env
         run: bash .github/scripts/write-ci-env.sh
       # Catches the class of mistake where an env var lands in the wrong
@@ -91,8 +125,8 @@ jobs:
     # faster ones — they all run in parallel.
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -139,9 +173,14 @@ jobs:
 
       - name: Run agent tests against a disposable Chromium fixture
         run: |
-          docker compose cp ai-service/tests/. ai-service:/tmp/agent-qa-tests
-          docker compose cp sql/migrations/. ai-service:/tmp/agent-qa-migrations
-          docker compose exec -T -e STACKPILOT_TEST_MIGRATIONS=/tmp/agent-qa-migrations -e AI_BROWSER_LIVE_TESTS=1 ai-service python -m unittest discover -s /tmp/agent-qa-tests -p 'test_*.py' -v
+          docker compose exec -T ai-service mkdir -p /tmp/testrepo/ai-service/tests /tmp/testrepo/sql/migrations /tmp/testrepo/browser-sandbox/ssh-tunnel /tmp/testrepo/native-browser
+          docker compose cp ai-service/tests/. ai-service:/tmp/testrepo/ai-service/tests
+          docker compose cp ai-service/init_browser_state.py ai-service:/tmp/testrepo/ai-service/init_browser_state.py
+          docker compose cp sql/migrations/. ai-service:/tmp/testrepo/sql/migrations
+          docker compose cp browser-sandbox/streamer.py ai-service:/tmp/testrepo/browser-sandbox/streamer.py
+          docker compose cp browser-sandbox/ssh-tunnel/entrypoint.sh ai-service:/tmp/testrepo/browser-sandbox/ssh-tunnel/entrypoint.sh
+          docker compose cp native-browser/host.py ai-service:/tmp/testrepo/native-browser/host.py
+          docker compose exec -T -e PYTHONPATH=/app:/tmp/testrepo/ai-service/tests -e STACKPILOT_TEST_MIGRATIONS=/tmp/testrepo/sql/migrations -e AI_BROWSER_LIVE_TESTS=1 ai-service python -m unittest discover -s /tmp/testrepo/ai-service/tests -p 'test_*.py' -v
 
       - name: Run integration suite
         run: python tests/integration/test_platform.py

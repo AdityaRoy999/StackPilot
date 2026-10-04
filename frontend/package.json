@@ -7,7 +7,9 @@
     "dev:docker": "next dev --webpack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "node scripts/check-lint.mjs",
+    "lint:strict": "eslint .",
+    "lint:baseline": "node scripts/check-lint.mjs --update-baseline",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -22,18 +24,16 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "echarts": "^6.1.0",
-    "flowtoken": "^1.0.40",
     "js-cookie": "^3.0.5",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^1.8.0",
-    "next": "16.2.4",
+    "next": "^16.3.8",
     "next-themes": "^0.4.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
     "react-qr-code": "^2.2.0",
     "remark-gfm": "^4.0.1",
-    "shadcn": "^4.3.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "thinking-orbs": "^0.3.1",
@@ -52,10 +52,10 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.4",
+    "eslint-config-next": "^16.3.8",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   }
 }

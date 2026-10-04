@@ -374,7 +374,7 @@ export function LiveThinkingState({
 
   // Extract steps if lines start with bullets (•, -, *, 1., etc.)
   const steps: ThinkingRow[] = lines.slice(0, 15).map((line) => {
-    let clean = line.replace(/^[•\-*]\s*/, "").replace(/^\d+\.\s*/, "").trim();
+    const clean = line.replace(/^[•\-*]\s*/, "").replace(/^\d+\.\s*/, "").trim();
     return {
       primary: clean,
     };

@@ -3,6 +3,7 @@
 No user projects, credentials, AI providers, browser actions, or public tunnels.
 Build the backend image first. All created resources are removed in finally.
 """
+from stackpilot_test_artifacts import artifact_path
 import http.cookiejar
 import json
 import os
@@ -190,7 +191,7 @@ def main():
                     full_platform_account_access=True,phone_api_account_authorized=True,private_browser_capability_bound_to_device=True,detached_response_survives_disconnect=True,
                     retry_does_not_repeat_message_or_action=True,progress_cursor_recovery=True,chat_history_saved_once=True,
                     step_approval_recovered=True,deny_cancels_approval=True,interrupted_run_never_replayed=True,device_revocation=True)
-        (ROOT/'docs'/'remote-platform-session-qualification-2026-10-04.json').write_text(json.dumps(output,indent=2))
+        (artifact_path('remote-platform-session-qualification-2026-10-04.json')).write_text(json.dumps(output,indent=2))
         print('REMOTE_SESSION_PASS '+json.dumps(output),flush=True)
     except Exception:
         logs=subprocess.run(['docker','logs',backend],capture_output=True,text=True).stdout

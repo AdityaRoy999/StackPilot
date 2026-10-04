@@ -4,6 +4,7 @@ Uses a deterministic HTTP fixture instead of a paid model. It never changes the
 running backend's provider, credentials, conversations, or deployment workers.
 Run: python tests/integration/provider_memory_smoke.py
 """
+from stackpilot_test_artifacts import artifact_path
 import http.cookiejar
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -213,7 +214,7 @@ def main():
                 'history records the serving connection', 'model edits preserve the fallback provider configuration', 'saved servers and clusters exposed to builder',
                 'managed worker cannot be prepared as a standalone control plane', 'worker cannot join two clusters',
                 'control plane cannot join itself', 'failed host probe remains visible after reload']}
-            (ROOT / 'docs/provider-memory-qualification.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+            (artifact_path('provider-memory-qualification.json')).write_text(json.dumps(report, indent=2), encoding='utf-8')
             print(json.dumps(report))
     except Exception:
         logs = subprocess.run(['docker', 'logs', backend], capture_output=True, text=True)

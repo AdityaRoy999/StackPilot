@@ -4,6 +4,7 @@ By default uses a known fixture repair to qualify completion/release gates.
 --model MODEL instead gives the mostly empty source to the production agent.
 Only disposable fixture accounts/projects are changed. Provider calls are opt-in.
 """
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 from pathlib import Path
@@ -222,7 +223,7 @@ def main():
         if line:
             evidence = json.loads(line.split(' ', 1)[1])
             filename = 'completion-model-qualification-2026-10-01.json' if args.model else 'completion-repository-qualification-2026-10-01.json'
-            (ROOT/'docs'/filename).write_text(json.dumps(evidence, indent=2)+'\n')
+            (artifact_path(filename)).write_text(json.dumps(evidence, indent=2)+'\n')
             print(json.dumps({'passed': evidence['passed'], 'cases': evidence['cases'],
                              'features_verified': evidence.get('feature_verification', {}).get('features_passed'),
                              'error': evidence.get('error')}))

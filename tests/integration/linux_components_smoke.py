@@ -4,6 +4,7 @@ This qualifies daemon observations + AI-service verifier code, not autonomous
 repository repair or the backend's release transaction. No user projects change.
 """
 import copy
+from stackpilot_test_artifacts import artifact_path
 import json
 from pathlib import Path
 import shutil
@@ -114,5 +115,5 @@ def qualify():
 
 if __name__=='__main__':
     result=qualify()
-    path=ROOT/'docs/linux-component-qualification-2026-10-01.json';path.write_text(json.dumps(result,indent=2))
+    path=artifact_path('linux-component-qualification-2026-10-01.json');path.write_text(json.dumps(result,indent=2))
     print(json.dumps(result,indent=2))

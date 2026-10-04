@@ -1,100 +1,32 @@
-# Configuration Reference
+# Configuration
 
-StackPilot is configured through environment variables. Local development usually uses `.env`; production should copy `production.env.template`.
+You do not need to fill every environment variable. The installers and `stackpilot init` generate a small working configuration; Compose supplies defaults for optional tuning settings.
 
-## Core
+## Required secrets
 
-| Variable | Purpose |
-| --- | --- |
-| `STACKPILOT_ENV` | `development` or `production`. |
-| `STACKPILOT_DOMAIN` | Public production domain used by Caddy and compose. |
-| `STACKPILOT_CADDY_SITE_ADDRESS` | Caddy site address. Use the real domain for automatic HTTPS. |
-| `ACME_EMAIL` | Email used by Caddy for ACME certificate registration. |
-| `STACKPILOT_HTTP_PORT` / `STACKPILOT_HTTPS_PORT` | Host ports mapped to Caddy HTTP/HTTPS. |
-| `FRONTEND_PUBLIC_URL` | Public dashboard URL. |
-| `BACKEND_PUBLIC_URL` | Public backend URL. |
-| `CORS_ALLOWED_ORIGIN` | Comma-separated allowed browser origins. |
-| `STACKPILOT_REQUIRE_HTTPS` | Enforce HTTPS when proxy headers are trusted. |
-| `STACKPILOT_TRUST_PROXY_HEADERS` | Trust `X-Forwarded-*` headers from a reverse proxy. |
-| `STACKPILOT_API_RATE_LIMIT_PER_MINUTE` | API rate limit per client IP. |
+The generator creates independent random values for `DB_PASSWORD`, `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `STACKPILOT_AI_SERVICE_TOKEN`, `GRAFANA_ADMIN_PASSWORD` and `GITHUB_WEBHOOK_SECRET`. Database names, localhost URLs and development access defaults are selected automatically. The generated file is private on POSIX systems and is never committed.
 
-## Database
+Existing `.env` files are preserved. Do not regenerate or rotate database/encryption keys as part of a routine update: database passwords must match existing volumes, and an encryption-key change affects stored provider credentials. Keep a secure backup of the original configuration.
 
-| Variable | Purpose |
-| --- | --- |
-| `DB_HOST` | PostgreSQL host. |
-| `DB_PORT` | PostgreSQL port. |
-| `DB_NAME` | Database name. |
-| `DB_USER` | Database user. |
-| `DB_PASSWORD` | Database password. |
+## AI configuration
 
-## Security
+After creating an account, open **Settings**, add a provider connection and choose its models. Provider credentials are stored by your own StackPilot backend using its encryption key. The public website does not ask for or upload provider API keys.
 
-| Variable | Purpose |
-| --- | --- |
-| `JWT_SECRET` | Signs authentication JWTs. Use at least 48 random characters. |
-| `JWT_EXPIRY_SECONDS` | JWT lifetime. |
-| `TOKEN_ENCRYPTION_KEY` | Encrypts stored secrets. Use at least 48 random characters. |
-| `GITHUB_WEBHOOK_SECRET` | Verifies GitHub webhook signatures. |
-| `GRAFANA_ADMIN_PASSWORD` | Required Grafana admin password for Compose stacks. |
+Alternatively run `stackpilot init` interactively in a fresh checkout. It can prompt for NVIDIA NIM or an OpenAI-compatible API, including endpoint and model. Keys are entered as masked terminal input. Local compatible servers can use an empty API key. Configure provider access and allowed private-network endpoints deliberately; a container's `localhost` is the container itself.
 
-## Build and Source Artifacts
+Advanced AI environment options include `STACKPILOT_AI_PROVIDER`, `NVIDIA_NIM_API_KEY`, `NVIDIA_NIM_MODEL`, `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL` and `OPENAI_COMPATIBLE_API_KEY`. Provider costs and model availability depend on the selected service.
 
-| Variable | Purpose |
-| --- | --- |
-| `BUILD_WORKSPACE_DIR` | Local build workspace root inside backend container. |
-| `SOURCE_ARTIFACT_DIR` | Storage root for MCP-uploaded source archives. |
-| `BUILD_MAX_LOG_BYTES` | Bounded log storage size. |
-| `BUILD_CLONE_TIMEOUT_SECONDS` | Clone and source preparation timeout. |
-| `BUILD_COMMAND_TIMEOUT_SECONDS` | Build command timeout. |
-| `BUILD_DOCKER_MEMORY` | Docker build memory limit. |
-| `STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS` | Grace period before CI-required GitHub pushes continue when no check events arrive. |
-| `STACKPILOT_LOCAL_PROJECTS_DIR` | Host path mounted into backend for local source projects. |
-| `LOCAL_SOURCE_ROOTS` | Allowed source roots inside backend container. |
+## Server installation
 
-## AI
+```bash
+python scripts/configure.py --domain stackpilot.example.com --email admin@example.com
+docker compose -f docker-compose.prod.yml up -d --build
+```
 
-| Variable | Purpose |
-| --- | --- |
-| `STACKPILOT_AI_ENABLED` | Enables AI-backed workflows. |
-| `STACKPILOT_AI_PROVIDER` | `nvidia_nim` or `openai_compatible`. |
-| `STACKPILOT_AI_MODEL` | Default model override. |
-| `STACKPILOT_AI_SERVICE_URL` | Backend-to-AI-service URL. |
-| `STACKPILOT_AI_RATE_LIMIT_PER_MINUTE` | Per-user AI request rate limit. |
-| `STACKPILOT_AI_MAX_CONTEXT_BYTES` | Backend context budget sent to AI service. |
-| `STACKPILOT_AI_SERVICE_TIMEOUT_SECONDS` | Backend timeout for AI service calls. |
-| `NVIDIA_API_KEY` or `NVIDIA_NIM_API_KEY` | NVIDIA NIM key. |
-| `NVIDIA_NIM_BASE_URL` | NIM OpenAI-compatible base URL. |
-| `NVIDIA_NIM_FAST_MODEL` | Low-latency model. |
-| `NVIDIA_NIM_THINKING_MODEL` | Higher reasoning model. |
-| `OPENAI_COMPATIBLE_BASE_URL` | Custom provider base URL. |
-| `OPENAI_COMPATIBLE_API_KEY` | Custom provider key. |
-| `OPENAI_COMPATIBLE_MODEL` | Custom provider default model. |
+For a fresh installation, the generator derives public URLs, HTTPS requirements, proxy settings and first-user registration policy from the hostname. Configure DNS and inbound HTTP/HTTPS before starting the production reverse proxy. Domain and email are the only additional required inputs; see the production guide for backups and network boundaries.
 
-## MCP
+## Optional integration settings
 
-| Variable | Purpose |
-| --- | --- |
-| `STACKPILOT_MCP_TOKEN` | Token generated in dashboard settings. |
-| `STACKPILOT_API_URL` | Backend API base, for example `http://localhost:8090/api/v1`. |
-| `STACKPILOT_FRONTEND_URL` | Dashboard base URL. |
-| `STACKPILOT_PROJECT_PATH` | Default local project path for IDE agents. |
-| `STACKPILOT_LOCAL_PROJECTS_HOST_ROOT` | Where MCP stages local projects on the host. |
-| `STACKPILOT_LOCAL_PROJECTS_CONTAINER_ROOT` | Matching backend-visible path. |
-| `STACKPILOT_MCP_DEPLOY_WAIT_SECONDS` | How long MCP waits for readiness before returning. |
+Configure GitHub OAuth/App credentials only when enabling those integrations. Kubernetes credentials, SMTP, remote browser workers, ICE/TURN, observability access and native worker tokens are needed only for their respective features. A blank optional variable is not an installation failure.
 
-## Kubernetes
-
-The main variables are `K8S_NAMESPACE`, `K8S_EXPOSURE_MODE`, `K8S_RUNTIME_SCHEME`, ingress class, cert-manager issuer, resource limits, probe paths, and rollout timeout. Production should prefer ingress with TLS and bounded replicas.
-
-## GitHub Webhooks
-
-Auto deploy needs:
-
-| Variable | Purpose |
-| --- | --- |
-| `BACKEND_PUBLIC_URL` | Public HTTPS backend origin that GitHub can reach. |
-| `GITHUB_WEBHOOK_SECRET` | Shared secret used to verify `X-Hub-Signature-256`. |
-| `STACKPILOT_ALLOW_UNSIGNED_GITHUB_WEBHOOKS` | Development-only escape hatch. Do not enable in production. |
-
-If `BACKEND_PUBLIC_URL` is `localhost`, StackPilot still lets you create branch environments, but GitHub cannot call back into your machine. Use a public HTTPS domain or a temporary tunnel for webhook smoke tests.
+`production.env.template` is an advanced reference, not the beginner installation form. Copy individual overrides when needed. The CLI stores URLs, selected profile and checkout path in `~/.stackpilot/config.json`; authentication is stored in `~/.stackpilot/auth.json`. Never share either authentication files or `.env`.

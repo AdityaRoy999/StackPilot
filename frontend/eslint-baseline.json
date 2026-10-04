@@ -1,0 +1,368 @@
+{
+  "0033eba895954fb2c353b5ab95e5a309ef03223d25e53e1ea3128e64e796749a": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/set-state-in-effect",
+    "text": "setCustomTargetUrl(initUrl);",
+    "count": 1
+  },
+  "04718062f934d9d2f76bbe044d9a90bdb1372f410c1a9c5ed1ea932c15638635": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "let metadata: Record<string, any> = {};",
+    "count": 1
+  },
+  "076ea2267690c34aaf8de838469d3062bd30eaa953fbbb4e26da84b1ea6f937b": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "result?: any;",
+    "count": 1
+  },
+  "0786dd6caf90106f3021fca1499e4531c46d1a0a60d2103b94fa9f0357310f91": {
+    "file": "src/app/dashboard/projects/[id]/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const data = query.state.data as any;",
+    "count": 2
+  },
+  "08d88d21a4f946d435c63147ea9201dca6cb577f8eee028f69acb15968c0909b": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setActiveSessionId(initSession);",
+    "count": 1
+  },
+  "0a0079901543d639670aad38d42adfb815dc0e9f299501e48df9cd1c1f698dfb": {
+    "file": "src/app/dashboard/settings/appearance.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "onClick={() => setUiTheme(theme.id as any)}",
+    "count": 1
+  },
+  "0db1d498177bd35e889c071c2407642fcae456f5c96202c0c8739ce06145b30f": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/set-state-in-effect",
+    "text": "setSelectedDeploymentId(matching.id);",
+    "count": 1
+  },
+  "0ef215139099f67d07f98506105860cd1ab61e708847c402100872db70f28dc4": {
+    "file": "src/components/ui/subagent-block.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "} as any;",
+    "count": 1
+  },
+  "0f65be1d24ec818a293d714eb971cd6bde551e1418ecc8003c3992b3f0352202": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const meta = (message.metadata || {}) as Record<string, any>;",
+    "count": 1
+  },
+  "17b3bcc18cecb822fcacef6814ef8c5c53a37fedb21a082bf044380410c520eb": {
+    "file": "src/components/ui/subagent-block.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "pre: ({ children }: any) => <div className=\"min-w-0 max-w-full my-1\">{children}</div>,",
+    "count": 1
+  },
+  "19f6c422a87b1db5054479e2f9e3b845c98343927ab11be9d18034e2957eb960": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "{row.rawCall.result.files.map((file: any, fIdx: number) => {",
+    "count": 1
+  },
+  "1f3660ad7cfd7eb95a932a967f305747da0c96147f7ef9c5e947f3afd496469a": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/purity",
+    "text": "id: `deploy-proj-${Date.now()}`,",
+    "count": 1
+  },
+  "23270192027c06b2026a4de7f6d606b2bb69001081ae8ed14336d7213b3d8a9a": {
+    "file": "src/app/dashboard/projects/[id]/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "onError: (err: any) => {",
+    "count": 1
+  },
+  "23c29f882850b4b41cb8dc987d793913958577ae46fe34c9dbdcb7ce5a8bb0e1": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "videoDecoder = new (self as any).VideoDecoder({",
+    "count": 1
+  },
+  "2e47ff012a2ea8e1b92572e2980700ee2dedde0b19515e700118429daf78d94f": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/set-state-in-effect",
+    "text": "setPendingApproval(null);",
+    "count": 1
+  },
+  "303cf3cd94db71bd7d8b152aaac5cf455553f773c4c2d2bc59947da0a90682ff": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const ctx: Worker = self as any;",
+    "count": 1
+  },
+  "321a1070d6293408d431aba27f1441c5e9ee18811412f1046b375365042d07fa": {
+    "file": "src/app/dashboard/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "onError: (error: any) => {",
+    "count": 1
+  },
+  "3a1c14e01e6847a4a06b6c73733525b07309a618ac61cd2c4a28d33a8f6fae33": {
+    "file": "src/components/ui/subagent-block.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "icon: any;",
+    "count": 1
+  },
+  "3e41bc79fb232d115f8aa35f46c518ad6043ff5937e2c945e8e34a9df8cd1b75": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "if (typeof (self as any).VideoDecoder === \"undefined\") return null;",
+    "count": 1
+  },
+  "41e1319e7b77409a92cda0edc4a5afcc68a1ef401f4008b3bbf5c352403ed4c0": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "if (decoder && typeof (self as any).EncodedVideoChunk !== \"undefined\") {",
+    "count": 1
+  },
+  "43449836764aa3248d9ebc7572ad50dc9496e55980955f6af62502607d31d9d6": {
+    "file": "src/app/theme-builder/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "onValueChange={(v) => setActiveTab(v as any)}",
+    "count": 1
+  },
+  "52ed859c13751a5f094f9267e12c6941ae601483df10376b31ddf16da2ef40d4": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setOrbStyle(savedOrb as ThinkingOrbStyle);",
+    "count": 1
+  },
+  "52f32712d5fd8fa74bd2c504ca7dd0b2f09d79a41ddfa9876a611d728d857bc7": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/refs",
+    "text": "activeSessionIdRef.current = activeSessionId;",
+    "count": 1
+  },
+  "54bc169bd6e9601a4052ebb38145e8f7e66f5d69c8b5be99966b89fa43c2bd9e": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "{row.rawCall.result.results.map((item: any, rIdx: number) => {",
+    "count": 1
+  },
+  "54f613176999374484eb3febfed9dbfe6e30c5906c27b665237c5c53f01ca9af": {
+    "file": "src/components/ui/tool-call-card.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "{call.result.files.map((file: any, index: number) => {",
+    "count": 1
+  },
+  "56dcbc87afe20117c65d9b223551b10de8829c813db9f1b3a2e0d523a8708a60": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "let videoDecoder: any = null;",
+    "count": 1
+  },
+  "57fbde962e24490da15cee7b2e3555365c1e07335ef4bfd38dd5a168b40167b9": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setDrawerWidth(Math.max(380, Math.min(window.innerWidth * 0.85, parsedWidth)));",
+    "count": 1
+  },
+  "5dee81b6af9583400444bdad9fa51f16fb4baeaa7d02cb6209c0137b1ffccb96": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const repairToolCalls: ToolCall[] = (data.applied_changes || []).map((c: any) => ({",
+    "count": 2
+  },
+  "60874f893f1456801fbfb2af9ced681ddc9d51a41b3c08c94c93bfe464becb7e": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "qFields.forEach((field: any) => {",
+    "count": 1
+  },
+  "64a57fb52e13f320a7a5d07533ebb0603c337cb420aa81051f967dc5a33ceab5": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "onDeny?: (call: any) => void;",
+    "count": 1
+  },
+  "6550dea76b9a80a5402f3a6d4ed17d906d1d237743f25191a1da703c1afebef4": {
+    "file": "src/app/dashboard/projects/[id]/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const inFlight = list.some((d: any) =>",
+    "count": 1
+  },
+  "68c692505f1add78ea851f8b83588790593b1a2b00c0fbe9c509621d797e7e82": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/preserve-manual-memoization",
+    "text": "}, [selectedProjectId, selectedDeployment, deployments]);",
+    "count": 1
+  },
+  "6943289078cf19bb4b5af7a4349215eaeae4aa4dd3cb52b5b68e52608c78b5c2": {
+    "file": "src/app/api/dockerhub/route.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "} catch (error: any) {",
+    "count": 1
+  },
+  "696cd8c389599271bea51b8d86d50bb4b858dc2351cfeaa38a921495990d6768": {
+    "file": "src/lib/custom-themes.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "} catch (err: any) {",
+    "count": 1
+  },
+  "701e4728e4110cff8c8df492c5db3b23006c0aa6a7d12488db37312250544be3": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "pre: ({ children }: any) => <div className=\"min-w-0 max-w-full my-1\">{children}</div>,",
+    "count": 1
+  },
+  "739d91091b4f3affa2025729de7b4a149bb9cc884abd6e365c1b5230a5d45d1d": {
+    "file": "src/app/api/dockerhub/tags/route.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "} catch (error: any) {",
+    "count": 1
+  },
+  "74b886ce71def98f4330b7e1c850e38da7894bdd7bb17f63e3258026004c7f28": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setAgentAccessMode(savedAccess);",
+    "count": 1
+  },
+  "7b159fd3dccc4ecdedb5c07e0f5360643dfc8c6a6c5e28cb7a0126487432a49d": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "toolCalls: (result as any).toolCalls,",
+    "count": 1
+  },
+  "7f99896eaf56e2e63f55271b457bd1383ac352973012eac4d26358ce6e2866ce": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/purity",
+    "text": "id: `deploy-app-${Date.now()}`,",
+    "count": 2
+  },
+  "8c82527d2a24bf8bef673a62c561f91a3ffbf1c19bc524deb7701160391a834b": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "error: (err: any) => {",
+    "count": 1
+  },
+  "9889ee546fa2a90eedae29a2da93aa267b1d4108a01298e8d459927b42567963": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "discardActiveTurn();",
+    "count": 1
+  },
+  "9e9d3d841ab9c9386a519b59cc3b6203e9df5ed42f9c9eb7b3af91e738b7d4c5": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/set-state-in-effect",
+    "text": "setBrowserSessionError(\"\");",
+    "count": 1
+  },
+  "a5894e1addb7ce053a6a320a15882e74c0bcb75b6b0f8779bb36cf0db7b2839c": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setBrowserSandboxMode(savedBrowser);",
+    "count": 1
+  },
+  "a67ac7a62d5c517623f0091482eaa4690a50bd8ff5efebfc9e08618a08aba9f9": {
+    "file": "src/components/ui/tool-call-card.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "arguments: any;",
+    "count": 1
+  },
+  "b7fad373c65f008491e2ae9584153d9c80a4d51a2859490ed35be14621fd7d8e": {
+    "file": "src/app/api/dockerhub/route.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": ".map((item: any) => ({",
+    "count": 1
+  },
+  "c2913ab02b6c8246250938e993f1a56b89f8ce05b5abe38968c62166eb89565e": {
+    "file": "src/components/ui/subagent-block.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "metadata?: Record<string, any>;",
+    "count": 1
+  },
+  "c6fef6087ed741e7484ef31388fa04436a13ee6815e0124b018deb9ed81df2a8": {
+    "file": "src/components/ui/subagent-block.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "export function SubagentDetailModal(_props: any) {",
+    "count": 1
+  },
+  "c83876c2524fbdbc6df7799a06825433efa5f75a3c21818de1138864a90cdedc": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const chunk = new (self as any).EncodedVideoChunk({",
+    "count": 1
+  },
+  "c95e39b9ccb9996175696e610656d5ccfc7853a92f6ed6c5a91aafe4226986e9": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setAllowAgentQuestions(savedAllowQuestions === \"true\");",
+    "count": 1
+  },
+  "cfc819cb5e2faf8242903d12b0e16a57c7f92eff4c0dc2c812363dd341f0fe8e": {
+    "file": "src/components/ui/tool-call-card.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "result?: any;",
+    "count": 1
+  },
+  "d5607704f4bc8ae312bbabe93ff303580daf5463ce224d1c3e66903745758341": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/set-state-in-effect",
+    "text": "setIsDesktop(mq.matches);",
+    "count": 1
+  },
+  "d99f81ec1ce19fc831c901c3ca3ef8cc3c5b00caa7b83d69d6e496809d6af240": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "arguments: any;",
+    "count": 1
+  },
+  "d9f8be10efe9d2c4a3c49368b91b19523f4f1862eef9febc7fcf724095a06276": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/preserve-manual-memoization",
+    "text": "}, [customTargetUrl, activeProjectDeployment, selectedDeployment, selectedProjectId, deployments]);",
+    "count": 1
+  },
+  "db889777d169a0ae331c701409ca9cf1cee256459b1fa619e67e03240e6c1b20": {
+    "file": "src/workers/browser-stream.worker.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "output: (frame: any) => {",
+    "count": 1
+  },
+  "dccaba5328c5b55979113e4418181092f54630ffe36c1e3d21954725cc64310b": {
+    "file": "src/app/api/dockerhub/tags/route.ts",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": ".map((item: any) => ({",
+    "count": 1
+  },
+  "e40ee4e5b896818760d5cc054de284d4e02c6d2cce68ab7549dca5c57eeb17b9": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/immutability",
+    "text": "setRemoteTerminalPermission(savedTerminal);",
+    "count": 1
+  },
+  "e6549261d9112ce6317bf8407a9dfa2f56dcd5ad8c4cee454f2ecd22550de5a2": {
+    "file": "src/app/dashboard/ai/page.tsx",
+    "rule": "react-hooks/preserve-manual-memoization",
+    "text": "const discardActiveTurn = useCallback(() => {",
+    "count": 1
+  },
+  "f07554d3ec9322ed985d2e71b44c008f43472f2a256e8dc3808df7368ef49b92": {
+    "file": "src/app/theme-builder/page.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "const updateMetadata = (field: keyof CustomThemeDefinition, value: any) => {",
+    "count": 1
+  },
+  "f2e635cf50c083e74bb503c8287f268f756fcc26a8061000d7e7e1475e4d72da": {
+    "file": "src/components/deployments/MobileSimulatorDialog.tsx",
+    "rule": "react-hooks/set-state-in-effect",
+    "text": "setNativePreview(\"\"); void refresh();",
+    "count": 1
+  },
+  "f5a3599ea87afbbbc18408b4418e42cdfe4205a234e9734e9766ae46088fde07": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "rawCall?: any;",
+    "count": 1
+  },
+  "f67f3acf0db7775f0fab91b1f14707d8c1b805ddc7d4dab3b7d9047d863dde4e": {
+    "file": "src/components/ui/beautiful-tool-chips.tsx",
+    "rule": "@typescript-eslint/no-explicit-any",
+    "text": "onAllow?: (call: any) => void;",
+    "count": 1
+  }
+}

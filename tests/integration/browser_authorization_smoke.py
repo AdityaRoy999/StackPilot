@@ -1,4 +1,5 @@
 """Real user/session ticket and stop boundaries, without any model calls."""
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 import secrets
@@ -39,7 +40,7 @@ def main():
         assert release.api('POST','/ai/chat/stop',{'session_id':session},expected=(404,)).get('error')
         assert release.api('POST','/ai/chat/stop',{'session_id':'default'},expected=(404,)).get('error')
         result={'verified':True,'scope':'browser_authorization','signed_owner_ticket_connects':True,'missing_forged_and_wrong_session_tickets_rejected':True,'outsider_ticket_and_stop_rejected':True,'unscoped_stop_rejected':True}
-        (release.ROOT/'docs'/'browser-authorization-qualification.json').write_text(json.dumps(result,indent=2));print('BROWSER_AUTHORIZATION_PASS '+json.dumps(result),flush=True)
+        (artifact_path('browser-authorization-qualification.json')).write_text(json.dumps(result,indent=2));print('BROWSER_AUTHORIZATION_PASS '+json.dumps(result),flush=True)
     finally:
         sql("DELETE FROM ai_sessions WHERE id='"+session+"';")
         for identity in users:sql("DELETE FROM users WHERE id='"+identity+"';")

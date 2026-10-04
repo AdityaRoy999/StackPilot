@@ -103,8 +103,8 @@ scratch_*
 kubectl
 video/
 *.mp4
-!stackpilot web/public/features/*.mp4
-!stackpilot web/public/preloader/*.mp4
+!stackpilot-web/public/features/*.mp4
+!stackpilot-web/public/preloader/*.mp4
 shrink_docker_disk.bat
 ai-service/app/.runtime/
 backups/ai-service-audit-runtime/
@@ -115,3 +115,13 @@ native-browser/.venv/
 /orbs.txt
 /fix_import.js
 /tests/artifacts/
+*.egg-info/
+.stackpilot-venv/
+/me_after_logout.json
+/register-flow.json
+/register-payload.json
+docs/**/*.png
+docs/**/*.jpg
+docs/*qualification*.json
+docs/*-20*.json
+docs/*.jsonl

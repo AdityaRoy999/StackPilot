@@ -21,6 +21,12 @@ Use strong random values:
 openssl rand -base64 48
 ```
 
+The supported installer generates independent database, JWT, encryption, internal AI service, webhook and monitoring secrets on the installation host. It preserves an existing `.env`. AI provider credentials can be added through authenticated dashboard Settings; the public installation website does not collect them.
+
+## Dependency validation
+
+The October 2026 maintenance update upgraded Next.js and removed unused JavaScript dependencies. Both web applications have zero reported production npm advisories in the checked lockfiles. The dashboard's ESLint dependency chain still reports the `braces` denial-of-service advisory ([GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)); its upstream patch was unavailable during validation. It is development tooling, not a dashboard runtime dependency. Run `npm audit` and `npm audit --omit=dev` when reviewing dependency updates. CI and a clean audit do not replace deployment-specific security review.
+
 ## Authentication
 
 Dashboard users authenticate with JWTs. `JWT_SECRET` must be long and unique per deployment. `TOKEN_ENCRYPTION_KEY` encrypts stored provider credentials and must not change unless you plan a key rotation process.

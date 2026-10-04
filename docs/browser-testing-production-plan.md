@@ -2,7 +2,7 @@
 
 **Status:** proposed implementation plan, September 27, 2026. No deployment or architectural implementation is implied by this document.
 
-**Sequencing update:** the user's current priority is to improve and evaluate the existing local browser agent first. Follow [the local-first execution plan](browser-agent-local-first-plan.md) for immediate work. The VM/broker/OS isolation, image fleet, and production media infrastructure described below remain the later production destination; they are not prerequisites for local intent, execution, verification, and viewer improvements. Preserve the future boundaries while refactoring the existing services incrementally.
+**Sequencing update:** the user's current priority is to improve and evaluate the existing local browser agent first. Follow [the local-first execution plan](https://github.com/AdityaRoy999/StackPilot/blob/5ed756e6a0f723d4e984cac084091696fb614453/docs/browser-agent-local-first-plan.md) for immediate work. The VM/broker/OS isolation, image fleet, and production media infrastructure described below remain the later production destination; they are not prerequisites for local intent, execution, verification, and viewer improvements. Preserve the future boundaries while refactoring the existing services incrementally.
 
 **Objective:** give each browser-testing run an isolated Linux OS environment, an accurate agent that can explore and complete website workflows, independently verified results, reproducible tests, and a responsive live viewer. Establish comparable browser-task success to a measured Claude computer/browser-use baseline, while making repeated validated tests substantially faster than StackPilot's current model-per-action execution.
 

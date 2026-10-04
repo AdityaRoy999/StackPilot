@@ -1,8 +1,0 @@
-{
-  "verified": true,
-  "scope": "browser_authorization",
-  "signed_owner_ticket_connects": true,
-  "missing_forged_and_wrong_session_tickets_rejected": true,
-  "outsider_ticket_and_stop_rejected": true,
-  "unscoped_stop_rejected": true
-}

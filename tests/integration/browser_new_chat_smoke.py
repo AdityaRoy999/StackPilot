@@ -3,6 +3,7 @@
 Creates/deletes only a disposable fixture account and chat. No model calls,
 deployment changes, host-browser access, or existing user chat modifications.
 """
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import base64
 import json
@@ -72,7 +73,7 @@ def main():
         assert sql("SELECT COUNT(*) FROM ai_runs WHERE user_id='" + user + "';") == "0"
         result.update({"verified": True, "new_chat_persisted": True, "owner_ticket_authorized": True, "model_calls": 0,
                        "visible_presentation_verified": False})
-        (release.ROOT / "docs" / "browser-new-chat-qualification-2026-09-30.json").write_text(json.dumps(result, indent=2) + "\n")
+        (artifact_path('browser-new-chat-qualification-2026-09-30.json')).write_text(json.dumps(result, indent=2) + "\n")
         print("BROWSER_NEW_CHAT_PASS " + json.dumps(result), flush=True)
     finally:
         if session:

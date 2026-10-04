@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stackpilot-cli"
-version = "1.0.0"
-description = "100% Terminal CLI for StackPilot - Autonomous QA, Deployments, and Lifecycle Management"
+version = "1.1.0"
+description = "StackPilot setup, deployments, authenticated AI workflows and container management"
 readme = "README.md"
 authors = [{ name = "StackPilot Team" }]
 license = { text = "MIT" }

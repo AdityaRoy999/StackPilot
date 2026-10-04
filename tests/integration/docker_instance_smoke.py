@@ -3,6 +3,7 @@
 Requires the local stack. Creates a disposable account/project and exercises
 the production broker, real task leases and Linux distribution containers.
 """
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import contextlib
 import json
@@ -184,7 +185,7 @@ def main():
         if not line:
             raise RuntimeError('Instance fixture returned no evidence: '+''.join(output)[-3000:])
         evidence = json.loads(line.split(' ', 1)[1])
-        (ROOT/'docs/docker-instance-qualification-2026-10-01.json').write_text(json.dumps(evidence, indent=2)+'\n')
+        (artifact_path('docker-instance-qualification-2026-10-01.json')).write_text(json.dumps(evidence, indent=2)+'\n')
         print(json.dumps(evidence, indent=2))
         if process.returncode or not evidence.get('passed'):
             raise RuntimeError('Docker instance qualification failed')

@@ -45,13 +45,16 @@ The default planner now handles both targeted workflows and broad audits; no tra
 
 ## Test suites
 
-Three suites, in increasing order of cost. All three run in CI
+The following suites run in CI
 (`.github/workflows/ci.yml`) on every push and pull request.
 
 | Suite | Command | Needs |
 |---|---|---|
 | C++ unit | `docker build --target unit-tests -t stackpilot-unit-tests . && docker run --rm stackpilot-unit-tests` | Docker |
-| Frontend unit | `cd frontend && npm test` | Node 20 |
+| Frontend unit | `cd frontend && npm test` | Node 22 |
+| Website and installers | `cd stackpilot-web && npm test && npm run build` | Node 22 |
+| CLI configuration and permissions | `PYTHONPATH=stackpilot-cli python -m unittest discover -s stackpilot-cli/tests` | Python 3.10+, CLI dependencies |
+| AI regressions | `PYTHONPATH=ai-service python -m unittest discover -s ai-service/tests` | Python 3.12+, AI dependencies |
 | Integration | `python tests/integration/test_platform.py` | A running stack |
 
 ## C++ unit tests — `tests/unit/cpp/`
@@ -138,7 +141,7 @@ AI service regressions now live in `ai-service/tests/`. Run them with
 `PYTHONPATH=ai-service python -m unittest discover -s ai-service/tests -p 'test_*.py' -v`.
 The AI CI job runs deterministic tests, and the integration job also runs
 the opt-in disposable Chromium fixture suite. See
-[`docs/ai-agent-testing-audit.md`](../docs/ai-agent-testing-audit.md) for findings,
+[`docs/ai-agent.md`](../docs/ai-agent.md) for findings,
 live-test commands, measured action latency, and remaining coverage limits.
 
 - React component rendering (no `@testing-library/react` wired up); the unit
@@ -272,7 +275,7 @@ Cold builds can take several minutes; the check allows 600 seconds. It does not
 prove application business flows or qualify remote deployment/rollback.
 
 Current findings and qualification limits are in
-[`ai-service-reliability-audit.md`](../docs/ai-service-reliability-audit.md).
+[`ai-agent.md`](../docs/ai-agent.md).
 
 ## Deployment contracts and native artifacts
 
@@ -287,7 +290,7 @@ downloads in memory without writing APKs to the workspace. Use an owned fixture;
 this proves artifact delivery, not installation, GUI or device workflows.
 
 Current qualification and remaining work are documented in
-[`deployment-remediation-status-2026-09-29.md`](../docs/deployment-remediation-status-2026-09-29.md).
+[`deployment-workflows.md`](../docs/deployment-workflows.md).
 
 ## Local release, stream ownership and Android execution
 
@@ -320,7 +323,7 @@ Run native tests one at a time because the local worker has capacity one.
 Add `--cleanup-project` to qualify project deletion and revocation of an
 already-issued native preview capability instead of retaining the project.
 
-Live evidence is saved under `docs/*-qualification.json`; inspect its `verified`
+Live evidence is saved under `tests/artifacts/*-qualification.json`; inspect its `verified`
 field and scope. A debug APK, launch check or browser smoke is not an exhaustive
 product test or store-release qualification.
 
@@ -354,7 +357,7 @@ image with the fixture mounted and loopback UDP 8011–8026 published. The recei
 requires aiortc and httpx; it decodes media without browser automation. Never use
 the fixture as a production media endpoint.
 
-See [browser optimization details](../docs/browser-optimization-2026-09-30.md)
+See [browser optimization details](../docs/browser-streaming-validation.md)
 for transport limits and [host worker setup](../native-browser/README.md) for
 the optional dedicated Chrome profile.
 
@@ -391,7 +394,7 @@ universal repository, native-platform or speed qualification. The optional
 `--lead` mode uses the production lead stream and only the prompt “Deploy this
 repository.” It qualifies that small fixture's lead policy separately from the
 programmatically scheduled worker test; its result is saved as
-`docs/agent-lead-model-*-qualification.json`.
+`tests/artifacts/agent-lead-model-*-qualification.json`.
 
 ## Production frontend and current-chat sandbox switching
 
@@ -426,7 +429,7 @@ docker cp tests/integration/mobile_layout_smoke.py stackpilot-ai-service:/tmp/mo
 docker cp tests/integration/browser_stream_smoke.py stackpilot-ai-service:/tmp/browser_stream_smoke.py
 docker cp tests/integration/browser_interaction_performance.py stackpilot-ai-service:/tmp/browser_interaction_performance.py
 docker exec -e PYTHONPATH=/app stackpilot-ai-service python /tmp/browser_interaction_performance.py --mode remote --seconds 20 --output /tmp/browser-interaction-qa.json
-docker cp stackpilot-ai-service:/tmp/browser-interaction-qa.json docs/browser-interaction-qa.json
+docker cp stackpilot-ai-service:/tmp/browser-interaction-qa.json tests/artifacts/browser-interaction-qa.json
 ```
 
 Run modes `local`, `remote` and `host` separately. The viewer uses the dedicated
@@ -479,7 +482,7 @@ docker exec -e PYTHONPATH=/app stackpilot-ai-service python /tmp/remote_gateway_
 
 Frontend recovery tests: `npx vitest run src/lib/remote.test.ts
 src/lib/browser-sandbox.test.ts src/lib/stream-agent.test.ts` from `frontend`.
-See the [Remote implementation notes](../docs/stackpilot-remote-2026-10-03.md) for
+See the [Remote implementation notes](../docs/architecture.md) for
 the transport, credential lifetime and restart behavior.
 
 

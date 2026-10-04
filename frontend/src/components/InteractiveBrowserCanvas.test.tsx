@@ -344,7 +344,7 @@ it("isolates the live video from parent chat updates while applying real viewer 
   const host = document.createElement("div"); document.body.append(host);
   const root = createRoot(host); roots.push(root);
   const CursorMotion = cursorLibrary.BrowserCursorMotion;
-  const cursorAllocations = vi.spyOn(cursorLibrary, "BrowserCursorMotion").mockImplementation(() => new CursorMotion());
+  const cursorAllocations = vi.spyOn(cursorLibrary, "BrowserCursorMotion").mockImplementation(function () { return new CursorMotion(); });
   const onClose = vi.fn(), onUrlChange = vi.fn();
   const render = (chatText: string, sandboxMode: "local" | "remote" = "local") => root.render(<>
     <p>{chatText}</p>

@@ -21,7 +21,7 @@ from .commands import (
 
 app = typer.Typer(
     name="stackpilot",
-    help="StackPilot 100% Terminal CLI - Autonomous QA, Deployments, and Container Lifecycle Management",
+    help="StackPilot CLI — setup, browser QA, deployments, and container management",
     add_completion=False,
     no_args_is_help=True
 )
@@ -40,7 +40,7 @@ def main(
     pass
 
 # Top-level primary commands
-app.command("init", help="Interactive local setup wizard (OS audit, Docker setup, .env generator)")(run_init)
+app.command("init", help="Generate local configuration and select services and an AI provider")(run_init)
 app.command("doctor", help="Diagnose environment health, ports, RAM, and Docker status")(run_doctor)
 app.command("up", help="Start StackPilot services with modular profiles")(up_command)
 app.command("down", help="Stop StackPilot services")(down_command)

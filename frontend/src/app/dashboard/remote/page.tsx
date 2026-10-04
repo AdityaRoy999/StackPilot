@@ -21,7 +21,7 @@ export default function RemotePage() {
   const [pairing, setPairing] = useState<{ secret: string; expires_at: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let disposed = false;

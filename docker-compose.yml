@@ -316,8 +316,6 @@ services:
       - ./uploads:/app/uploads
       - agent_workspaces:/app/agent-workspaces:ro
       - ${STACKPILOT_LOCAL_PROJECTS_DIR:-./local-projects}:/app/local-projects:ro
-      - ${USERPROFILE}/.kube/config:/home/stackpilot/.kube/config:ro
-      - ${USERPROFILE}/.kube/config:/root/.kube/config:ro
     depends_on:
       uploads-init:
         condition: service_completed_successfully

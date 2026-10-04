@@ -2,6 +2,7 @@
 
 Uses one disposable user and an empty chat. Does not attach/navigate a browser.
 """
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 import secrets
@@ -38,7 +39,7 @@ def main():
         capability=phone.call('GET','/remote/api/ai/browser-ticket/'+session,token=credential)
         asyncio.run(verify(owner,phone,credential,session,claim['id'],capability['ticket']))
         result=dict(verified=True,scoped_gateway_browser_connects=True,revocation_closes_existing_viewer=True,revocation_blocks_reconnect_with_old_ticket=True,no_browser_navigation_or_model_calls=True)
-        (Path(__file__).resolve().parents[2]/'docs'/'remote-browser-revocation-2026-10-03.json').write_text(json.dumps(result,indent=2))
+        (artifact_path('remote-browser-revocation-2026-10-03.json')).write_text(json.dumps(result,indent=2))
         print('REMOTE_BROWSER_REVOCATION_PASS '+json.dumps(result))
     finally:
         if uid:

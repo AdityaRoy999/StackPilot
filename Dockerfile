@@ -128,8 +128,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-COPY kubectl /usr/local/bin/kubectl
-RUN chmod +x /usr/local/bin/kubectl
+# A clean checkout must build without a machine-local binary. Pin the release
+# and verify the upstream checksum for the target architecture.
+ARG KUBECTL_VERSION=v1.37.1
+RUN arch="$(dpkg --print-architecture)" \
+    && curl -fsSL --retry 3 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl" -o /tmp/kubectl \
+    && curl -fsSL --retry 3 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl.sha256" -o /tmp/kubectl.sha256 \
+    && echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check \
+    && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
+    && rm /tmp/kubectl /tmp/kubectl.sha256
 
 RUN curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb \
     && dpkg -i /tmp/packages-microsoft-prod.deb \

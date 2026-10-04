@@ -2,6 +2,7 @@
 
 Run from the repository root against the local stack. No model/provider calls.
 """
+from stackpilot_test_artifacts import artifact_path
 import http.cookiejar
 import json
 from pathlib import Path
@@ -125,7 +126,7 @@ def main():
         evidence['verified']=True
         print('RELEASE_PIPELINE_PASS '+json.dumps(evidence),flush=True)
     finally:
-        (ROOT/'docs'/'release-pipeline-qualification.json').write_text(json.dumps(evidence,indent=2))
+        (artifact_path('release-pipeline-qualification.json')).write_text(json.dumps(evidence,indent=2))
         if evidence.get('verified') and project:api('DELETE','/projects/'+project['id'],expected=(200,204))
 
 

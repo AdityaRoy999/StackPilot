@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -18,8 +19,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 def ensure_config_dir() -> Path:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        CONFIG_DIR.chmod(0o700)
     return CONFIG_DIR
+
+
+def _save_private(path: Path, data: Dict[str, Any]) -> None:
+    ensure_config_dir()
+    descriptor, temporary = tempfile.mkstemp(dir=CONFIG_DIR, prefix=".config-", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            json.dump(data, target, indent=2)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 def load_config() -> Dict[str, Any]:
     ensure_config_dir()
@@ -36,9 +53,7 @@ def load_config() -> Dict[str, Any]:
         return DEFAULT_CONFIG.copy()
 
 def save_config(config: Dict[str, Any]) -> None:
-    ensure_config_dir()
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
+    _save_private(CONFIG_FILE, config)
 
 def load_auth() -> Optional[Dict[str, Any]]:
     ensure_config_dir()
@@ -51,9 +66,7 @@ def load_auth() -> Optional[Dict[str, Any]]:
         return None
 
 def save_auth(auth_data: Dict[str, Any]) -> None:
-    ensure_config_dir()
-    with open(AUTH_FILE, "w", encoding="utf-8") as f:
-        json.dump(auth_data, f, indent=2)
+    _save_private(AUTH_FILE, auth_data)
 
 def clear_auth() -> None:
     if AUTH_FILE.exists():
@@ -63,35 +76,4 @@ def get_auth_token() -> Optional[str]:
     auth = load_auth()
     if auth:
         return auth.get("token")
-    return None
-
-def find_service_token() -> Optional[str]:
-    token = os.getenv("STACKPILOT_AI_SERVICE_TOKEN")
-    if token:
-        return token.strip()
-    
-    cfg = load_config()
-    if cfg.get("service_token"):
-        return cfg["service_token"].strip()
-        
-    search_dirs = [
-        Path.cwd(),
-        Path(__file__).resolve().parent.parent.parent,
-        Path.home() / "OneDrive" / "Desktop" / "ALL websites" / "StackPilot",
-    ]
-    for d in search_dirs:
-        env_file = d / ".env"
-        if env_file.exists():
-            try:
-                with open(env_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith("STACKPILOT_AI_SERVICE_TOKEN="):
-                            val = line.split("=", 1)[1].strip().strip('"').strip("'")
-                            if val:
-                                cfg["service_token"] = val
-                                save_config(cfg)
-                                return val
-            except Exception:
-                pass
     return None

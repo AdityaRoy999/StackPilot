@@ -1,97 +1,41 @@
-# 🚀 StackPilot CLI (`stackpilot`)
+# StackPilot CLI
 
-**100% Terminal CLI for StackPilot** — Control autonomous browser QA, streaming AI co-pilot chats, Docker service profiles, CI/CD deployments, environments, and Kubernetes clusters without ever opening a web browser.
+Version 1.1.0. Configure a StackPilot installation, manage containers and deployments, and use authenticated AI workflows from your terminal.
 
----
-
-## ⚡ Quick Start
-
-### Windows (PowerShell / CMD)
-```cmd
-# Run directly from workspace
-stackpilot doctor
-stackpilot status
-```
-
-### Installation via Pip
 ```bash
-cd stackpilot-cli
-pip install -e .
+python -m pip install ./stackpilot-cli
+stackpilot init
+stackpilot up --profile core --build
+stackpilot auth login
 ```
 
-Now you can invoke `stackpilot` from anywhere in your terminal!
+Python 3.10+ is required. Use a virtual environment; `scripts/install.sh` and `scripts/install.ps1` create one automatically. Run from a StackPilot checkout, or pass `stackpilot init --workspace /path/to/StackPilot`. The checkout is remembered for later lifecycle commands.
 
----
+| Command | Purpose |
+| --- | --- |
+| `init [--yes] [--profile core]` | Generate private secrets and configure the checkout; preserve existing `.env` |
+| `init --domain HOST --email EMAIL` | Configure a fresh HTTPS server installation |
+| `doctor` | Inspect Docker, services and host resources |
+| `up --profile base/core/full/monitoring --build` | Build and start selected services |
+| `down` | Stop services while preserving volumes |
+| `restart [service]` | Restart only the selected service, without tearing down the stack |
+| `status`, `logs -f [service]` | Inspect container state and logs |
+| `auth login/register/me/logout` | Manage authenticated backend access |
+| `project list/create/delete` | Manage projects |
+| `env list PROJECT_ID` | Inspect environments |
+| `deploy trigger/list/logs` | Queue builds and inspect deployments |
+| `cluster list` | Inspect managed clusters |
+| `chat [--session-id ID] [--sandbox local/remote/host]` | Chat in a persisted, owned backend session |
+| `test URL [--depth 2] [--sandbox remote] [--open]` | Test safe workflows and request approval for specific critical steps |
 
-## 📖 Command Reference
+AI requests use the authenticated backend, not an administrator service token read from `.env`. Browser permissions resume only the exact signed action that was reviewed. A denied or stale approval does not dispatch the action. A remote or host browser must already be configured in the platform. Test depth is a requested limit, not a guarantee that every route or behavior will be covered.
 
-### 1. System Diagnostics & Setup
-| Command | Description |
-| :--- | :--- |
-| `stackpilot init` | Interactive setup wizard (audits OS/RAM, checks Docker, generates secure `.env` secrets) |
-| `stackpilot doctor` | Complete health audit (ports, Docker daemon, memory, CPU, live service probes) |
+Profiles map to actual Compose profiles: `base` has no extra profiles, `core` enables `ai` and `browser`, `full` enables `full`, and `monitoring` enables `full` plus `monitoring`. Production Compose uses the same feature profiles and keeps monitoring optional.
 
-### 2. Service & Lifecycle Management
-| Command | Description |
-| :--- | :--- |
-| `stackpilot up` | Start StackPilot services with modular profiles |
-| `stackpilot up --profile core` | Start **Core QA only** (AI Service + Browser Sandbox + Frontend + DB) [~1.5GB RAM] |
-| `stackpilot up --profile full` | Start **Full Platform** (Core + C++ Drogon Backend + Build Engine) |
-| `stackpilot up --profile monitoring` | Start **Enterprise Suite** (+ Prometheus, Grafana, Loki) |
-| `stackpilot down` | Stop all StackPilot services |
-| `stackpilot down --volumes` | Stop all services and wipe persistent volumes |
-| `stackpilot status` (or `ps`) | Display live status table of containers, health, and port bindings |
-| `stackpilot logs -f [service]` | Stream color-coded logs from any service or all containers |
+Configure AI credentials in dashboard Settings, or use interactive `init` for a fresh installation. Config and authentication live under `~/.stackpilot/`. `down --volumes` deletes persistent data and is intended for disposable environments.
 
-### 3. AI Co-Pilot & Autonomous Browser Testing
-| Command | Description |
-| :--- | :--- |
-| `stackpilot test <url>` | Run autonomous browser QA against any URL with live action feed |
-| `stackpilot test <url> -d 3` | Deep crawl and test subpages up to depth 3 |
-| `stackpilot chat` | Interactive full-terminal conversational AI co-pilot with streaming tokens |
-| `stackpilot chat -m <model>` | Chat with model override (e.g. `gpt-4o`, `claude-3-5-sonnet`) |
+Run deterministic tests without Docker or external services:
 
-### 4. User Authentication
-| Command | Description |
-| :--- | :--- |
-| `stackpilot auth login` | Authenticate with email/password and store session token |
-| `stackpilot auth register` | Create a new user account |
-| `stackpilot auth me` | Show currently authenticated user details |
-| `stackpilot auth logout` | Clear active authentication session |
-
-### 5. Projects & Environments
-| Command | Description |
-| :--- | :--- |
-| `stackpilot project list` | List all registered projects |
-| `stackpilot project create <name> --repo <url>` | Create a new project |
-| `stackpilot project delete <id>` | Delete a project |
-| `stackpilot env list <project_id>` | List environments, branch mappings, and CI gating |
-
-### 6. CI/CD & Deployments
-| Command | Description |
-| :--- | :--- |
-| `stackpilot deploy trigger <project_id>` | Trigger a new build and deployment |
-| `stackpilot deploy list <project_id>` | View past deployments, commit SHAs, and statuses |
-| `stackpilot deploy logs <deployment_id>` | Stream deployment and build logs |
-
-### 7. Kubernetes & Clusters
-| Command | Description |
-| :--- | :--- |
-| `stackpilot cluster list` | List managed Kubernetes clusters and node counts |
-
----
-
-## ⚙️ Configuration
-Stored in `~/.stackpilot/config.json`:
-```json
-{
-  "backend_url": "http://localhost:8090",
-  "ai_service_url": "http://localhost:8010",
-  "browser_stream_url": "http://localhost:8099",
-  "frontend_url": "http://localhost:3000",
-  "default_profile": "core",
-  "timeout_seconds": 60,
-  "potato_mode": false
-}
+```bash
+PYTHONPATH=stackpilot-cli python -m unittest discover -s stackpilot-cli/tests
 ```
-Authentication token is stored securely in `~/.stackpilot/auth.json`.

@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+*.local
+.env
+.env.local
+.env.*.local
+.vscode
+.DS_Store
+/public/install.sh
+/public/install.ps1

@@ -6,7 +6,6 @@ import { useTheme } from "next-themes";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 
 import { cn } from "@/lib/utils";
-import { AnimatedMarkdown } from "@/components/ui/animated-markdown";
 
 
 export interface ThinkingStats {

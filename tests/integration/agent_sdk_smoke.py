@@ -3,6 +3,7 @@
 Creates only a disposable account/project and controlled non-model task rows.
 Uses the production SDK/command tools, backend and real lease HTTP endpoint.
 """
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import contextlib
 import json
@@ -115,7 +116,7 @@ def main():
         if evidence.get('passed'):
             gone=subprocess.run(['docker','image','inspect',evidence['image_id']],capture_output=True,timeout=20)
             assert gone.returncode!=0,'Canceled SDK image remains after successful cleanup'
-        (ROOT/'docs/agent-sdk-broker-qualification-2026-10-01.json').write_text(json.dumps(evidence,indent=2)+'\n')
+        (artifact_path('agent-sdk-broker-qualification-2026-10-01.json')).write_text(json.dumps(evidence,indent=2)+'\n')
         print(json.dumps(evidence,indent=2))
         if result.returncode or not evidence['passed']:raise RuntimeError('Live SDK broker qualification failed')
     finally:

@@ -38,10 +38,10 @@ made no model calls. Preserve that distinction in future status reports.
 
 Current evidence and boundaries:
 
-- [Docker instance architecture and qualification](docker-instance-provisioning-2026-10-01.md)
-- [Linux repository execution](linux-repository-execution-2026-10-01.md)
-- [Repository completion contracts and model qualification](repository-completion-2026-10-01.md)
-- [Original repository-agent architecture](universal-repository-agent-plan-2026-09-29.md)
+- [Docker instance architecture and qualification](https://github.com/AdityaRoy999/StackPilot/blob/5ed756e6a0f723d4e984cac084091696fb614453/docs/docker-instance-provisioning-2026-10-01.md)
+- [Linux repository execution](https://github.com/AdityaRoy999/StackPilot/blob/5ed756e6a0f723d4e984cac084091696fb614453/docs/linux-repository-execution-2026-10-01.md)
+- [Repository completion contracts and model qualification](https://github.com/AdityaRoy999/StackPilot/blob/5ed756e6a0f723d4e984cac084091696fb614453/docs/repository-completion-2026-10-01.md)
+- [Original repository-agent architecture](https://github.com/AdityaRoy999/StackPilot/blob/5ed756e6a0f723d4e984cac084091696fb614453/docs/universal-repository-agent-plan-2026-09-29.md)
 
 ## Nine remaining workstreams
 

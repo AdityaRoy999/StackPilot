@@ -1,7 +1,0 @@
-{
-  "test": "Docker frontend file polling",
-  "restart_between_requests": false,
-  "discovery_seconds": 4.36,
-  "passed": true,
-  "update_seconds": 2.85
-}

@@ -1,134 +1,46 @@
-# StackPilot Production Self-Host Guide
+# Production self-hosting
 
-This guide is for running StackPilot on a VPS with a real domain. The same code still works locally with the normal `docker-compose.yml`.
+Use a Linux server with Docker Compose v2.20+, Git and Python 3.10+. Point the hostname at the server and allow inbound TCP 80/443 for Caddy. Keep SSH limited to authorized administrators. Allocate resources for the platform, concurrent Chromium sessions, builds and deployed applications; there is no fixed RAM guarantee.
 
-## What Production Mode Adds
-
-- Caddy reverse proxy with automatic HTTPS.
-- Backend production config validation.
-- Secure headers on frontend and API responses.
-- HTTPS-required backend mode behind the proxy.
-- Cookie-friendly same-domain API routing through `/api`.
-- WebSocket routing through `/ws`.
-- Coarse API rate limiting.
-- Postgres hidden from the public internet.
-- A production `.env` template and secret generator.
-
-## VPS Requirements
-
-- Linux VPS with Docker and Docker Compose.
-- Ports `80` and `443` open.
-- A DNS `A` record pointing your domain to the VPS.
-- At least 2 GB RAM for the platform itself. More is needed for builds.
-
-## Setup
-
-1. Clone the repo on the VPS.
-
-   ```bash
-   git clone https://github.com/your-org/StackPilot.git
-   cd StackPilot
-   ```
-
-2. Generate a production `.env`.
-
-   ```bash
-   chmod +x scripts/new-production-env.sh
-   ./scripts/new-production-env.sh stackpilot.example.com admin@example.com
-   ```
-
-   Replace `stackpilot.example.com` with your real domain.
-
-3. Fill OAuth values in `.env` if you want Google/GitHub sign-in.
-
-   GitHub callback URL:
-
-   ```text
-   https://YOUR_DOMAIN/api/v1/auth/github/callback
-   ```
-
-4. Start production.
-
-   ```bash
-   docker compose -f docker-compose.prod.yml up -d --build
-   ```
-
-5. Check health.
-
-   ```bash
-   curl https://YOUR_DOMAIN/api/v1/health
-   ```
-
-## Local Development
-
-Use the existing local compose file:
+## Fresh installation
 
 ```bash
-docker compose up -d --build
+git clone https://github.com/AdityaRoy999/StackPilot.git
+cd StackPilot
+bash scripts/install.sh --profile core --domain stackpilot.example.com --email admin@example.com
 ```
 
-Local mode can keep HTTP, localhost CORS, relaxed rate limits, and your Docker Desktop Kubernetes config.
-
-## Security Notes
-
-StackPilot controls Docker, SSH, env vars, and Kubernetes. Those are powerful permissions. For production:
-
-- Use HTTPS only.
-- Use strong random `JWT_SECRET`, `TOKEN_ENCRYPTION_KEY`, and `DB_PASSWORD`.
-- Keep `.env` private.
-- Do not expose Postgres publicly.
-- Restrict access to trusted users.
-- Use SSH keys/Tailscale where possible.
-- Give remote servers least privilege.
-- Keep Docker and the OS patched.
-- Back up Postgres regularly.
-
-## Kubernetes
-
-For local or single-node testing, NodePort is fine. For a production-like domain, Ingress is better.
-
-If you want StackPilot to control a Kubernetes cluster from the backend container, set:
-
-```env
-KUBECONFIG_HOST_PATH=/absolute/path/to/kubeconfig
-K8S_EXPOSURE_MODE=ingress
-K8S_BASE_DOMAIN=apps.example.com
-K8S_INGRESS_CLASS=nginx
-```
-
-The production compose file mounts `KUBECONFIG_HOST_PATH` to `/root/.kube/config`.
-
-## Backups
-
-Create a Postgres backup:
+For manual installation:
 
 ```bash
-docker exec stackpilot-postgres pg_dump -U "$DB_USER" "$DB_NAME" > stackpilot-backup.sql
+python scripts/configure.py --domain stackpilot.example.com --email admin@example.com
+docker compose -f docker-compose.prod.yml --profile ai --profile browser up -d --build
 ```
 
-Restore into a fresh database:
+The generator selects same-origin API URLs, HTTPS requirements, proxy trust and first-user registration. Required secrets are random and generated locally. Sign up for the first account promptly, then configure provider connections and models in Settings. Additional registration follows the configured invitation policy.
+
+Optional production profiles match local feature profiles: `ai`, `browser`, `search`, `full`, `monitoring`, `remote`. The CLI's `core` translates into `ai` plus `browser`; `monitoring` translates into `full` plus `monitoring`. Enable monitoring explicitly rather than booting it for every install.
+
+## Trust boundaries
+
+Caddy is the public entry point. Keep PostgreSQL, Redis, AI APIs, browser debugging, streaming control and Docker sockets private. Browser and native worker services are privileged infrastructure: an operator with Docker socket access can affect the host. Use a dedicated host or appropriate isolation for untrusted repositories.
+
+Only trust forwarded headers from your controlled reverse proxy. Keep TLS, ownership checks and scoped approvals enabled. Pair remote phones through the platform, and revoke devices when access is no longer needed. Native workers and remote browser workers require their own credentials and configured endpoints.
+
+For Kubernetes, supply an authorized cluster and kubeconfig deliberately. The default local stack no longer mounts a Windows-specific home directory into Linux. `kubectl` is downloaded during the image build from a pinned upstream release and verified against its published SHA-256; set the `KUBECTL_VERSION` build argument when a different cluster-compatible version is required.
+
+## Backups and upgrades
+
+Back up PostgreSQL, application volumes, source artifacts and `.env` separately. Keep the original encryption key with your protected backup: replacing it can make stored provider credentials unreadable. Test restoration in a disposable environment.
+
+Before upgrades, read migration changes and back up the installation. Pull the reviewed commit, rebuild the selected services, and verify login, deployments, AI and browser access. Do not overwrite `.env`, reset volumes or prune active deployment images as part of an upgrade.
 
 ```bash
-cat stackpilot-backup.sql | docker exec -i stackpilot-postgres psql -U "$DB_USER" "$DB_NAME"
+git pull --ff-only
+docker compose -f docker-compose.prod.yml --profile ai --profile browser up -d --build
+docker compose -f docker-compose.prod.yml ps
 ```
 
-## Updating
+## Release checks
 
-```bash
-git pull
-docker compose -f docker-compose.prod.yml up -d --build
-```
-
-Migrations run automatically when the backend starts.
-
-## Remaining Enterprise Hardening
-
-For a multi-user public SaaS, add these before opening registration broadly:
-
-- full RBAC and admin invite flow
-- immutable audit log UI/export
-- per-user/project resource quotas
-- durable job queue for builds/provisioning
-- image scanning/SBOM/signing
-- backup scheduler and restore tests
-- stricter SSH command approval policies
+Require green CI and a smoke test for the features your installation uses. Verify persistent data across restarts, queue recovery, logs, resource limits, certificate renewal, and provider failures. Real hardware and external provider qualification are separate from deterministic CI. The deferred [completion plan](stackpilot-completion-plan.md) lists remaining support and qualification work; this guide does not certify every workload or a high-availability deployment.

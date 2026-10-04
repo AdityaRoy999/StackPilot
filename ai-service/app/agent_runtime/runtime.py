@@ -848,6 +848,14 @@ class TeamRuntime:
 _runtime = None
 
 
+async def close_runtime():
+    """Stop an existing runtime without constructing one during shutdown."""
+    global _runtime
+    if _runtime is not None:
+        await _runtime.close()
+        _runtime = None
+
+
 def get_runtime():
     global _runtime
     if _runtime is None:

@@ -3,6 +3,7 @@
 Creates a disposable local project. It never edits an existing user's project.
 Model accuracy is a measured result, not assumed by the deterministic unit tests.
 """
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 from pathlib import Path
@@ -202,7 +203,7 @@ def host():
         if line:
             evidence=json.loads(line.split(' ',1)[1]);evidence['passed']=result.returncode==0
             label=(models[0] if models else 'default').replace('/','-')
-            (ROOT/('docs/agent-'+('lead' if lead else 'team')+'-model-'+label+'-qualification.json')).write_text(json.dumps(evidence,indent=2))
+            (artifact_path('agent-' + ('lead' if lead else 'team') + '-model-' + label + '-qualification.json')).write_text(json.dumps(evidence,indent=2))
         if result.returncode:
             print(result.stderr,flush=True)
             raise RuntimeError('Real model team qualification failed')
@@ -220,8 +221,8 @@ def host():
         finally:
             cookies.clear()
             for cookie in saved_cookies:cookies.set_cookie(cookie)
-        (ROOT/('docs/agent-'+('lead' if lead else 'team')+'-model-qualification.json')).write_text(json.dumps(evidence,indent=2))
-        (ROOT/('docs/agent-'+('lead' if lead else 'team')+'-model-'+label+'-qualification.json')).write_text(json.dumps(evidence,indent=2))
+        (artifact_path('agent-' + ('lead' if lead else 'team') + '-model-qualification.json')).write_text(json.dumps(evidence,indent=2))
+        (artifact_path('agent-' + ('lead' if lead else 'team') + '-model-' + label + '-qualification.json')).write_text(json.dumps(evidence,indent=2))
     finally:
         api('DELETE','/projects/'+project['id'],expected=(200,204))
 

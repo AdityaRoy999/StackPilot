@@ -1,87 +1,52 @@
-# Quick Start
+# Quickstart
 
-This page gets StackPilot running locally with Docker Compose.
-
-## Requirements
-
-- Docker Desktop or Docker Engine with Compose.
-- A working Docker daemon.
-- Optional: Kubernetes access through a kubeconfig if you want local Kubernetes deployments.
-- Optional: NVIDIA NIM or OpenAI-compatible API key for AI features.
-
-## Configure Environment
-
-Create `.env`:
+Install Git, Docker with Compose v2, and Python 3.10+. Start Docker before running the installer. No GPU or cloud account is required for local use.
 
 ```bash
-cp production.env.template .env
+git clone https://github.com/AdityaRoy999/StackPilot.git
+cd StackPilot
+bash scripts/install.sh --profile core
 ```
 
-For local development, these are the important values:
+Windows:
+
+```powershell
+git clone https://github.com/AdityaRoy999/StackPilot.git
+Set-Location StackPilot
+./scripts/install.ps1 -Profile core
+```
+
+The installer creates a private Python environment for the CLI, generates the essential `.env` secrets locally and builds the selected services. Existing `.env` values are preserved. First builds depend on CPU, network and Docker cache; installation is not guaranteed to finish within a fixed time.
+
+Open http://localhost:3000, create an account, and configure an AI provider and model in Settings. Connect a repository to create a project, or open AI Agent and select a website target for a browser test. Critical actions require approval of a specific step.
+
+## Service choices
+
+`base` starts dashboard/deployment services. `core` adds AI and a local browser. `full` adds search. `monitoring` adds the observability stack. The old `standard`, `lite` and `enterprise` CLI names map to `core`, `base` and `monitoring` respectively.
+
+For manual setup:
 
 ```bash
-DB_USER=stackpilot_admin
-DB_PASSWORD=replace-with-a-local-password
-DB_NAME=stackpilot_platform
-JWT_SECRET=replace-with-at-least-48-random-characters
-TOKEN_ENCRYPTION_KEY=replace-with-at-least-48-random-characters
-GRAFANA_ADMIN_PASSWORD=replace-with-a-local-grafana-password
-CORS_ALLOWED_ORIGIN=http://localhost:3000
-FRONTEND_PUBLIC_URL=http://localhost:3000
-BACKEND_PUBLIC_URL=http://localhost:8090
-STACKPILOT_AI_ENABLED=true
+python scripts/configure.py
+docker compose --profile ai --profile browser up -d --build
 ```
 
-To enable NVIDIA NIM:
+The Docker profile names differ from the installer choices: the CLI translates `core` into `ai` and `browser`; do not use `docker compose --profile core`.
+
+## CLI
 
 ```bash
-STACKPILOT_AI_PROVIDER=nvidia_nim
-NVIDIA_API_KEY=your-key
-NVIDIA_NIM_FAST_MODEL=meta/llama-3.1-8b-instruct
-NVIDIA_NIM_THINKING_MODEL=meta/llama-3.1-70b-instruct
+python -m pip install ./stackpilot-cli
+stackpilot init --yes --profile core
+stackpilot up --profile core --build
+stackpilot auth login
+stackpilot test https://example.com --sandbox local
 ```
 
-To use an OpenAI-compatible provider:
+Use a Python virtual environment when installing the CLI manually. The bootstrap installer creates `.stackpilot-venv` automatically. On Windows its executable is `.stackpilot-venv/Scripts/stackpilot.exe`; on Linux/macOS it is `.stackpilot-venv/bin/stackpilot`.
 
-```bash
-STACKPILOT_AI_PROVIDER=openai_compatible
-OPENAI_COMPATIBLE_BASE_URL=https://your-provider.example.com/v1
-OPENAI_COMPATIBLE_API_KEY=your-key
-OPENAI_COMPATIBLE_MODEL=your-model
-```
+## Stop and update
 
-## Start
+`stackpilot down` preserves data volumes. `stackpilot restart ai-service` restarts only the selected service. Back up your database before pulling changes that contain migrations, then rebuild the selected services. `down --volumes` explicitly deletes persistent volumes and should be used only for disposable installations.
 
-```bash
-docker compose up --build
-```
-
-Open:
-
-- Dashboard: [http://localhost:3000](http://localhost:3000)
-- Backend health: [http://localhost:8090/api/v1/health](http://localhost:8090/api/v1/health)
-- Grafana: [http://localhost:3001](http://localhost:3001)
-- Prometheus: [http://localhost:9090](http://localhost:9090)
-
-## First Deployment
-
-1. Sign up or sign in.
-2. Create a project from GitHub, SSH, or a host-mounted local folder.
-3. Create a deployment.
-4. Trigger a build.
-5. Watch logs in Deployments or Logging and Monitoring.
-6. Open the runtime URL when the deployment reaches `running`.
-
-## Stop
-
-```bash
-docker compose down
-```
-
-To remove volumes:
-
-```bash
-docker compose down -v
-```
-
-Only remove volumes when you are comfortable deleting local database and observability state.
+See [configuration](configuration.md) and [production self-hosting](production-self-host.md) for advanced settings and server setup.

@@ -19,7 +19,10 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.enterContext(patch.dict('os.environ',{'STACKPILOT_AGENT_RUN_DB':str(Path(directory.name)/'runs.sqlite3')}))
+        self.enterContext(patch.dict('os.environ',{
+            'STACKPILOT_AGENT_RUN_DB':str(Path(directory.name)/'runs.sqlite3'),
+            'STACKPILOT_AI_SERVICE_TOKEN':'fixture-approval-signing-key',
+        }))
 
     @contextmanager
     def signed_fixture_approvals(self):

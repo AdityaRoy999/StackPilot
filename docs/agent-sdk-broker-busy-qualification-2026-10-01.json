@@ -1,7 +1,0 @@
-{
-  "scope": "live_sdk_broker_and_real_docker_lease",
-  "model_calls": 0,
-  "cases": [],
-  "passed": false,
-  "error": "RuntimeError: Task execution lease revoked; SDK image rejected"
-}

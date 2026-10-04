@@ -142,6 +142,7 @@ class ViewerCapabilityTests(unittest.TestCase):
             click=AsyncMock(), close=AsyncMock(), last_used=time.monotonic())
         claims = {"expires": time.time() + 60, "control": False, "user_id": "fixture"}
         with patch.dict(browser_manager.sessions, {"media-viewer": session}, clear=True), \
+             patch.dict(os.environ, {"STACKPILOT_AGENT_TEAMS_ENABLED": "false", "STACKPILOT_DEPLOYMENT_WORKERS_ENABLED": "false"}), \
              patch.object(browser_manager, "activate_display", AsyncMock()), \
              patch("app.browser_ticket.verify", return_value=claims), \
              TestClient(app) as client:

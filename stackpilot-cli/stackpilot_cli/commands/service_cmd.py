@@ -9,7 +9,8 @@ from ..services.docker_service import (
     run_compose_down,
     get_container_status,
     stream_service_logs,
-    is_docker_running
+    is_docker_running,
+    restart_services
 )
 
 def up_command(
@@ -52,8 +53,11 @@ def restart_command(
     service: Optional[str] = typer.Argument(None, help="Optional specific service to restart")
 ):
     print_info(f"Restarting {'all services' if not service else service}...")
-    down_command(volumes=False)
-    up_command(detach=True, build=False)
+    ok, output = restart_services(service)
+    if not ok:
+        print_error(output)
+        raise typer.Exit(1)
+    print_success("Restart complete.")
 
 def status_command():
     containers = get_container_status()

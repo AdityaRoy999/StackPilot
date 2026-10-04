@@ -1,7 +1,0 @@
-{
-  "verified": true,
-  "scoped_gateway_browser_connects": true,
-  "revocation_closes_existing_viewer": true,
-  "revocation_blocks_reconnect_with_old_ticket": true,
-  "no_browser_navigation_or_model_calls": true
-}

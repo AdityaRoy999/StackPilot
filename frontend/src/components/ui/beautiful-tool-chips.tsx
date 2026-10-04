@@ -1045,7 +1045,7 @@ export function LiveToolChips({
                           Boolean(row.rawCall?.result?.error) ||
                           row.rawCall?.result?.status === "failed";
                         const isPassed = row.rawCall?.result?.status === 'passed' || row.rawCall?.result?.status === 'connected';
-                        let rawTarget =
+                        const rawTarget =
                           row.rawCall?.result?.target ||
                           (row.rawCall?.arguments?.element_id !== undefined
                             ? `Element #${row.rawCall.arguments.element_id}`

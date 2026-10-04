@@ -3,6 +3,10 @@
 **/.next/
 build/
 build-mingw/
+.stackpilot-venv/
+**/*.egg-info/
+tests/artifacts/
+docs/
 .vscode/
 .git/
 .env*
@@ -10,7 +14,8 @@ build-mingw/
 
 # Separate services not needed for backend C++ compilation
 frontend/
-enterprise-frontend/
+stackpilot-web/
+stackpilot-cli/
 ai-service/**
 !ai-service/app/
 !ai-service/app/repository_discovery.py
@@ -27,3 +32,6 @@ video/
 *.bat
 *.md
 scratch*
+*_cookies.txt
+*_headers.txt
+*.log

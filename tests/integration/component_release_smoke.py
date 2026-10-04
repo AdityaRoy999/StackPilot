@@ -3,6 +3,7 @@
 Run after the new backend and AI service are active. This creates/deletes one
 disposable account/project and never rebuilds an existing user project.
 """
+from stackpilot_test_artifacts import artifact_path
 import json
 from pathlib import Path
 import secrets
@@ -129,7 +130,7 @@ def main():
         raise
     finally:
         # Preserve the actual release checks even if fixture cleanup fails.
-        (ROOT/'docs/component-broker-qualification-2026-10-01.json').write_text(json.dumps(evidence,indent=2))
+        (artifact_path('component-broker-qualification-2026-10-01.json')).write_text(json.dumps(evidence,indent=2))
         try:
             if project:api('DELETE','/projects/'+project,expected=(200,204))
             if final:
@@ -145,7 +146,7 @@ def main():
             evidence['cleanup_error']=type(error).__name__+': '+str(error);evidence['passed']=False
             raise
         finally:
-            (ROOT/'docs/component-broker-qualification-2026-10-01.json').write_text(json.dumps(evidence,indent=2))
+            (artifact_path('component-broker-qualification-2026-10-01.json')).write_text(json.dumps(evidence,indent=2))
     print(json.dumps(evidence,indent=2))
 
 

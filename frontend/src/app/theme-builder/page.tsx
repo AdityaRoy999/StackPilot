@@ -617,7 +617,7 @@ export default function ThemeBuilderPage() {
                   Optional custom CSS rules appended to this theme:
                 </div>
                 <Badge variant="outline" className="text-[10px]">
-                  Scoped to [data-ui-theme="{draftTheme.id}"]
+                  Scoped to [data-ui-theme=&quot;{draftTheme.id}&quot;]
                 </Badge>
               </div>
 

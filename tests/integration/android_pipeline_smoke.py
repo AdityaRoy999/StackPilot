@@ -1,4 +1,5 @@
 """Opt-in real Gradle -> APK -> emulator workflow -> authenticated preview test."""
+from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 import os
@@ -54,8 +55,7 @@ def main(restart_worker=False,cleanup_project=False):
     assert native.get('verified') and native.get('workflow_verified') and native.get('preview_available'),native
     ticket=release.api('GET','/deployments/'+deployment+'/native-preview-ticket')
     url=ticket['preview_url'];screen=asyncio.run(frame(url))
-    directory=release.ROOT/'docs'/'screenshots';directory.mkdir(exist_ok=True)
-    screenshot=directory/'android-workflow-qualified.png';screenshot.write_bytes(screen)
+    screenshot=artifact_path('android-workflow-qualified.png');screenshot.write_bytes(screen)
     # A ticket from another deployment must not grant access to this device.
     other=url.replace(deployment,str(uuid.uuid4()))
     try:
@@ -95,7 +95,7 @@ def main(restart_worker=False,cleanup_project=False):
         'worker_restart_recovered_frame_and_fresh_foreground_observation':recovered,
         'project_deleted_and_existing_preview_revoked':cleanup,
         'screenshot':str(screenshot),'limitations':['Single local emulator','PNG latest-frame capture, not qualified 60 FPS','No production signing or store publication']}
-    (release.ROOT/'docs'/'android-pipeline-qualification.json').write_text(json.dumps(evidence,indent=2))
+    (artifact_path('android-pipeline-qualification.json')).write_text(json.dumps(evidence,indent=2))
     print('ANDROID_PIPELINE_PASS '+json.dumps(evidence),flush=True)
 
 

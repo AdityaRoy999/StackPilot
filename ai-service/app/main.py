@@ -5391,8 +5391,8 @@ async def start_browser_reaper():
 
 @app.on_event('shutdown')
 async def stop_browser_reaper():
-    from .agent_runtime.runtime import get_runtime
-    await get_runtime().close()
+    from .agent_runtime.runtime import close_runtime
+    await close_runtime()
     for worker in _deployment_worker_tasks:
         worker.cancel()
     await asyncio.gather(*_deployment_worker_tasks, return_exceptions=True)

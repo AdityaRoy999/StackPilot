@@ -5,17 +5,31 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from ..setup import normalize_profile, PROFILES
 
 def get_workspace_root() -> Path:
-    # First check current directory for docker-compose.yml
+    from ..config import load_config
+    configured = os.getenv("STACKPILOT_WORKSPACE") or load_config().get("workspace")
+    if configured and (Path(configured) / "docker-compose.yml").is_file():
+        return Path(configured).resolve()
     cwd = Path.cwd()
-    if (cwd / "docker-compose.yml").exists():
-        return cwd
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / "docker-compose.yml").is_file():
+            return candidate
     # Check parent directory of stackpilot-cli
     parent = Path(__file__).resolve().parent.parent.parent.parent
     if (parent / "docker-compose.yml").exists():
         return parent
     return cwd
+
+
+def compose_command(root, profile=None):
+    from ..config import load_config
+    config = load_config()
+    command = ["docker", "compose", "-f", str(root / ("docker-compose.prod.yml" if config.get("production") else "docker-compose.yml"))]
+    for selected in PROFILES[normalize_profile(profile or config.get("default_profile", "core"))]:
+        command.extend(["--profile", selected])
+    return command
 
 def is_docker_installed() -> bool:
     return shutil.which("docker") is not None
@@ -60,9 +74,10 @@ def install_docker_hint() -> str:
 
 def run_compose_up(profile: str = "core", detach: bool = True, build: bool = False) -> Tuple[bool, str]:
     root = get_workspace_root()
-    cmd = ["docker", "compose"]
-    if profile and profile != "all":
-        cmd.extend(["--profile", profile])
+    try:
+        cmd = compose_command(root, profile)
+    except ValueError as error:
+        return False, str(error)
     cmd.append("up")
     if detach:
         cmd.append("-d")
@@ -76,7 +91,7 @@ def run_compose_up(profile: str = "core", detach: bool = True, build: bool = Fal
 
 def run_compose_down(volumes: bool = False) -> Tuple[bool, str]:
     root = get_workspace_root()
-    cmd = ["docker", "compose", "down"]
+    cmd = compose_command(root) + ["down"]
     if volumes:
         cmd.append("-v")
     try:
@@ -118,7 +133,7 @@ def get_container_status() -> List[Dict[str, str]]:
 
 def stream_service_logs(service: Optional[str] = None, follow: bool = True) -> None:
     root = get_workspace_root()
-    cmd = ["docker", "compose", "logs"]
+    cmd = compose_command(root) + ["logs"]
     if follow:
         cmd.append("-f")
     if service:
@@ -127,3 +142,12 @@ def stream_service_logs(service: Optional[str] = None, follow: bool = True) -> N
         subprocess.run(cmd, cwd=root)
     except KeyboardInterrupt:
         pass
+
+
+def restart_services(service=None):
+    root = get_workspace_root()
+    command = compose_command(root) + ["restart"]
+    if service:
+        command.append(service)
+    result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    return result.returncode == 0, result.stdout + result.stderr

@@ -115,7 +115,7 @@ export default function InvitePage({ params }: { params: Promise<{ token: string
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-3">
             <AppIcon name="building2" fallback={Building2} className="h-7 w-7"  />
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">You're Invited!</CardTitle>
+          <CardTitle className="text-2xl font-bold tracking-tight">You&apos;re Invited!</CardTitle>
           <CardDescription className="text-sm mt-1">
             {invite.inviter_username ? (
               <span>

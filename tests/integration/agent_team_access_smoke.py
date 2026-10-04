@@ -1,4 +1,5 @@
 """Live JWT/run ownership, event replay and cancellation. No model calls."""
+from stackpilot_test_artifacts import artifact_path
 import json
 import secrets
 import subprocess
@@ -50,7 +51,7 @@ asyncio.run(execute())'''
         evidence={'scope':'local_jwt_agent_access','passed':True,'cases':[
             'Owner reads persisted ordered events','Public JWT cannot call internal source broker',
             'Other tenant cannot read events','Body user_id cannot authorize another tenant cancellation','Owner can cancel run']}
-        (ROOT/'docs/agent-team-access-qualification.json').write_text(json.dumps(evidence,indent=2))
+        (artifact_path('agent-team-access-qualification.json')).write_text(json.dumps(evidence,indent=2))
         print(json.dumps(evidence))
     finally:
         cookies.clear()
