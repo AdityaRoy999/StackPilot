@@ -35,8 +35,11 @@ Json::Value ReleaseCheckpointService::rollbackLocal(const std::string& deploymen
     Json::Value snapshot,config;Json::CharReaderBuilder reader;std::string errors;
     std::istringstream saved(row["runtime_snapshot"].as<std::string>()),env(TokenCrypto::decrypt(row["runtime_config_encrypted"].as<std::string>()));
     if(!Json::parseFromStream(reader,saved,&snapshot,&errors)||!Json::parseFromStream(reader,env,&config,&errors)||!config.isArray())throw std::runtime_error("Checkpoint configuration is invalid");
-    auto plan=snapshot["deployment_plan"];const auto image=row["image_digest"].as<std::string>();
-    if(plan["repository_plan"]["components"].isArray() && plan["repository_plan"]["components"].size()>1)
+    const auto savedPlan=snapshot["deployment_plan"];
+    auto plan=savedPlan;const auto image=row["image_digest"].as<std::string>();
+    // Const inspection must not insert an empty component graph into an ordinary
+    // HTTP contract, which would select the Compose verification lane.
+    if(savedPlan["repository_plan"]["components"].isArray() && savedPlan["repository_plan"]["components"].size()>1)
         throw std::runtime_error("A Compose graph checkpoint requires a component-aware recovery executor; single-image rollback refused");
     if(image.rfind("sha256:",0)!=0)throw std::runtime_error("Checkpoint lacks immutable image identity");
     std::vector<std::pair<std::string,std::string>> vars;for(const auto& e:config)vars.emplace_back(e["key"].asString(),e["value"].asString());
@@ -48,6 +51,17 @@ Json::Value ReleaseCheckpointService::rollbackLocal(const std::string& deploymen
     const auto internalUrl=LocalDockerRuntime::markerValue(output,"runtime_internal_url");
     plan.removeMember("runtime_internal_url");
     if(!internalUrl.empty())plan["runtime_internal_url"]=internalUrl;
+    const auto observeIdentity=[&]() {
+        std::string state;
+        const std::string format=R"({"container_id":{{json .Id}},"image_id":{{json .Image}},"started_at":{{json .State.StartedAt}},"restart_count":{{.RestartCount}},"running":{{.State.Running}}})";
+        if(LocalDockerRuntime::run("timeout 8s docker inspect --format "+strings::shellQuote(format)+" "+strings::shellQuote(name),state)!=0)
+            throw std::runtime_error("Checkpoint runtime identity is unavailable");
+        return strings::parseJsonObject(state);
+    };
+    const auto identity=observeIdentity();
+    if(!identity.get("running",false).asBool() || identity.get("restart_count",-1).asInt()!=0 || identity["image_id"].asString()!=image)
+        throw std::runtime_error("Checkpoint runtime differs from its immutable image");
+    plan["runtime_identity"]=identity;
     snapshot["deployment_plan"]=plan;
     Json::Value proof;
     if(plan.get("protocol","http").asString()=="process"){
@@ -56,7 +70,8 @@ Json::Value ReleaseCheckpointService::rollbackLocal(const std::string& deploymen
         Json::Value probe;probe["url"]=url;probe["contract"]=plan;
         const auto checked=AiServiceClient::instance().postWorkflow("/runtime/verify",probe);proof=checked.body;if(!checked.ok)proof["verified"]=false;
     }
-    if(!proof.get("verified",false).asBool()){LocalDockerRuntime::removeContainer(name,"",false);throw std::runtime_error("Checkpoint application verification failed");}
+    if(!proof.get("verified",false).asBool()){LocalDockerRuntime::removeContainer(name,"",false);throw std::runtime_error("Checkpoint application verification failed: "+proof.get("reason","No verification evidence").asString());}
+    if(observeIdentity()!=identity)throw std::runtime_error("Checkpoint runtime changed during application verification");
     snapshot["runtime_url"]=url;snapshot["runtime_verification"]=proof;snapshot["restored_checkpoint"]=row["id"].as<std::string>();
     Json::StreamWriterBuilder writer;writer["indentation"]="";
     std::string published=url;

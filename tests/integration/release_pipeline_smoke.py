@@ -89,6 +89,11 @@ def main():
         evidence['cases'].append({'case':'required_test_failure_preserves_serving_release','passed':True})
         restored=api('POST','/deployments/'+second+'/rollback',{});assert restored.get('success'),restored
         assert restored['runtime_url']==url and 'Release one' in content(url)
+        recovered=api('GET','/deployments/'+restored['restored_deployment_id'])
+        actual=json.loads(subprocess.run(['docker','inspect',recovered['remote_container_name']],capture_output=True,text=True,check=True).stdout)[0]
+        recorded=recovered['runtime_snapshot']['deployment_plan']['runtime_identity']
+        assert recorded['container_id']==actual['Id'] and recorded['image_id']==actual['Image'], 'Rollback retained the retired container identity'
+        assert not recovered['runtime_snapshot']['deployment_plan'].get('repository_plan') or recovered['runtime_snapshot']['deployment_plan']['repository_plan'].get('components'), 'Rollback invented an empty component graph'
         evidence['cases'].append({'case':'recreate_stopped_checkpoint_and_verify','passed':True,'checkpoint':restored.get('restored_deployment_id')})
         configure('one')
         queued=api('POST','/deployments/'+second+'/docker/deploy',{'container_port':3000});assert queued['status']=='queued' and queued.get('job'),queued
