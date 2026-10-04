@@ -20,9 +20,13 @@ The backend container needs access to the Docker socket when local Docker builds
 ```yaml
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
+group_add:
+  - "${DOCKER_SOCKET_GID:-0}"
 ```
 
 Only run this on trusted infrastructure.
+
+The setup generator detects the socket's numeric group on Linux. For an existing configuration with direct Compose commands, run `export DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)` before starting the backend. Keep the process unprivileged; do not make the Docker socket world-writable.
 
 For local Docker deployments, StackPilot starts a container from the built image, publishes the configured container port on an ephemeral localhost port, stores the runtime as `local_docker`, and returns a browser-previewable URL such as `http://localhost:60806`. Runtime health for this mode is based on Docker container state so it works even when the backend itself is running inside a container.
 
@@ -55,15 +59,17 @@ Host bind mounts, privileged containers, custom network modes, and exact Compose
 ## Local Compose
 
 ```bash
-docker compose up --build
+python scripts/configure.py
+docker compose --profile ai --profile browser up -d --build
 ```
 
-Local compose exposes dashboard, backend, AI service, Grafana, Prometheus, Loki, Redis, and PostgreSQL ports.
+The core profiles start the dashboard, backend, AI service and browser. Observability services are enabled separately with `--profile monitoring`.
 
 ## Production Compose
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+python scripts/configure.py --domain stackpilot.example.com --email admin@example.com
+docker compose -f docker-compose.prod.yml --profile ai --profile browser up -d --build
 ```
 
 Production compose adds Caddy and serves the app through a single HTTPS domain.

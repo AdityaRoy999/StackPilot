@@ -9,7 +9,7 @@ npm run dev
 
 Development listens on http://localhost:3005. Run `npm test` and `npm run build` before publishing. Deployment uses the Vite `dist/` directory and the serverless functions in `api/`.
 
-For Vercel, set the project Root Directory to `stackpilot web`, the build command to `npm run build`, and output directory to `dist`. The original directory name is preserved for existing Vercel project compatibility. Current styles target modern browsers (Safari 16.4+, Chrome 111+, Firefox 128+), following the [Tailwind migration guide](https://tailwindcss.com/docs/upgrade-guide).
+Automatic Vercel deployments are disabled in `vercel.json`. GitHub CI still checks the website build and navigation. To publish manually on Vercel, use Root Directory `stackpilot web`, build command `npm run build`, and output directory `dist`. Current styles target modern browsers (Safari 16.4+, Chrome 111+, Firefox 128+), following the [Tailwind migration guide](https://tailwindcss.com/docs/upgrade-guide).
 
 Installation choices generate a command for the supported operating system, service profile and optional HTTPS hostname. Users enter provider keys on their own installation. Never put provider credentials in public `VITE_*` variables.
 

@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from typer.testing import CliRunner
 from stackpilot_cli.cli import app
-from stackpilot_cli.setup import environment_values, write_environment, normalize_profile, SECRET_NAMES
+from stackpilot_cli.setup import environment_values, write_environment, normalize_profile, SECRET_NAMES, docker_socket_gid
 from stackpilot_cli.services.ai_client import AIClient
-from stackpilot_cli.services.docker_service import compose_command, restart_services
+from stackpilot_cli.services.docker_service import compose_command, compose_environment, restart_services, run_compose_up
 
 
 class CLITests(unittest.TestCase):
@@ -74,6 +74,25 @@ class CLITests(unittest.TestCase):
             self.assertNotIn('--profile',compose_command(self.root,'base'))
         self.assertEqual(normalize_profile('standard'),'core')
         with self.assertRaises(ValueError): normalize_profile('unknown')
+
+    def test_linux_socket_group_is_detected_without_root_or_credential_changes(self):
+        with patch('stackpilot_cli.setup.Path.stat', return_value=Mock(st_gid=998)):
+            self.assertEqual(docker_socket_gid(), '998')
+            self.assertEqual(environment_values()['DOCKER_SOCKET_GID'], '998')
+        with patch('stackpilot_cli.setup.Path.stat', side_effect=FileNotFoundError):
+            self.assertEqual(docker_socket_gid(), '0')
+        with patch.dict(os.environ, {}, clear=True), \
+             patch('stackpilot_cli.services.docker_service.docker_socket_gid',return_value='998'), \
+             patch('stackpilot_cli.config.load_config',return_value=self.config), \
+             patch('stackpilot_cli.services.docker_service.subprocess.run',return_value=Mock(returncode=0,stdout='')) as run:
+            self.assertTrue(run_compose_up()[0])
+            self.assertEqual(run.call_args.kwargs['env']['DOCKER_SOCKET_GID'], '998')
+            path = self.root / '.env'
+            path.write_text("DB_PASSWORD=unchanged\nDOCKER_SOCKET_GID='123'\n")
+            self.assertNotIn('DOCKER_SOCKET_GID', compose_environment(self.root))
+            self.assertEqual(path.read_text(), "DB_PASSWORD=unchanged\nDOCKER_SOCKET_GID='123'\n")
+            with patch.dict(os.environ, {'DOCKER_SOCKET_GID':'456'}):
+                self.assertEqual(compose_environment(self.root)['DOCKER_SOCKET_GID'], '456')
 
     def test_restart_only_restarts_selected_service_without_removing_data(self):
         with patch('stackpilot_cli.config.load_config',return_value=self.config), \

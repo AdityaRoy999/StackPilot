@@ -265,6 +265,8 @@ services:
       - "8090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    group_add:
+      - "${DOCKER_SOCKET_GID:-0}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./uploads:/app/uploads

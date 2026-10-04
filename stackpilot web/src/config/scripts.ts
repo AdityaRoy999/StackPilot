@@ -11,7 +11,7 @@ export const getBaseHost = (): string => {
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin;
   }
-  return 'https://stackpilot.vercel.app';
+  return 'https://stackpilot-nine.vercel.app';
 };
 
 const BASE_HOST = getBaseHost();

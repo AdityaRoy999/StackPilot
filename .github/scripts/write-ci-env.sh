@@ -29,4 +29,8 @@ GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=ci-grafana-password
 ENVEOF
 
+if [ -S /var/run/docker.sock ]; then
+  printf 'DOCKER_SOCKET_GID=%s\n' "$(stat -c '%g' /var/run/docker.sock)" >> .env
+fi
+
 echo "Wrote CI .env with $(grep -c '=' .env) variables"

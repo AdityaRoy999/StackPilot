@@ -8,6 +8,8 @@ The generator creates independent random values for `DB_PASSWORD`, `JWT_SECRET`,
 
 Existing `.env` files are preserved. Do not regenerate or rotate database/encryption keys as part of a routine update: database passwords must match existing volumes, and an encryption-key change affects stored provider credentials. Keep a secure backup of the original configuration.
 
+Setup also detects `DOCKER_SOCKET_GID` on Linux so the unprivileged backend can access Docker. The CLI detects it for older configurations that omit this setting. When running Compose directly with an older `.env`, export `DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)` first. Docker Desktop defaults to group 0. An explicitly configured group is respected.
+
 ## AI configuration
 
 After creating an account, open **Settings**, add a provider connection and choose its models. Provider credentials are stored by your own StackPilot backend using its encryption key. The public website does not ask for or upload provider API keys.

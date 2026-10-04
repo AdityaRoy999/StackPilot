@@ -305,12 +305,10 @@ services:
       - "127.0.0.1:8090:8090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # The backend now runs as uid 10001 (see Dockerfile). The mounted docker
-    # socket is root:root mode 660 on Docker Desktop, with no `docker` group to
-    # join, so supplementary group 0 is required for the ~141 docker shell-outs.
-    # This grants socket access only — the process is still not uid 0.
+    # Match the socket's host group on Linux; Docker Desktop uses group 0.
+    # Setup detects the group while keeping the backend at uid 10001.
     group_add:
-      - "0"
+      - "${DOCKER_SOCKET_GID:-0}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./uploads:/app/uploads

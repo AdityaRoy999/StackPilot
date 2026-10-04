@@ -10,6 +10,14 @@ ALIASES = {"lite": "base", "standard": "core", "enterprise": "monitoring", "all"
 SECRET_NAMES = ("DB_PASSWORD", "JWT_SECRET", "TOKEN_ENCRYPTION_KEY", "STACKPILOT_AI_SERVICE_TOKEN", "GRAFANA_ADMIN_PASSWORD", "GITHUB_WEBHOOK_SECRET")
 
 
+def docker_socket_gid():
+    """Read the mounted socket's group; Desktop has no host POSIX socket."""
+    try:
+        return str(Path("/var/run/docker.sock").stat().st_gid)
+    except (OSError, AttributeError):
+        return "0"
+
+
 def normalize_profile(profile):
     profile = ALIASES.get(profile.lower(), profile.lower())
     if profile not in PROFILES:
@@ -28,7 +36,7 @@ def environment_values(*, provider="later", base_url="", model="", api_key="", d
         raise ValueError("An OpenAI-compatible provider requires an HTTP(S) base URL and model")
     origin = f"https://{domain}" if domain else "http://localhost:3000"
     values = {"STACKPILOT_ENV": "production" if domain else "development",
-        "DB_USER": "stackpilot_admin", "DB_NAME": "stackpilot_platform",
+        "DB_USER": "stackpilot_admin", "DB_NAME": "stackpilot_platform", "DOCKER_SOCKET_GID": docker_socket_gid(),
         **{name: secrets.token_hex(48) for name in SECRET_NAMES},
         "CORS_ALLOWED_ORIGIN": origin, "FRONTEND_PUBLIC_URL": origin,
         "BACKEND_PUBLIC_URL": origin if domain else "http://localhost:8090",

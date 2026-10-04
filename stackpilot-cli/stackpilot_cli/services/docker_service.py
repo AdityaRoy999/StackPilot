@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from ..setup import normalize_profile, PROFILES
+from ..setup import normalize_profile, PROFILES, docker_socket_gid
 
 def get_workspace_root() -> Path:
     from ..config import load_config
@@ -30,6 +30,20 @@ def compose_command(root, profile=None):
     for selected in PROFILES[normalize_profile(profile or config.get("default_profile", "core"))]:
         command.extend(["--profile", selected])
     return command
+
+def compose_environment(root):
+    environment = os.environ.copy()
+    if "DOCKER_SOCKET_GID" not in environment:
+        path = root / ".env"
+        # Respect explicit overrides without loading any credentials into CLI state.
+        configured = path.is_file() and any(
+            line.partition("=")[0].strip() == "DOCKER_SOCKET_GID"
+            for line in path.read_text(encoding="utf-8").splitlines()
+        )
+        if not configured:
+            environment["DOCKER_SOCKET_GID"] = docker_socket_gid()
+    return environment
+
 
 def is_docker_installed() -> bool:
     return shutil.which("docker") is not None
@@ -84,7 +98,7 @@ def run_compose_up(profile: str = "core", detach: bool = True, build: bool = Fal
     if build:
         cmd.append("--build")
     try:
-        res = subprocess.run(cmd, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        res = subprocess.run(cmd, cwd=root, env=compose_environment(root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         return res.returncode == 0, res.stdout
     except Exception as e:
         return False, str(e)
@@ -95,7 +109,7 @@ def run_compose_down(volumes: bool = False) -> Tuple[bool, str]:
     if volumes:
         cmd.append("-v")
     try:
-        res = subprocess.run(cmd, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        res = subprocess.run(cmd, cwd=root, env=compose_environment(root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         return res.returncode == 0, res.stdout
     except Exception as e:
         return False, str(e)
@@ -139,7 +153,7 @@ def stream_service_logs(service: Optional[str] = None, follow: bool = True) -> N
     if service:
         cmd.append(service)
     try:
-        subprocess.run(cmd, cwd=root)
+        subprocess.run(cmd, cwd=root, env=compose_environment(root))
     except KeyboardInterrupt:
         pass
 
@@ -149,5 +163,5 @@ def restart_services(service=None):
     command = compose_command(root) + ["restart"]
     if service:
         command.append(service)
-    result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=root, env=compose_environment(root), capture_output=True, text=True)
     return result.returncode == 0, result.stdout + result.stderr

@@ -42,7 +42,9 @@ def wait(identity,success=True):
         state=result['status']
         if state!=last:print('RELEASE_STATE '+identity[:8]+' '+state,flush=True);last=state
         if state=='failed':
-            if success:raise RuntimeError('Release failed: '+api('GET','/deployments/'+identity+'/logs').get('logs','')[-3000:])
+            if success:
+                logs=api('GET','/deployments/'+identity+'/logs')['deployment']['logs']
+                raise RuntimeError('Release failed: '+logs[-5000:])
             return result
         if state in {'running','ready'}:
             # Job completion follows routed verification; a running candidate is insufficient.

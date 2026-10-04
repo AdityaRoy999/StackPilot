@@ -27,6 +27,6 @@ Receiver decoding during action scenarios was approximately 60 FPS. All 45 teste
 
 ## Reproduce
 
-`tests/integration/browser_stream_smoke.py`, `browser_stream_smoke.py` and `remote_browser_capture_probe.py` exercise functional recovery and performance. Use a disposable owned browser session and the documented integration prerequisites. Store generated measurements in ignored `tests/artifacts/`; include durable result summaries and relevant conditions in this guide.
+`tests/integration/browser_stream_smoke.py`, `browser_interaction_performance.py` and `remote_browser_capture_probe.py` exercise functional recovery and performance. Use a disposable owned browser session and the documented integration prerequisites. Store generated measurements in ignored `tests/artifacts/`; include durable result summaries and relevant conditions in this guide.
 
 Longer qualification should measure p95/p99 pacing and input-to-visible latency, concurrent AI/chat work, throttled networks, hardware decoding and real phones. Dedicated workers, GPU encoders and stronger instances can change the bottleneck, but do not establish smoothness without client presentation measurements.
