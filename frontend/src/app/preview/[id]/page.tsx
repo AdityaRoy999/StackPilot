@@ -1,4 +1,6 @@
 "use client";
+import { HostRuntimeView } from "@/components/HostRuntimeView";
+import { useRemotePlatform } from "@/lib/use-remote-platform";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -19,7 +21,7 @@ import {
   Terminal,
   Hash,
   Globe,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { ReactQRCode } from "@lglab/react-qr-code";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -37,6 +39,7 @@ interface Deployment {
     archetype?: string;
     archetype_details?: string;
     detected_subservices?: string[];
+    test_evidence?: { artifacts?: string[] };
     mobile_metadata?: {
       framework?: string;
       app_name?: string;
@@ -102,6 +105,7 @@ const DEVICE_SPECS: Record<DeviceModel, DeviceSpec> = {
 };
 
 export default function MobilePreviewStudioPage() {
+  const remotePlatform = useRemotePlatform();
   const params = useParams();
   const router = useRouter();
   const deploymentId = params?.id as string;
@@ -126,7 +130,7 @@ export default function MobilePreviewStudioPage() {
       const h = window.location.hostname;
       if (h && h !== "localhost" && h !== "127.0.0.1") return h;
     }
-    return "172.20.10.2";
+    return "";
   });
   const [isEditingHost, setIsEditingHost] = useState<boolean>(false);
   const [hostInput, setHostInput] = useState<string>(customHost);
@@ -156,16 +160,12 @@ export default function MobilePreviewStudioPage() {
 
   // Base runtime URL
   const runtimeUrl = useMemo(() => {
-    if (rawRuntimeUrl) return rawRuntimeUrl;
-    if (typeof window !== "undefined") {
-      const host = window.location.hostname;
-      return `${window.location.protocol}//${host}:3000`;
-    }
-    return "http://localhost:3000";
+    return rawRuntimeUrl;
   }, [rawRuntimeUrl]);
 
   // Compute phone-accessible network URL using nip.io / LAN IP
   const phoneNetworkUrl = useMemo(() => {
+    if (!customHost) return runtimeUrl;
     try {
       const url = new URL(runtimeUrl);
       const port = url.port ? `:${url.port}` : "";
@@ -192,15 +192,15 @@ export default function MobilePreviewStudioPage() {
     }
   }, [runtimeUrl, hostMode, customHost]);
 
-  const archetype = deployment?.runtime_snapshot?.archetype || "native_android";
+  const archetype = deployment?.runtime_snapshot?.archetype || "web";
   const mobileMetadata = deployment?.runtime_snapshot?.mobile_metadata;
   const isAndroid = archetype === "native_android" || archetype === "android_gradle";
 
   const appName = mobileMetadata?.app_name || deployment?.project_name || "Mobile App";
-  const bundleId = mobileMetadata?.bundle_id || "pl.czak.minimal";
-  const sdkVersion = mobileMetadata?.sdk_version || "API 34 (Android 14)";
-  const apkFileName = "app-debug.apk";
-  const phoneApkUrl = `${phoneNetworkUrl}/${apkFileName}`;
+  const bundleId = mobileMetadata?.bundle_id || "Not reported by this build";
+  const sdkVersion = mobileMetadata?.sdk_version || "Not reported by this build";
+  const apkFileName = deployment?.runtime_snapshot?.test_evidence?.artifacts?.find((name) => name.endsWith('.apk')) || "";
+  const phoneApkUrl = apkFileName ? `${phoneNetworkUrl.replace(/\/$/, '')}/artifacts/${encodeURIComponent(apkFileName)}` : runtimeUrl;
 
   const [qrType, setQrType] = useState<"apk" | "web">("apk");
   const activeQrTarget = qrType === "apk" && isAndroid ? phoneApkUrl : phoneNetworkUrl;
@@ -309,7 +309,7 @@ export default function MobilePreviewStudioPage() {
                 : "text-zinc-400 hover:text-zinc-200"
             )}
           >
-            Simulator
+            Web viewport
           </button>
 
           {isAndroid && (
@@ -393,6 +393,14 @@ export default function MobilePreviewStudioPage() {
             <div className="flex flex-col items-center gap-2 text-zinc-500 font-mono text-xs">
               <div className="h-5 w-5 animate-spin rounded-full border border-zinc-400 border-t-transparent" />
               <span>Loading deployment...</span>
+            </div>
+          ) : !runtimeUrl ? (
+            <p className="text-sm text-zinc-400">No runtime preview is attached to this deployment.</p>
+          ) : testMode === "simulator" && isAndroid ? (
+            <div className="max-w-lg space-y-3 text-center text-sm text-zinc-300">
+              <p>This native Android build requires a connected emulator or device worker for an interactive screen preview.</p>
+              <p className="text-zinc-500">The browser viewport does not emulate Android. Build artifacts are available in the download view.</p>
+              <Button onClick={() => setTestMode("download")}>View build artifacts</Button>
             </div>
           ) : testMode === "simulator" ? (
             /* =======================================================================
@@ -498,14 +506,14 @@ export default function MobilePreviewStudioPage() {
 
                     {/* Viewport Iframe */}
                     <div className="relative flex-1 w-full h-full bg-zinc-950 overflow-hidden">
-                      {isLoadingIframe && (
+                      {isLoadingIframe && !remotePlatform && (
                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-zinc-950/80 backdrop-blur-sm gap-2 text-zinc-500 font-mono text-xs">
                           <div className="h-5 w-5 animate-spin rounded-full border border-zinc-400 border-t-transparent" />
                           <span>Loading runtime...</span>
                         </div>
                       )}
 
-                      {iframeError ? (
+                      {remotePlatform ? <HostRuntimeView key={iframeKey} url={runtimeUrl} /> : iframeError ? (
                         <div className="flex flex-col items-center justify-center h-full p-6 text-center text-zinc-500 font-mono text-xs gap-2">
                           <Smartphone className="h-8 w-8 text-zinc-600 stroke-[1.5]" />
                           <p className="text-zinc-300 font-medium">Container Offline or Non-Web</p>
@@ -546,7 +554,7 @@ export default function MobilePreviewStudioPage() {
 
               {/* Bottom Network URL Indicator */}
               <div className="flex items-center gap-2 text-[11px] font-mono text-zinc-500">
-                <span>Phone accessible URL:</span>
+                <span>Preview URL (phone reachability requires routing):</span>
                 <span className="text-zinc-300 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
                   {phoneNetworkUrl}
                 </span>
@@ -577,7 +585,7 @@ export default function MobilePreviewStudioPage() {
                     className="inline-flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-xs font-medium text-zinc-950 hover:bg-zinc-200 transition-colors shadow-sm"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    <span>Download APK</span>
+                      <span>{apkFileName ? "Download APK" : "Open build artifacts"}</span>
                   </a>
                 </div>
 
@@ -609,7 +617,7 @@ export default function MobilePreviewStudioPage() {
                   <div className="space-y-1.5 font-mono text-[11px]">
                     <p>1. Download the APK onto your Android device or transfer via USB.</p>
                     <p>2. Open Files or Downloads on the phone and tap <strong>{apkFileName}</strong>.</p>
-                    <p>3. Allow "Install unknown apps" if prompted by Android Settings.</p>
+                    <p>3. Allow &quot;Install unknown apps&quot; if prompted by Android Settings.</p>
                     <p>4. Tap Install to run the application.</p>
                   </div>
                 </div>

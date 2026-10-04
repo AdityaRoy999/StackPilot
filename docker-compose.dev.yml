@@ -1,0 +1,32 @@
+# Development override: keep filesystem work inside Linux and sync host edits.
+# docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build --watch frontend
+services:
+  frontend:
+    build:
+      target: dev
+    image: stackpilot-frontend:dev
+    command: ["npm", "run", "dev"]
+    environment:
+      NODE_ENV: development
+    volumes:
+      - /app/node_modules
+      - /app/.next
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend
+          target: /app
+          initial_sync: true
+          ignore:
+            - node_modules/
+            - .next/
+            - build/
+            - package.json
+            - package-lock.json
+            - Dockerfile
+        - action: rebuild
+          path: ./frontend/package.json
+        - action: rebuild
+          path: ./frontend/package-lock.json
+        - action: rebuild
+          path: ./frontend/Dockerfile

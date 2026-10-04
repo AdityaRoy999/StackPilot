@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowLeft, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, RotateCcw } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 
 import { Button } from "@/components/ui/button";

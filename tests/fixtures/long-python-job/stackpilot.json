@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "workload": "job",
+  "entrypoint": ["python", "-u", "task.py"],
+  "job_timeout_seconds": 90,
+  "checks": [
+    {"path": "/healthz", "json_contains": {"state": "completed", "exit_code": 0}, "text_contains": "result=42"}
+  ]
+}

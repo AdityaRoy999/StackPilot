@@ -13,6 +13,9 @@
 #include "../services/DriftDetector.h"
 #include "../services/KubernetesService.h"
 #include "../services/LocalDockerRuntime.h"
+#include "../services/ComponentRuntimeVerification.h"
+#include "../services/AiServiceClient.h"
+#include "../services/ReleaseCheckpointService.h"
 #include "../utils/BlockingTaskRunner.h"
 #include "../utils/JwtHelper.h"
 #include "../utils/StringUtils.h"
@@ -565,6 +568,14 @@ void DeploymentController::rollbackDeployment(
             }
 
             // 2. Find previous healthy deployment in the same project & environment
+            if(provider=="local_docker"){
+                const auto restored=ReleaseCheckpointService::rollbackLocal(deploymentId,userId);
+                if(restored.get("success",false).asBool()){
+                    txn.commit();const auto owner=restored["restored_deployment_id"].asString();
+                    LogWebSocketController::broadcastStatus(owner,"running");DeploymentJournal::broadcastSummary(owner);
+                    callback(drogon::HttpResponse::newHttpJsonResponse(restored));return;
+                }
+            }
             auto prevRows = txn.exec_params(
                 "SELECT d.id, d.image_name, d.runtime_url, d.remote_container_name, "
                 "d.runtime_snapshot::text AS runtime_snapshot, d.status "
@@ -572,10 +583,10 @@ void DeploymentController::rollbackDeployment(
                 "WHERE d.project_id = $1 "
                 "AND ($2 = '' OR d.environment_id = NULLIF($2, '')::uuid) "
                 "AND d.id <> $3 "
-                "AND d.status IN ('running', 'built') "
+                "AND d.status = 'running' AND d.runtime_provider = $4 "
                 "AND d.artifact_available = TRUE "
                 "ORDER BY d.created_at DESC LIMIT 1",
-                projectId, envId, deploymentId
+                projectId, envId, deploymentId, provider
             );
 
             if (prevRows.empty()) {
@@ -591,32 +602,35 @@ void DeploymentController::rollbackDeployment(
             const std::string prevContainer = prev["remote_container_name"].is_null() ? "" : prev["remote_container_name"].as<std::string>();
             const std::string prevSnapshot = prev["runtime_snapshot"].is_null() ? "{}" : prev["runtime_snapshot"].as<std::string>();
 
-            // 3. Atomically restore runtime and point active environment to previous healthy checkpoint
-            txn.exec_params(
-                "UPDATE deployments "
-                "SET status = 'running', image_name = $1, runtime_url = $2, remote_container_name = $3, "
-                "runtime_snapshot = $4::jsonb, runtime_paused = FALSE, "
-                "logs = COALESCE(logs, '') || E'\\n[AI SRE Watchdog] Atomic rollback performed: restored healthy checkpoint " + prevId + "\\n', "
-                "updated_at = NOW() "
-                "WHERE id = $5",
-                prevImage, prevUrl, prevContainer, prevSnapshot, deploymentId
-            );
-
-            if (!envId.empty()) {
-                txn.exec_params(
-                    "UPDATE project_environments SET current_deployment_id = $1, updated_at = NOW() WHERE id = $2",
-                    deploymentId, envId
-                );
+            // This path reuses an existing runtime; it does not start the old
+            // image. Never promote a built-only or stale checkpoint as healthy.
+            Json::Value probe; probe["url"] = prevUrl;
+            Json::Value saved;
+            {Json::CharReaderBuilder reader;std::string errors;std::istringstream input(prevSnapshot);
+             if(Json::parseFromStream(reader,input,&saved,&errors))probe["contract"]=saved["deployment_plan"];}
+            AiServiceResult verification;
+            if(saved["deployment_plan"]["repository_plan"].isObject() && saved.isMember("compose_project")) {
+                verification.body=verifySavedComponentRuntime(saved,prevUrl,prevId);verification.ok=true;
+            } else verification=AiServiceClient::instance().postWorkflow("/runtime/verify", probe);
+            if (!verification.ok || !verification.body.get("verified", false).asBool()) {
+                txn.commit();
+                callback(errorResponse(drogon::k502BadGateway, "Previous runtime is not browser-verified; rollback was not performed"));
+                return;
             }
 
+            // A runtime has exactly one deployment owner. Restore the existing owner.
+            if (!envId.empty()) {
+                txn.exec_params("UPDATE project_environments SET current_deployment_id=$1,updated_at=NOW() WHERE id=$2", prevId, envId);
+            }
             txn.commit();
 
-            LogWebSocketController::broadcastStatus(deploymentId, "running");
-            DeploymentJournal::broadcastSummary(deploymentId);
+            LogWebSocketController::broadcastStatus(prevId, "running");
+            DeploymentJournal::broadcastSummary(prevId);
 
             Json::Value res;
             res["success"] = true;
-            res["message"] = "Successfully rolled back to healthy checkpoint from deployment " + prevId;
+            res["message"] = "Reused the browser-verified running runtime from deployment " + prevId;
+            res["verification"] = verification.body;
             res["restored_deployment_id"] = prevId;
             res["restored_image"] = prevImage;
             res["runtime_url"] = prevUrl;

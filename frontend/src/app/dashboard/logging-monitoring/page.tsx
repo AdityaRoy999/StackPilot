@@ -1,4 +1,6 @@
 "use client";
+import { remoteRuntimeHref } from "@/lib/remote-platform";
+import { useRemotePlatform } from "@/lib/use-remote-platform";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -13,20 +15,9 @@ import {
   RefreshCw,
   Server,
   Star,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { ModernChart } from "@/components/ui/modern-chart";
 
 import { useChartTheme } from "@/lib/canvas-theme";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -73,6 +64,9 @@ interface LoggingMonitoringSummary {
     grafana_url: string;
     loki_url: string;
     metrics_endpoint: string;
+    prometheus_available?: boolean;
+    grafana_available?: boolean;
+    loki_available?: boolean;
   };
   projects: {
     active: number;
@@ -114,14 +108,53 @@ const chartColors = [
 ];
 
 function countMapToRows(map?: CountMap) {
-  return Object.entries(map || {}).map(([name, value]) => ({
-    name,
-    value,
-  }));
+  return Object.entries(map || {})
+    .filter(([, value]) => Number.isFinite(value) && value > 0)
+    .map(([name, value]) => ({
+      name: name.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()),
+      value,
+      key: name.toLowerCase(),
+    }))
+    .sort((a, b) => b.value - a.value);
 }
 
 function totalCount(map?: CountMap) {
   return Object.values(map || {}).reduce((sum, value) => sum + value, 0);
+}
+
+function metricColor(name: string, index: number) {
+  const normalized = name.toLowerCase();
+  if (["running", "built", "completed", "healthy", "success"].some((value) => normalized.includes(value))) return "#22c55e";
+  if (["failed", "error", "unhealthy"].some((value) => normalized.includes(value))) return "#ef4444";
+  if (["queued", "pending", "waiting"].some((value) => normalized.includes(value))) return "#f59e0b";
+  if (["building", "processing", "active"].some((value) => normalized.includes(value))) return "#3b82f6";
+  return chartColors[index % chartColors.length];
+}
+
+function ChartEmptyState({ message }: { message: string }) {
+  return (
+    <div className="flex h-full min-h-52 flex-col items-center justify-center rounded-md border border-dashed border-border/70 bg-muted/15 px-6 text-center">
+      <span className="flex size-10 items-center justify-center rounded-md border border-border bg-background text-muted-foreground shadow-sm">
+        <AppIcon name="bar-chart-3" fallback={BarChart3} className="size-5" />
+      </span>
+      <p className="mt-3 text-sm font-medium">No metrics yet</p>
+      <p className="mt-1 max-w-56 text-xs text-muted-foreground">{message}</p>
+    </div>
+  );
+}
+
+function ChartLegend({ rows }: { rows: ReturnType<typeof countMapToRows> }) {
+  return (
+    <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5" aria-label="Chart legend">
+      {rows.map((row, index) => (
+        <div key={row.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span className="size-2 rounded-full" style={{ backgroundColor: metricColor(row.key, index) }} />
+          <span>{row.name}</span>
+          <span className="font-medium tabular-nums text-foreground">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatDate(value?: string) {
@@ -168,11 +201,13 @@ function StackCard({
   title,
   description,
   href,
+  available,
   icon: Icon,
 }: {
   title: string;
   description: string;
   href: string;
+  available?: boolean;
   icon: typeof Activity;
 }) {
   return (
@@ -183,15 +218,18 @@ function StackCard({
           {title}
         </CardTitle>
         <CardDescription>{description}</CardDescription>
+        <div className={cn("mt-1 text-xs", available === undefined ? "text-muted-foreground" : available ? "text-emerald-500" : "text-destructive")}>{available === undefined ? "Status not checked" : available ? "Service ready" : "Service unavailable"}</div>
         <CardAction>
           <a
-            href={href}
+            href={available === false ? undefined : href}
+            aria-disabled={available === false}
+            tabIndex={available === false ? -1 : undefined}
             target="_blank"
             rel="noreferrer"
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5", available === false && "pointer-events-none opacity-50")}
           >
             <AppIcon name="external-link" fallback={ExternalLink} className="h-4 w-4"  />
-            <span>Open</span>
+            <span>{available === false ? "Unavailable" : "Open"}</span>
           </a>
         </CardAction>
       </CardHeader>
@@ -200,12 +238,12 @@ function StackCard({
 }
 
 export default function LoggingMonitoringPage() {
+  const remotePlatform = useRemotePlatform();
   // Axes, gridlines and tooltips follow the active theme. The series colours
   // below stay fixed: they are a legend, not chrome.
   const {
     axis: chartAxisColor,
     grid: chartGridColor,
-    cursor: chartCursorColor,
     tooltipBackground: chartTooltipBackground,
     tooltipBorder: chartTooltipBorder,
     tooltipText: chartTooltipText,
@@ -233,7 +271,10 @@ export default function LoggingMonitoringPage() {
     queryKey: ["deployments", "logging-fallback"],
     queryFn: async () => {
       const response = await api.get<{ deployments: DeploymentListItem[] }>("/deployments");
-      return response.data.deployments || [];
+      if (!Array.isArray(response.data?.deployments)) {
+        throw new Error("The deployments response did not contain a list");
+      }
+      return response.data.deployments;
     },
     refetchInterval: 5000,
   });
@@ -266,7 +307,7 @@ export default function LoggingMonitoringPage() {
           data.recent_failures?.length ?? 0
         )
       : 0;
-    const fallbackFailed = (deploymentsQuery.data || []).filter(
+    const fallbackFailed = (Array.isArray(deploymentsQuery.data) ? deploymentsQuery.data : []).filter(
       (deployment) => deployment.status?.toLowerCase() === "failed"
     ).length;
     return Math.max(summaryFailed, fallbackFailed);
@@ -413,115 +454,101 @@ export default function LoggingMonitoringPage() {
           <StackCard
             title="Prometheus"
             description="Scrapes backend and container metrics."
-            href={data.stack.prometheus_url}
+            href={remoteRuntimeHref(data.stack.prometheus_url, undefined, remotePlatform)}
+            available={data.stack.prometheus_available}
             icon={Gauge}
           />
           <StackCard
             title="Grafana"
             description="Dashboards for metrics and logs."
-            href={data.stack.grafana_url}
+            href={remoteRuntimeHref(data.stack.grafana_url, undefined, remotePlatform)}
+            available={data.stack.grafana_available}
             icon={BarChart3}
           />
           <StackCard
             title="Loki"
             description="Stores Docker service logs."
-            href={data.stack.loki_url}
+            href={remoteRuntimeHref(data.stack.loki_url, undefined, remotePlatform)}
+            available={data.stack.loki_available}
             icon={Database}
           />
         </section>
       )}
 
       <section className="grid gap-3 xl:grid-cols-3">
-        <Card size="sm" className="xl:col-span-1">
+        <Card size="sm" className="overflow-hidden xl:col-span-1">
           <CardHeader>
             <CardTitle>Deployment Status</CardTitle>
             <CardDescription>{totalCount(data?.deployments.by_status)} deployments</CardDescription>
           </CardHeader>
           <CardContent className="h-72">
-            {mounted ? (
-            <div className="h-full w-full min-h-[260px] min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <PieChart>
-                  <Pie data={deploymentStatusRows} dataKey="value" nameKey="name" innerRadius={62} outerRadius={96}>
-                    {deploymentStatusRows.map((entry, index) => (
-                      <Cell key={entry.name} fill={chartColors[index % chartColors.length]} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip
-                    contentStyle={{
-                      background: chartTooltipBackground,
-                      border: `1px solid ${chartTooltipBorder}`,
-                      color: chartTooltipText,
-                    }}
-                    itemStyle={{ color: chartTooltipText }}
-                    labelStyle={{ color: chartTooltipText }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            ) : null}
+            {!mounted ? null : deploymentStatusRows.length === 0 ? (
+              <ChartEmptyState message="Deployment status appears as soon as the first release is created." />
+            ) : (
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="relative min-h-0 flex-1">
+                  <ModernChart option={{
+                    animationDuration: 250,
+                    tooltip: { trigger: "item", backgroundColor: chartTooltipBackground, borderColor: chartTooltipBorder, textStyle: { color: chartTooltipText } },
+                    series: [{ type: "pie", radius: ["60%", "84%"], center: ["50%", "50%"], avoidLabelOverlap: true, label: { show: false },
+                      itemStyle: { borderRadius: 6, borderColor: "transparent" },
+                      data: deploymentStatusRows.map((entry, index) => ({ name: entry.name, value: entry.value, itemStyle: { color: metricColor(entry.key, index) } })) }],
+                  }} />
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-3xl font-semibold tabular-nums">{totalCount(data?.deployments.by_status)}</span>
+                    <span className="text-[11px] text-muted-foreground">Deployments</span>
+                  </div>
+                </div>
+                <ChartLegend rows={deploymentStatusRows} />
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        <Card size="sm">
+        <Card size="sm" className="overflow-hidden">
           <CardHeader>
             <CardTitle>Runtime Providers</CardTitle>
             <CardDescription>Docker, Kubernetes, local, and remote targets</CardDescription>
           </CardHeader>
           <CardContent className="h-72">
-            {mounted ? (
-            <div className="h-full w-full min-h-[260px] min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <BarChart data={runtimeRows}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGridColor} />
-                  <XAxis dataKey="name" tick={{ fill: chartAxisColor }} />
-                  <YAxis allowDecimals={false} tick={{ fill: chartAxisColor }} />
-                  <RechartsTooltip
-                    cursor={{ fill: chartCursorColor, fillOpacity: 0.35 }}
-                    contentStyle={{
-                      background: chartTooltipBackground,
-                      border: `1px solid ${chartTooltipBorder}`,
-                      color: chartTooltipText,
-                    }}
-                    itemStyle={{ color: chartTooltipText }}
-                    labelStyle={{ color: chartTooltipText }}
-                  />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            ) : null}
+            {!mounted ? null : runtimeRows.length === 0 ? (
+              <ChartEmptyState message="Runtime distribution will populate when a deployment starts." />
+            ) : (
+              <div className="h-full w-full min-w-0">
+                <ModernChart option={{
+                    animationDuration: 250,
+                    grid: { left: 100, right: 20, top: 16, bottom: 32 },
+                    tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: chartTooltipBackground, borderColor: chartTooltipBorder, textStyle: { color: chartTooltipText } },
+                    xAxis: { type: "value", minInterval: 1, axisLabel: { color: chartAxisColor }, splitLine: { lineStyle: { color: chartGridColor, type: "dashed" } } },
+                    yAxis: { type: "category", data: runtimeRows.map((row) => row.name), axisLabel: { color: chartAxisColor }, axisLine: { show: false }, axisTick: { show: false } },
+                    series: [{ type: "bar", name: "Deployments", data: runtimeRows.map((row) => row.value), barMaxWidth: 30,
+                      itemStyle: { borderRadius: [0, 6, 6, 0], color: { type: "linear", x: 0, y: 0, x2: 1, y2: 0, colorStops: [{ offset: 0, color: "#2563eb" }, { offset: 1, color: "#22c55e" }] } } }],
+                  }} />
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        <Card size="sm">
+        <Card size="sm" className="overflow-hidden">
           <CardHeader>
             <CardTitle>Job Queue</CardTitle>
             <CardDescription>Build queue and worker health</CardDescription>
           </CardHeader>
           <CardContent className="h-72">
-            {mounted ? (
-            <div className="h-full w-full min-h-[260px] min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <BarChart data={jobRows}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={chartGridColor} />
-                  <XAxis dataKey="name" tick={{ fill: chartAxisColor }} />
-                  <YAxis allowDecimals={false} tick={{ fill: chartAxisColor }} />
-                  <RechartsTooltip
-                    cursor={{ fill: chartCursorColor, fillOpacity: 0.35 }}
-                    contentStyle={{
-                      background: chartTooltipBackground,
-                      border: `1px solid ${chartTooltipBorder}`,
-                      color: chartTooltipText,
-                    }}
-                    itemStyle={{ color: chartTooltipText }}
-                    labelStyle={{ color: chartTooltipText }}
-                  />
-                  <Bar dataKey="value" fill="#f59e0b" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            ) : null}
+            {!mounted ? null : jobRows.length === 0 ? (
+              <ChartEmptyState message="Queue activity will appear when a build or background job is submitted." />
+            ) : (
+              <div className="h-full w-full min-w-0">
+                <ModernChart option={{
+                    animationDuration: 250,
+                    grid: { left: 42, right: 12, top: 16, bottom: 34 },
+                    tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: chartTooltipBackground, borderColor: chartTooltipBorder, textStyle: { color: chartTooltipText } },
+                    xAxis: { type: "category", data: jobRows.map((row) => row.name), axisLabel: { color: chartAxisColor }, axisLine: { show: false }, axisTick: { show: false } },
+                    yAxis: { type: "value", minInterval: 1, axisLabel: { color: chartAxisColor }, splitLine: { lineStyle: { color: chartGridColor, type: "dashed" } } },
+                    series: [{ type: "bar", name: "Jobs", barMaxWidth: 42, data: jobRows.map((row, index) => ({ value: row.value, itemStyle: { color: metricColor(row.key, index), borderRadius: [6, 6, 2, 2] } })) }],
+                  }} />
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>

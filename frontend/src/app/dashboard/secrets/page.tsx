@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Copy, Eye, KeyRound, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Copy, Eye, KeyRound, Loader2, Plus, Search, Trash2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 

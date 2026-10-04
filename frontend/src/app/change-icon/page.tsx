@@ -21,7 +21,7 @@ import {
   Upload,
   UploadCloud,
   Zap,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -49,6 +49,7 @@ import {
   type IconCategory,
 } from "@/lib/custom-icons";
 import { cn } from "@/lib/utils";
+import { sanitizeIconSvg } from "@/lib/svg-safety";
 
 const CATEGORIES: { id: string; label: string }[] = [
   { id: "all", label: "All Icons" },
@@ -67,35 +68,44 @@ const CATEGORIES: { id: string; label: string }[] = [
 
 const PACK_OPTIONS: { id: IconPack; label: string; description: string; badge: string }[] = [
   {
-    id: "duotone",
-    label: "Duotone Tech",
-    description: "Modern semi-transparent fills with crisp vector contours.",
+    id: "minimal",
+    label: "Solar Linear",
+    description: "Quiet, thin outline icons like the reference sidebar.",
     badge: "Recommended",
   },
   {
-    id: "neon",
-    label: "Neon Cyberpunk",
-    description: "Vibrant high-contrast accents with active status pulses.",
-    badge: "High Energy",
+    id: "duotone",
+    label: "Solar Bold Duotone",
+    description: "Layered shapes with restrained translucent fills.",
+    badge: "Layered",
   },
   {
-    id: "minimal",
-    label: "Minimalist Precision",
-    description: "Ultra-clean geometric line vectors with 1.5px stroke width.",
-    badge: "Clean",
+    id: "neon",
+    label: "Phosphor Filled",
+    description: "Solid interface glyphs with strong contrast at small sizes.",
+    badge: "Solid",
+  },
+  {
+    id: "carbon",
+    label: "Carbon Design",
+    description: "Precise, structured IBM interface line icons.",
+    badge: "Structured",
+  },
+  {
+    id: "iconoir",
+    label: "Iconoir",
+    description: "Light editorial outlines with open geometry.",
+    badge: "Airy",
+  },
+  {
+    id: "fluent",
+    label: "Fluent Filled",
+    description: "Friendly, compact solid icons from Microsoft.",
+    badge: "Friendly",
   },
 ];
 
-function sanitizeSvg(rawSvg: string): string {
-  if (!rawSvg) return "";
-  let cleaned = rawSvg.trim();
-  const svgStart = cleaned.indexOf("<svg");
-  const svgEnd = cleaned.lastIndexOf("</svg>");
-  if (svgStart !== -1 && svgEnd !== -1) {
-    cleaned = cleaned.substring(svgStart, svgEnd + 6);
-  }
-  return cleaned;
-}
+const sanitizeSvg = sanitizeIconSvg;
 
 export default function ChangeIconPage() {
   const [settings, actions] = useIconSettings();
@@ -132,7 +142,7 @@ export default function ChangeIconPage() {
       const individualMode = settings.iconModes?.[icon.id];
       const isCustom = settings.mode === "custom"
         ? individualMode !== "default"
-        : (individualMode === "custom" || hasOverride);
+        : (individualMode === "custom");
       if (isCustom) {
         customCount++;
       } else {
@@ -190,9 +200,9 @@ export default function ChangeIconPage() {
       const iconId = targetIconId || editingIcon?.id;
       if (iconId) {
         setCustomSvgInput(sanitized);
-        actions.setOverride(iconId, sanitized);
+        if (targetIconId) actions.setOverride(iconId, sanitized);
         const iconDef = ICON_MAP.get(iconId);
-        toast.success(`Uploaded & enabled custom SVG for ${iconDef?.name || iconId}!`);
+        toast.success(targetIconId ? `Custom SVG applied to ${iconDef?.name || iconId}` : "SVG ready to preview");
       }
     } catch {
       toast.error(`Failed to read "${file.name}".`);
@@ -271,7 +281,7 @@ export default function ChangeIconPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div data-mobile-surface className="min-h-screen min-w-0 bg-background text-foreground">
       {/* Hidden batch file input */}
       <input
         ref={batchFileInputRef}
@@ -286,9 +296,9 @@ export default function ChangeIconPage() {
       />
 
       {/* Top Banner & Navigation */}
-      <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur px-6 py-4">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-30 border-b border-border bg-background/95 backdrop-blur px-3 py-3 sm:px-6 sm:py-4">
+        <div className="mx-auto flex min-w-0 max-w-7xl flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
             <Link href="/dashboard">
               <Button variant="ghost" size="sm" className="gap-2">
                 <AppIcon name="arrow-left" fallback={ArrowLeft} className="h-4 w-4" />
@@ -304,7 +314,7 @@ export default function ChangeIconPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -338,7 +348,7 @@ export default function ChangeIconPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-6 p-6">
+      <main className="mx-auto min-w-0 max-w-7xl space-y-4 p-3 sm:space-y-6 sm:p-6">
         {/* Global Master Switch Card */}
         <Card className="border-primary/20 bg-card shadow-sm">
           <CardHeader className="p-4 sm:p-5">
@@ -504,16 +514,24 @@ export default function ChangeIconPage() {
                         {pack.description}
                       </p>
                       <div className="mt-2.5 flex items-center gap-3 border-t border-border/40 pt-2 text-foreground">
-                        <AppIcon name="layout-dashboard" size={16} forceMode="custom" />
-                        <AppIcon name="server" size={16} forceMode="custom" />
-                        <AppIcon name="activity" size={16} forceMode="custom" />
-                        <AppIcon name="star" size={16} forceMode="custom" />
-                        <AppIcon name="settings" size={16} forceMode="custom" />
+                        <AppIcon name="layout-dashboard" size={16} forceMode="custom" packOverride={pack.id} />
+                        <AppIcon name="server" size={16} forceMode="custom" packOverride={pack.id} />
+                        <AppIcon name="activity" size={16} forceMode="custom" packOverride={pack.id} />
+                        <AppIcon name="star" size={16} forceMode="custom" packOverride={pack.id} />
+                        <AppIcon name="settings" size={16} forceMode="custom" packOverride={pack.id} />
                       </div>
                     </button>
                   );
                 })}
               </div>
+              <p className="text-[11px] text-muted-foreground">
+                Solar © 480 Design (CC BY 4.0); Phosphor, Iconoir and Fluent System Icons (MIT); Carbon Design (Apache 2.0). Collections:{" "}
+                <a href="https://www.svgrepo.com/collection/solar-linear-icons/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">Solar</a>,{" "}
+                <a href="https://www.svgrepo.com/collection/phosphor-filled-icons/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">Phosphor</a>,{" "}
+                <a href="https://www.svgrepo.com/collection/carbon-design-line-icons/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">Carbon</a>,{" "}
+                <a href="https://www.svgrepo.com/collection/iconoir-icons/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">Iconoir</a>,{" "}
+                <a href="https://www.svgrepo.com/collection/fluent-ui-icons-filled/" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">Fluent</a>.
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -572,7 +590,7 @@ export default function ChangeIconPage() {
               const individualMode = settings.iconModes?.[icon.id];
               const isCustom = settings.mode === "custom"
                 ? individualMode !== "default"
-                : (individualMode === "custom" || hasOverride);
+                : (individualMode === "custom");
 
               const DefaultIconComponent = icon.defaultIcon;
 
@@ -768,7 +786,7 @@ export default function ChangeIconPage() {
       {/* Customize Icon Modal */}
       {editingIcon && (
         <Dialog open={Boolean(editingIcon)} onOpenChange={(open) => !open && setEditingIcon(null)}>
-          <DialogContent className="max-w-xl">
+          <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-5xl gap-5">
             {/* Hidden file input in modal */}
             <input
               ref={modalFileInputRef}
@@ -795,7 +813,7 @@ export default function ChangeIconPage() {
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 py-2">
+            <div className="grid min-h-0 gap-5 md:grid-cols-2">
               {/* Drag & Drop Upload Zone */}
               <div
                 onDragOver={(e) => {
@@ -809,6 +827,8 @@ export default function ChangeIconPage() {
                   const file = e.dataTransfer.files?.[0];
                   if (file) processUploadedSvgFile(file);
                 }}
+                role="button" tabIndex={0} aria-label="Upload custom SVG"
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); modalFileInputRef.current?.click(); } }}
                 onClick={() => modalFileInputRef.current?.click()}
                 className={cn(
                   "flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-4 text-center cursor-pointer transition-all",
@@ -825,13 +845,13 @@ export default function ChangeIconPage() {
                     Click to browse or drag & drop your <span className="text-primary font-mono">.svg</span> file here
                   </p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Automatically extracts vector paths, updates the live preview, and sets this icon as Custom
+                    Preview your SVG, then choose Apply & Save to update the icon
                   </p>
                 </div>
               </div>
 
               {/* Preview Cards */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3 md:col-start-1">
                 <div className="rounded-xl border border-border bg-slate-950 p-4 text-center text-white shadow-inner">
                   <span className="text-xs font-medium text-slate-400">Dark Theme</span>
                   <div className="mt-2 flex h-20 items-center justify-center text-white">
@@ -862,17 +882,17 @@ export default function ChangeIconPage() {
               </div>
 
               {/* Raw SVG Code Editor */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold">SVG Vector Code</Label>
+              <div className="flex flex-col gap-2 md:col-start-2 md:row-start-1 md:row-span-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="custom-icon-code" className="text-xs font-semibold">SVG Vector Code</Label>
                   <span className="text-[11px] text-muted-foreground">Auto-populates when SVG file is uploaded</span>
                 </div>
-                <textarea
+                <textarea id="custom-icon-code"
                   value={customSvgInput}
                   onChange={(e) => setCustomSvgInput(e.target.value)}
                   placeholder={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">\n  ...\n</svg>`}
-                  rows={5}
-                  className="w-full font-mono text-xs p-3 rounded-lg border border-border bg-muted/30 focus:outline-none focus:ring-1 focus:ring-primary"
+                  rows={10}
+                  className="min-h-48 flex-1 w-full font-mono text-xs p-3 rounded-lg border border-border bg-muted/30 focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>
             </div>
@@ -907,7 +927,7 @@ export default function ChangeIconPage() {
             readOnly
             value={JSON.stringify(settings, null, 2)}
             rows={10}
-            className="w-full font-mono text-xs p-3 rounded-lg border border-border bg-muted/40"
+            className="min-h-48 flex-1 w-full font-mono text-xs p-3 rounded-lg border border-border bg-muted/40"
           />
           <DialogFooter>
             <Button onClick={handleExport} className="gap-1.5 text-xs w-full">
@@ -930,7 +950,7 @@ export default function ChangeIconPage() {
             onChange={(e) => setImportJsonInput(e.target.value)}
             placeholder={`{\n  "mode": "custom",\n  "pack": "duotone",\n  "overrides": {},\n  "iconModes": {}\n}`}
             rows={10}
-            className="w-full font-mono text-xs p-3 rounded-lg border border-border bg-muted/40"
+            className="min-h-48 flex-1 w-full font-mono text-xs p-3 rounded-lg border border-border bg-muted/40"
           />
           <DialogFooter>
             <Button onClick={handleImport} className="gap-1.5 text-xs w-full">

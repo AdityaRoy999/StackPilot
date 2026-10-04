@@ -152,6 +152,17 @@ TEST(PlannerBuild, PlansASingleServiceStack) {
     EXPECT_FALSE(plan.manifest.empty());
 }
 
+TEST(PlannerBuild, RefusesToSilentlyDiscardComposeSemantics) {
+    for(const std::string key:{"depends_on","healthcheck","network_mode"}) {
+        auto model=composeWithOneService();model["services"]["web"][key]=Json::Value(Json::objectValue);
+        auto plan=ComposeKubernetesPlanner::build(model,baseOptions());
+        EXPECT_FALSE(plan.success);EXPECT_CONTAINS(plan.error,key);
+    }
+    auto model=composeWithOneService();Json::Value mount;mount["type"]="bind";mount["source"]="/host";mount["target"]="/app";
+    model["services"]["web"]["volumes"].append(mount);
+    EXPECT_FALSE(ComposeKubernetesPlanner::build(model,baseOptions()).success);
+}
+
 TEST(PlannerBuild, EveryGeneratedNameIsAValidDnsLabel) {
     Json::Value compose(Json::objectValue);
     Json::Value services(Json::objectValue);

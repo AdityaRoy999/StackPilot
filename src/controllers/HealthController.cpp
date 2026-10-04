@@ -6,6 +6,7 @@
 #include "../db/Database.h"
 #include "../services/SshService.h"
 #include "../utils/JwtHelper.h"
+#include "../utils/BlockingTaskRunner.h"
 #include "../utils/TokenCrypto.h"
 
 #include <json/json.h>
@@ -19,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -150,6 +152,17 @@ std::vector<std::string> splitLines(const std::string& value) {
         }
     }
     return lines;
+}
+
+std::string dockerLabelValue(const std::string& labels, const std::string& key) {
+    for (const auto& label : splitString(labels, ",")) {
+        const auto separator = label.find('=');
+        if (separator == std::string::npos || label.substr(0, separator) != key) {
+            continue;
+        }
+        return label.substr(separator + 1);
+    }
+    return "";
 }
 
 std::string runInventoryCommand(const std::string& command) {
@@ -743,6 +756,7 @@ void HealthController::loggingMonitoringSummary(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback
 ) {
+    BlockingTaskRunner::run([this, req, callback = std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value payload;
@@ -761,6 +775,20 @@ void HealthController::loggingMonitoringSummary(
     payload["stack"]["grafana_url"] = envOrDefault("GRAFANA_PUBLIC_URL", "http://localhost:3001");
     payload["stack"]["loki_url"] = envOrDefault("LOKI_PUBLIC_URL", "http://localhost:3001/explore");
     payload["stack"]["metrics_endpoint"] = "/metrics";
+    const std::array<std::pair<std::string, std::string>, 3> readiness = {{
+        {"prometheus", envOrDefault("PROMETHEUS_INTERNAL_URL", "http://prometheus:9090") + "/-/ready"},
+        {"grafana", envOrDefault("GRAFANA_INTERNAL_URL", "http://grafana:3000") + "/api/health"},
+        {"loki", envOrDefault("LOKI_INTERNAL_URL", "http://loki:3100") + "/ready"}
+    }};
+    std::array<std::future<std::string>, 3> readinessChecks = {
+        std::async(std::launch::async, [url = readiness[0].second] { return trimCopy(runInventoryCommand("curl --noproxy '*' -s -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 " + shellQuote(url))); }),
+        std::async(std::launch::async, [url = readiness[1].second] { return trimCopy(runInventoryCommand("curl --noproxy '*' -s -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 " + shellQuote(url))); }),
+        std::async(std::launch::async, [url = readiness[2].second] { return trimCopy(runInventoryCommand("curl --noproxy '*' -s -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 " + shellQuote(url))); })
+    };
+    for (std::size_t index = 0; index < readiness.size(); ++index) {
+        payload["stack"][readiness[index].first + "_available"] = readinessChecks[index].get() == "200";
+    }
+
     payload["status"] = "ok";
     payload["projects"]["active"] = Json::Value::Int64(0);
     payload["deployments"]["total"] = Json::Value::Int64(0);
@@ -852,12 +880,14 @@ void HealthController::loggingMonitoringSummary(
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
     resp->setStatusCode(drogon::k200OK);
     callback(resp);
+    });
 }
 
 void HealthController::infrastructureInventory(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback
 ) {
+    BlockingTaskRunner::run([this, req, callback = std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value payload;
@@ -918,7 +948,7 @@ void HealthController::infrastructureInventory(
         const std::string dockerPs = runCommandForTarget(
             target,
             "timeout 8s sh -lc \"command -v docker >/dev/null 2>&1 && "
-            "docker ps -a --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' 2>/dev/null\"",
+            "docker ps -a --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Labels}}\\t{{.Networks}}' 2>/dev/null\"",
             12
         );
         for (const auto& line : splitLines(dockerPs)) {
@@ -930,6 +960,10 @@ void HealthController::infrastructureInventory(
             item["image"] = parts.size() > 2 ? parts[2] : "";
             item["status"] = parts.size() > 3 ? parts[3] : "";
             item["ports"] = parts.size() > 4 ? parts[4] : "";
+            const std::string labels = parts.size() > 5 ? parts[5] : "";
+            item["compose_project"] = dockerLabelValue(labels, "com.docker.compose.project");
+            item["compose_service"] = dockerLabelValue(labels, "com.docker.compose.service");
+            item["networks"] = parts.size() > 6 ? parts[6] : "";
             item["managed_by_stackpilot"] = nameLooksManagedByStackPilot(item["name"].asString(), item["image"].asString());
             applyClaimState(item,
                             claimedResources,
@@ -1253,6 +1287,7 @@ void HealthController::infrastructureInventory(
     auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
     resp->setStatusCode(drogon::k200OK);
     callback(resp);
+    });
 }
 
 void HealthController::listInfrastructureClaims(
@@ -1555,6 +1590,7 @@ void HealthController::inspectInfrastructureResource(
     const drogon::HttpRequestPtr& req,
     std::function<void(const drogon::HttpResponsePtr&)>&& callback
 ) {
+    BlockingTaskRunner::run([this, req, callback = std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value payload;
@@ -1641,9 +1677,44 @@ void HealthController::inspectInfrastructureResource(
         Json::Value payload;
         payload["resource"] = resource;
         payload["mode"] = "read_only_inspect";
-        payload["raw"] = raw;
         if (parseJsonString(raw, parsed)) {
-            payload["inspect"] = parsed;
+            if (resolvedProvider == "docker" && parsed.isArray() && !parsed.empty()) {
+                // Whitelist useful runtime fields; Docker Config.Env and command
+                // arguments frequently contain credentials and are not returned.
+                const auto& item = parsed[0];
+                Json::Value safe;
+                for (const auto& key : {"Id", "Name", "Created", "Image", "RestartCount"}) safe[key] = item[key];
+                for (const auto& key : {"Status", "Running", "Paused", "Restarting", "OOMKilled", "ExitCode", "StartedAt", "FinishedAt"}) safe["State"][key] = item["State"][key];
+                safe["State"]["Health"]["Status"] = item["State"]["Health"]["Status"];
+                safe["Config"]["Image"] = item["Config"]["Image"];
+                safe["Config"]["ExposedPorts"] = item["Config"]["ExposedPorts"];
+                safe["NetworkSettings"]["Networks"] = item["NetworkSettings"]["Networks"];
+                safe["NetworkSettings"]["Ports"] = item["NetworkSettings"]["Ports"];
+                safe["Mounts"] = item["Mounts"];
+                safe["HostConfig"]["Memory"] = item["HostConfig"]["Memory"];
+                safe["HostConfig"]["NanoCpus"] = item["HostConfig"]["NanoCpus"];
+                safe["HostConfig"]["RestartPolicy"] = item["HostConfig"]["RestartPolicy"];
+                payload["inspect"] = safe;
+                payload["processes"] = Json::Value(Json::arrayValue);
+                if (resolvedType == "container" && item["State"]["Running"].asBool()) {
+                    const std::string container = !externalId.empty() ? externalId : name;
+                    const auto processes = runCommandForTarget(target, "timeout 5s docker top " + shellQuote(container) + " -eo pid,comm 2>/dev/null", 7);
+                    const auto lines = splitLines(processes);
+                    for (std::size_t index = 1; index < lines.size(); ++index) {
+                        std::istringstream line(lines[index]);
+                        std::string pid, executable;
+                        if (line >> pid >> executable) {
+                            Json::Value process;
+                            process["pid"] = pid;
+                            process["executable"] = executable;
+                            payload["processes"].append(process);
+                        }
+                    }
+                    if (payload["processes"].empty()) payload["process_warning"] = "Process inventory is unavailable for this runtime";
+                }
+            } else {
+                payload["inspect"] = parsed;
+            }
         } else {
             payload["inspect"] = Json::Value(Json::objectValue);
             payload["warning"] = "Inspect command returned no JSON. The resource may no longer exist or the runtime is unavailable.";
@@ -1660,6 +1731,7 @@ void HealthController::inspectInfrastructureResource(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void HealthController::logsInfrastructureResource(

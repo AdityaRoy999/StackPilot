@@ -9,8 +9,56 @@
 #include "testing.h"
 
 #include "../../../src/services/LocalDockerRuntime.h"
+#include "../../../src/services/ComponentRuntimeVerification.h"
 
 using namespace stackpilot;
+
+TEST(ComponentObservation, IsReadOnlyAndQuotesEveryBrokerPath) {
+    const auto command=LocalDockerRuntime::makeComposeObservationCommand("/runtime's", "project", "/model file", "/plan file", "/output file");
+    EXPECT_CONTAINS(command,"compose_runtime_evidence.py");
+    EXPECT_CONTAINS(command,"--identity-only");
+    EXPECT_CONTAINS(command,"'/model file'");
+    EXPECT_TRUE(command.find("docker rm")==std::string::npos);
+    EXPECT_TRUE(command.find("docker run")==std::string::npos);
+}
+
+TEST(ComponentObservation, RestartOrImageReplacementInvalidatesProof) {
+    Json::Value identities;auto& row=identities["worker"];
+    row["container_id"]="container";row["image_id"]="image";row["started_at"]="start";row["restart_count"]=0;row["url"]=Json::nullValue;
+    Json::Value fresh=identities;
+    EXPECT_TRUE(sameComponentIdentities(identities,fresh));
+    fresh["worker"]["started_at"]="restarted";
+    EXPECT_FALSE(sameComponentIdentities(identities,fresh));
+    fresh=identities;fresh["worker"]["image_id"]="other-image";
+    EXPECT_FALSE(sameComponentIdentities(identities,fresh));
+    fresh=Json::Value(Json::objectValue);
+    EXPECT_FALSE(sameComponentIdentities(identities,fresh));
+}
+
+TEST(RunCommand, CannotDeleteAnExistingServingRuntime) {
+    const auto cmd=LocalDockerRuntime::makeRunCommand("serving", "image:1", 0, {});
+    EXPECT_TRUE(cmd.find("docker rm -f") == std::string::npos);
+    EXPECT_CONTAINS(cmd,"replacement refused");
+}
+
+TEST(RunCommand, EnforcesWorkerResourceAndPrivilegeLimits) {
+    const auto cmd=LocalDockerRuntime::makeRunCommand("candidate", "image:1", 0, {});
+    EXPECT_CONTAINS(cmd,"--memory 2g");
+    EXPECT_CONTAINS(cmd,"--pids-limit 256");
+    EXPECT_CONTAINS(cmd,"no-new-privileges:true");
+}
+
+TEST(RunCommand, ProcessWorkloadCannotBecomeAnHttpPreview) {
+    const auto cmd=LocalDockerRuntime::makeRunCommand("worker","image:1",0,{},"process");
+    EXPECT_TRUE(cmd.find("runtime_url=")==std::string::npos);
+    EXPECT_TRUE(cmd.find(" -p ")==std::string::npos);
+    EXPECT_CONTAINS(cmd,"__STACKPILOT_PROCESS_OBSERVED__");
+}
+
+TEST(RunCommand, CarriesHealthRouteAndRejectsAmbiguousPorts) {
+    const auto cmd=LocalDockerRuntime::makeRunCommand("candidate","image:1",0,{},"http","/ready");
+    EXPECT_CONTAINS(cmd,"health_path='/ready'");EXPECT_CONTAINS(cmd,"EXPOSE is missing or ambiguous");
+}
 
 namespace {
 
@@ -197,7 +245,7 @@ TEST(RunCommand, PollsReadinessBeforeReportingHealthy) {
     EXPECT_CONTAINS(cmd, "Container crashed on startup:");
     EXPECT_CONTAINS(cmd, "docker logs --tail 50 \"$container\"");
     EXPECT_CONTAINS(cmd, "curl -s -o /dev/null");
-    EXPECT_CONTAINS(cmd, "curl -s -o /dev/null -w \\\"%{http_code}\\\"");
+    EXPECT_CONTAINS(cmd, "curl -s -o /dev/null -w \"%{http_code}\"");
     EXPECT_CONTAINS(cmd, "__STACKPILOT_LOCAL_DOCKER_RUNNING__");
     EXPECT_CONTAINS(cmd, "__STACKPILOT_LOCAL_DOCKER_PORT__=$host_port");
 }

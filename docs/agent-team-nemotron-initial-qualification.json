@@ -1,0 +1,16 @@
+{
+  "scope": "local_model_team_delivery",
+  "run_id": "901f7c80-ec6e-420e-bba3-374457baaed0",
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "cases": [],
+  "elapsed_seconds": 9.66,
+  "model_calls": 5,
+  "model_latency_ms": [
+    1053,
+    3168,
+    3539,
+    1148,
+    3554
+  ],
+  "passed": false
+}

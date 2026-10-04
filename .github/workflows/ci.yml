@@ -12,6 +12,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ai-agent:
+    name: AI agent — browser testing regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ai-service/requirements.txt
+      - run: pip install -r ai-service/requirements.txt
+      - name: Run deterministic agent tests
+        env:
+          PYTHONPATH: ai-service
+        run: python -m unittest discover -s ai-service/tests -p 'test_*.py' -v
+      - name: Run deployment contract regressions
+        run: python -m unittest discover -s tests/deployment -v
+      - name: Run native worker boundary and recovery tests
+        run: python -m unittest discover -s native-worker -p 'test_*.py' -v
+
   frontend:
     name: Frontend — lint, unit, build
     runs-on: ubuntu-latest
@@ -83,7 +103,9 @@ jobs:
         # Only the services the suite exercises. Grafana, Loki, Prometheus and
         # cAdvisor are validated by the config job and would otherwise add
         # several minutes of pulls to every run.
-        run: docker compose up -d --build postgres redis backend ai-service frontend
+        run: |
+          mkdir -p local-projects
+          docker compose up -d --build postgres redis backend ai-service frontend browser-sandbox runtime-gateway
 
       - name: Wait for backend and ai-service
         # Both must answer before the suite runs. Polling rather than a fixed
@@ -103,7 +125,8 @@ jobs:
           }
           ok=0
           wait_for backend    http://127.0.0.1:8090/api/v1/health || ok=1
-          wait_for ai-service http://127.0.0.1:8010/health        || ok=1
+          wait_for ai-service http://127.0.0.1:8010/readyz        || ok=1
+          wait_for browser    http://127.0.0.1:9222/json/version  || ok=1
           # The frontend is slowest to come up and the suite probes it, so it
           # has to be waited on too — otherwise the liveness check races the
           # Next.js boot and fails with a connection refused.
@@ -114,8 +137,36 @@ jobs:
             exit 1
           fi
 
+      - name: Run agent tests against a disposable Chromium fixture
+        run: |
+          docker compose cp ai-service/tests/. ai-service:/tmp/agent-qa-tests
+          docker compose cp sql/migrations/. ai-service:/tmp/agent-qa-migrations
+          docker compose exec -T -e STACKPILOT_TEST_MIGRATIONS=/tmp/agent-qa-migrations -e AI_BROWSER_LIVE_TESTS=1 ai-service python -m unittest discover -s /tmp/agent-qa-tests -p 'test_*.py' -v
+
       - name: Run integration suite
         run: python tests/integration/test_platform.py
+
+      - name: Verify runtime outcomes against real Chromium
+        run: |
+          docker compose cp tests/integration/runtime_render_smoke.py ai-service:/tmp/runtime_render_smoke.py
+          docker compose exec -T -e PYTHONPATH=/app ai-service python /tmp/runtime_render_smoke.py
+
+      - name: Qualify release, rollback, credentials and resource cleanup
+        run: python tests/integration/release_pipeline_smoke.py
+
+      - name: Qualify interactive consoles, finite jobs and built packages
+        run: python tests/integration/repository_delivery_smoke.py
+
+      - name: Qualify incomplete repository completion and release gates
+        run: python tests/integration/completion_repository_smoke.py
+
+      - name: Qualify task-owned Ubuntu, Debian and Alpine Docker instances
+        run: python tests/integration/docker_instance_smoke.py
+
+      - name: Qualify browser ownership and preview capabilities
+        run: |
+          pip install websockets==15.0.1
+          python tests/integration/browser_authorization_smoke.py
 
       - name: Dump logs on failure
         if: failure()

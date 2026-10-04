@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback, memo } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, TerminalIcon, Trash2, X } from "@/lib/platform-icons";
+import { AppIcon } from "@/lib/custom-icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import api from "@/lib/api";
@@ -24,6 +25,11 @@ export interface FloatingPowerShellTerminalProps {
   selectedProjectId?: string;
   initialCommand?: string;
   onInitialCommandConsumed?: () => void;
+}
+
+function terminalErrorMessage(error: unknown) {
+  const candidate = error as { message?: string; response?: { data?: { error?: string } } };
+  return candidate.response?.data?.error || candidate.message || "Execution failed";
 }
 
 export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTerminal({
@@ -59,14 +65,6 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
       }, 50);
     }
   }, [open]);
-
-  // Execute initial command if passed
-  useEffect(() => {
-    if (open && initialCommand) {
-      runCommand(initialCommand);
-      onInitialCommandConsumed?.();
-    }
-  }, [open, initialCommand]);
 
   // Auto-scroll when logs change
   useEffect(() => {
@@ -128,7 +126,7 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
     };
   };
 
-  const runCommand = async (cmdToRun: string) => {
+  const runCommand = useCallback(async (cmdToRun: string) => {
     const trimmed = cmdToRun.trim();
     if (!trimmed || isExecuting) return;
 
@@ -163,7 +161,7 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
         },
       });
 
-      const data = (res.data || {}) as Record<string, any>;
+      const data = (res.data || {}) as Record<string, unknown>;
       const exitCode = typeof data.exit_code === "number" ? data.exit_code : data.error ? 1 : 0;
       const stdout =
         typeof data.stdout === "string"
@@ -206,8 +204,8 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
             : item
         )
       );
-    } catch (err: any) {
-      const errMessage = err.response?.data?.error || err.message || "Execution failed";
+    } catch (error: unknown) {
+      const errMessage = terminalErrorMessage(error);
       setTerminalLogs((prev) =>
         prev.map((item) =>
           item.id === execId
@@ -226,7 +224,14 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
         terminalInputRef.current?.focus();
       }, 50);
     }
-  };
+  }, [isExecuting, selectedDeploymentId, selectedProjectId, terminalCwd]);
+
+  useEffect(() => {
+    if (open && initialCommand) {
+      runCommand(initialCommand);
+      onInitialCommandConsumed?.();
+    }
+  }, [initialCommand, onInitialCommandConsumed, open, runCommand]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "ArrowUp") {
@@ -257,6 +262,8 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
   return (
     <div
       ref={terminalWindowRef}
+      data-slot="floating-terminal"
+      data-maximized={terminalMaximized || undefined}
       style={
         terminalMaximized
           ? {
@@ -266,7 +273,7 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
               right: 0,
               bottom: 0,
               width: "100vw",
-              height: "100vh",
+              height: "100dvh",
               zIndex: 90,
             }
           : {
@@ -274,59 +281,58 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
               left: `${terminalPos.x}px`,
               top: `${terminalPos.y}px`,
               width: "min(680px, 92vw)",
-              height: "min(460px, 65vh)",
+              height: "min(460px, 65dvh)",
               zIndex: 60,
             }
       }
       className={cn(
-        "rounded-md border border-zinc-800 bg-[#0c0c0c] text-[#cccccc] shadow-2xl flex flex-col overflow-hidden transition-shadow",
-        !terminalMaximized && "resize min-w-[360px] min-h-[220px] max-w-[95vw] max-h-[85vh]"
+        "flex flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-2xl transition-shadow",
+        !terminalMaximized && "min-w-0 sm:resize sm:min-w-[360px] min-h-[220px] max-w-[95vw] max-h-[85dvh]"
       )}
     >
-      {/* Titlebar - Windows PowerShell Black Themed */}
       <div
         onMouseDown={handleDragStart}
         className={cn(
-          "flex h-8 items-center justify-between border-b border-zinc-800 bg-[#18181b] px-2 select-none shrink-0",
+          "flex h-12 shrink-0 items-center justify-between border-b border-border bg-muted/30 px-3 select-none",
           !terminalMaximized ? "cursor-grab active:cursor-grabbing" : "cursor-default"
         )}
       >
-        <div className="flex items-center gap-2 min-w-0 pointer-events-none text-xs text-white/90">
-          <svg className="h-3.5 w-3.5 shrink-0 text-sky-400" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2h-13zm0 1h13a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5z" />
-            <path d="m3.854 5.146 2.5 2.5a.5.5 0 0 1 0 .708l-2.5 2.5a.5.5 0 0 1-.708-.708L5.293 8 3.146 5.854a.5.5 0 1 1 .708-.708zm3 5.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 1-.5-.5z" />
-          </svg>
-          <span className="font-normal font-sans text-xs text-zinc-200 truncate">
-            Windows PowerShell{terminalCwd ? ` - ${terminalCwd}` : ""}
+        <div className="pointer-events-none flex min-w-0 items-center gap-2.5">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-background text-primary shadow-sm">
+            <AppIcon name="terminal" fallback={TerminalIcon} className="size-4" />
           </span>
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-xs font-semibold">StackPilot Terminal</div>
+            <div className="truncate text-[11px] text-muted-foreground">{terminalCwd || "Workspace command session"}</div>
+          </div>
         </div>
 
-        {/* Windows Caption Controls */}
-        <div className="flex shrink-0 items-center h-full">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
-            size="sm"
+            size="icon"
             variant="ghost"
-            className="h-full rounded-none px-2 text-xs font-normal text-zinc-400 hover:bg-white/10 hover:text-white"
+            className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
             onClick={() => setTerminalLogs([])}
             title="Clear buffer"
+            aria-label="Clear terminal buffer"
           >
-            Clear
+            <AppIcon name="trash-2" fallback={Trash2} className="size-3.5" />
           </Button>
 
           <Button
             type="button"
             size="icon"
             variant="ghost"
-            className="h-full w-10 rounded-none text-zinc-400 hover:bg-white/10 hover:text-white"
+            className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
             onClick={() => setTerminalMaximized((prev) => !prev)}
             title={terminalMaximized ? "Restore" : "Maximize"}
             aria-label={terminalMaximized ? "Restore" : "Maximize"}
           >
             {terminalMaximized ? (
-              <span className="text-xs font-mono select-none">❐</span>
+              <AppIcon name="minimize-2" fallback={Minimize2} className="size-3.5" />
             ) : (
-              <span className="text-xs font-mono select-none">□</span>
+              <AppIcon name="maximize-2" fallback={Maximize2} className="size-3.5" />
             )}
           </Button>
 
@@ -334,48 +340,42 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
             type="button"
             size="icon"
             variant="ghost"
-            className="h-full w-10 rounded-none text-zinc-400 hover:bg-[#e81123] hover:text-white transition-colors"
+            className="h-8 w-8 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             onClick={onClose}
             title="Close"
             aria-label="Close"
           >
-            <span className="text-xs font-mono select-none">✕</span>
+            <AppIcon name="x" fallback={X} className="size-3.5" />
           </Button>
         </div>
       </div>
 
-      {/* Black Console Area - click to focus input */}
       <div
         onClick={() => terminalInputRef.current?.focus()}
-        className="flex-1 overflow-y-auto p-3 font-mono text-xs font-normal select-text min-h-0 bg-[#0c0c0c] text-[#cccccc] cursor-text leading-relaxed scrollbar-thin"
+        className="min-h-0 flex-1 cursor-text select-text overflow-y-auto bg-background p-3 font-mono text-xs font-normal leading-relaxed text-foreground scrollbar-thin"
       >
-        {/* Native PowerShell banner */}
-        <div className="text-[#888888] font-mono text-xs font-normal pb-2 select-none leading-relaxed">
-          Windows PowerShell
-          <br />
-          Copyright (C) Microsoft Corporation. All rights reserved.
-          <br />
-          <br />
-          Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+        <div className="pb-2 font-mono text-xs font-normal leading-relaxed text-muted-foreground select-none">
+          StackPilot workspace terminal
+          <br />Commands run in the selected project or deployment context.
         </div>
 
         {/* Executed command history */}
         {terminalLogs.map((log) => (
           <div key={log.id} className="space-y-0.5 pt-1">
-            <div className="flex items-center gap-1 text-white font-normal">
-              <span className="text-zinc-400 select-none">PS C:\{log.cwd || terminalCwd || "workspace"}&gt;</span>
+            <div className="flex items-center gap-1 font-normal text-foreground">
+              <span className="text-muted-foreground select-none">stackpilot:{log.cwd || terminalCwd || "workspace"}$</span>
               <span>{log.command}</span>
               {log.status === "running" && <Loader2 className="h-3 w-3 animate-spin text-amber-300 ml-1" />}
             </div>
 
             {log.stdout && (
-              <pre className="whitespace-pre-wrap break-words text-[#cccccc] font-normal leading-relaxed overflow-x-auto text-xs py-0.5 font-mono">
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words py-0.5 font-mono text-xs font-normal leading-relaxed text-foreground">
                 {log.stdout}
               </pre>
             )}
 
             {log.stderr && (
-              <pre className="whitespace-pre-wrap break-words text-[#e74856] font-normal leading-relaxed overflow-x-auto text-xs py-0.5 font-mono">
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words py-0.5 font-mono text-xs font-normal leading-relaxed text-destructive">
                 {log.stderr}
               </pre>
             )}
@@ -390,8 +390,8 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
           }}
           className="flex items-center gap-1.5 pt-1.5"
         >
-          <span className="text-zinc-400 font-normal select-none shrink-0 whitespace-nowrap">
-            PS C:\{terminalCwd || "workspace"}&gt;
+          <span className="shrink-0 whitespace-nowrap font-normal text-muted-foreground select-none">
+            stackpilot:{terminalCwd || "workspace"}$
           </span>
           <div className="relative flex-1 flex items-center min-w-0">
             <input
@@ -401,7 +401,7 @@ export const FloatingPowerShellTerminal = memo(function FloatingPowerShellTermin
               disabled={isExecuting}
               onChange={(e) => setTerminalInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="w-full bg-transparent border-none outline-none text-white font-mono text-xs p-0 m-0 font-normal leading-normal shadow-none focus:ring-0 focus:outline-none"
+              className="m-0 w-full border-none bg-transparent p-0 font-mono text-xs font-normal leading-normal text-foreground shadow-none outline-none focus:outline-none focus:ring-0"
               spellCheck={false}
               autoComplete="off"
             />

@@ -1,0 +1,32 @@
+{
+  "phases": [
+    {
+      "phase": "visible_without_input",
+      "packets_per_second": 8.0,
+      "p95_delivery_gap_ms": 130.75,
+      "max_delivery_gap_ms": 133.07,
+      "keyframes": 8
+    },
+    {
+      "phase": "active_healthy",
+      "packets_per_second": 46.5,
+      "p95_delivery_gap_ms": 45.39,
+      "max_delivery_gap_ms": 70.87,
+      "keyframes": 6
+    },
+    {
+      "phase": "hidden",
+      "packets_per_second": 8.25,
+      "p95_delivery_gap_ms": 144.75,
+      "max_delivery_gap_ms": 155.94,
+      "keyframes": 8
+    }
+  ],
+  "delivered_access_units": 1001,
+  "decoded_frames": 1001,
+  "decoder_returncode": 0,
+  "decoder_errors": "ull @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 165 >= 165\n    Last message repeated 6 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 166 >= 166\n    Last message repeated 5 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 167 >= 167\n    Last message repeated 6 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 168 >= 168\n    Last message repeated 5 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 169 >= 169\n    Last message repeated 6 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 170 >= 170\n    Last message repeated 5 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 171 >= 171\n    Last message repeated 6 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 172 >= 172\n    Last message repeated 5 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 173 >= 173\n    Last message repeated 6 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 174 >= 174\n    Last message repeated 5 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 175 >= 175\n    Last message repeated 6 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 176 >= 176\n    Last message repeated 5 times\n[null @ 0x5bf867943b00] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 177 >= 177\n    Last message repeated 4 times\n",
+  "source": "owned Xvfb synthetic animated screen",
+  "visible_presentation_verified": false,
+  "existing_user_contexts_mutated": false
+}

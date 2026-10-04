@@ -1,22 +1,21 @@
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium-browser \
+    chromium \
     xvfb \
+    openbox \
+    ffmpeg \
     libxcomposite1 \
     libxfixes3 \
     libxdamage1 \
     python3 \
     python3-websockets \
     libgl1-mesa-dri \
-    libnvidia-encode-535 \
     procps \
     ca-certificates \
     curl \
-    wget \
     fonts-liberation \
     fonts-noto-core \
     fonts-noto-color-emoji \
@@ -26,12 +25,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && fc-cache -f \
     && rm -rf /var/lib/apt/lists/*
 
-# Install FFmpeg with NVENC support
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=graphics,video,compute,utility
 
-COPY streamer.gpu.py /usr/local/bin/streamer.py
+COPY streamer.py /usr/local/bin/streamer.py
 RUN chmod +x /usr/local/bin/streamer.py
 
 COPY entrypoint.gpu.sh /entrypoint.sh

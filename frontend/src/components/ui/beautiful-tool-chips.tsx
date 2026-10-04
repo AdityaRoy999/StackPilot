@@ -2,8 +2,10 @@
 
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Wrench, ShieldAlert, Check, X, Terminal, ExternalLink, Folder, FileText, Copy, Search, Globe, Maximize2, Eye } from "lucide-react";
+import { Wrench, ShieldAlert, Check, X, Terminal, ExternalLink, Folder, FileText, Copy, Search, Globe, Maximize2, Eye } from "@/lib/platform-icons";
 import { cn } from "@/lib/utils";
+import api from "@/lib/api";
+import { browserBatchSummary, browserResultSummary, toolArgumentSummary } from "@/lib/tool-summary";
 
 /* ─────────────────────────────────────────────────────────
  * TOOL CHIPS
@@ -446,7 +448,16 @@ export function LiveToolChips({
   onAllow?: (call: any) => void;
   onDeny?: (call: any) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [chosenOpen, setChosenOpen] = useState<boolean | null>(null);
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 639px)");
+    const update = () => setPhone(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const open = chosenOpen ?? !phone;
   const [openRows, setOpenRows] = useState<Set<number>>(new Set());
   const [copiedRow, setCopiedRow] = useState<number | null>(null);
   const [preview, setPreview] = useState<{
@@ -456,6 +467,7 @@ export function LiveToolChips({
     bottom?: number;
   } | null>(null);
   const [selectedLightboxFrame, setSelectedLightboxFrame] = useState<string | null>(null);
+  const [artifactFrames, setArtifactFrames] = useState<Record<string,string>>({});
 
   if (!toolCalls || toolCalls.length === 0) return null;
 
@@ -478,10 +490,24 @@ export function LiveToolChips({
       tc.result?.status === "requires_approval" ||
       tc.result?.action_required === "permission";
 
-    if (tc.name === "terminal_run_command") {
+    if (tc.name === "define_completion_plan" || tc.name === "get_completion_status") {
+      label = tc.name === "define_completion_plan" ? "Completion plan" : "Feature verification";
+      const features = Array.isArray(tc.result?.features) ? tc.result.features : [];
+      const passed = features.filter((feature: { status?: string }) => feature.status === "passed").length;
+      chip = isDone ? `${passed}/${features.length} features verified` : "Reading requirements…";
+      if (tc.result?.summary) detail.push({ text: tc.result.summary });
+      if (tc.result?.workload) detail.push({ text: `Delivery: ${tc.result.workload}` });
+      if (tc.result?.state === "needs_plan") detail.push({ text: "Finished features and acceptance checks have not been defined yet." });
+      for (const feature of features) {
+        detail.push({ text: `${feature.status === "passed" ? "✓" : feature.status === "failed" ? "✕" : "○"} ${feature.description} — ${feature.status || "unverified"}`,
+          tone: feature.status === "passed" ? "add" : feature.status === "failed" ? "del" : "ctx" });
+      }
+      for (const assumption of tc.result?.assumptions || []) detail.push({ text: `Assumption: ${assumption}` });
+      if (tc.result?.revision) detail.push({ text: `Source revision: ${String(tc.result.revision).slice(0, 12)}` });
+    } else if (tc.name === "terminal_run_command" || tc.name === "run_worker_command") {
       icon = "run";
       label = "Run command";
-      chip = tc.arguments?.command || "bash";
+      chip = tc.arguments?.command || (Array.isArray(tc.arguments?.argv) ? tc.arguments.argv.join(" ") : "command");
       mono = true;
       detailMono = true;
       if (isDone) {
@@ -491,8 +517,8 @@ export function LiveToolChips({
             tone: tc.result.exit_code === 0 ? "ctx" : "del",
           });
         }
-        if (tc.result?.stdout) {
-          const stdoutLines = String(tc.result.stdout).split("\n").slice(0, 10);
+        if (tc.result?.stdout || tc.result?.output) {
+          const stdoutLines = String(tc.result.stdout || tc.result.output).split("\n").slice(0, 10);
           stdoutLines.forEach((l) => detail.push({ text: l }));
         }
         if (tc.result?.stderr) {
@@ -630,7 +656,11 @@ export function LiveToolChips({
       chip = "Trigger rebuild";
       mono = true;
       detailMono = false;
-      detail.push({ text: "Queued container rebuild with modified files" });
+      const queued=["rebuild_queued","build_queued"].includes(tc.result?.status || "") && Boolean(tc.result?.job_id);
+      detail.push({ text: queued ? `Rebuild queued · Job ${tc.result.job_id}`
+        : isPermission ? "Waiting for approval"
+        : !isDone ? "Requesting a rebuild..."
+        : `Rebuild not queued: ${tc.result?.error || tc.result?.message || tc.result?.status || "No job receipt returned"}` });
     } else if (tc.name === "wait_for_deployment") {
       icon = "think";
       label = "Monitor";
@@ -654,6 +684,20 @@ export function LiveToolChips({
       detail.push({
         text: `Found ${tc.result?.interactive_elements_count || 0} interactive elements`,
       });
+    } else if (tc.name === "browser_interact_batch") {
+      icon = "run";
+      label = "Browser actions";
+      chip = browserBatchSummary(tc.arguments?.actions);
+      detailMono = true;
+      detail.push({ text: JSON.stringify(tc.arguments, null, 2) });
+      if (isDone) detail.push({ text: browserResultSummary(tc.result) });
+    } else if (tc.name === "browser_observe" || tc.name === "browser_assert") {
+      icon = tc.name === "browser_observe" ? "read" : "think";
+      label = tc.name === "browser_observe" ? "Observe page" : "Verify page";
+      chip = toolArgumentSummary(tc.result?.title || tc.result?.url || tc.arguments?.url) || "Page checks";
+      detailMono = true;
+      detail.push({ text: JSON.stringify(tc.arguments, null, 2) });
+      if (isDone) detail.push({ text: browserResultSummary(tc.result) });
     } else if (tc.name === "browser_interact") {
       const action = tc.arguments?.action || "action";
       let targetLabel =
@@ -672,7 +716,7 @@ export function LiveToolChips({
       detailMono = true;
       detail.push({ text: `Target: ${targetLabel || action}` });
       detail.push({
-        text: `Status: ${tc.result?.status === "passed" ? "PASSED" : "COMPLETED"}`,
+        text: `Status: ${String(tc.result?.status || 'pending').toUpperCase()}`,
       });
       detail.push({ text: `URL: ${tc.result?.url || ""}` });
     } else if (tc.name === "browser_get_page_state") {
@@ -706,7 +750,7 @@ export function LiveToolChips({
       icon = "think";
       label = tc.name.replace(/_/g, " ");
       chip = Object.keys(tc.arguments || {})[0]
-        ? String(tc.arguments[Object.keys(tc.arguments)[0]]).slice(0, 30)
+        ? toolArgumentSummary(tc.arguments[Object.keys(tc.arguments)[0]])
         : "";
       mono = false;
       detailMono = false;
@@ -758,7 +802,7 @@ export function LiveToolChips({
         targetLines.slice(0, 10).forEach((l) => lines.push({ text: l, tone: "del" }));
         replLines.slice(0, 10).forEach((l) => lines.push({ text: l, tone: "add" }));
       } else {
-        add = 10;
+        add = 0;
         lines.push({ text: `Updated ${fullPath}`, tone: "add" });
       }
 
@@ -770,6 +814,13 @@ export function LiveToolChips({
   });
 
   const toggleRow = (idx: number) => {
+    const result=toolCalls[idx]?.result;
+    const artifactId=result?.frame_artifact;
+    if (artifactId && result?.run_id && !artifactFrames[artifactId]) {
+      api.post('/ai/tools/execute',{tool_name:'agent_event_artifact',arguments:{run_id:result.run_id,artifact_id:artifactId}})
+        .then(response=>{if(typeof response.data?.data==='string')setArtifactFrames(current=>({...current,[artifactId]:response.data.data}));})
+        .catch(()=>{});
+    }
     setOpenRows((current) => {
       const next = new Set(current);
       next.has(idx) ? next.delete(idx) : next.add(idx);
@@ -801,14 +852,15 @@ export function LiveToolChips({
   const permissionCount = steps.filter((s) => s.status === "permission_required").length;
 
   return (
-    <div className={cn("w-full min-w-0 max-w-full transition-[margin,padding] duration-200", open ? "pb-1 mb-2" : "pb-0 mb-0", className)}>
+    <div data-tool-activity className={cn("w-full min-w-0 max-w-full transition-[margin,padding] duration-200", open ? "pb-1 mb-2" : "pb-0 mb-0", className)}>
       {/* Run header */}
       <div className="flex items-center justify-between">
         <button
           type="button"
           aria-expanded={open}
-          onClick={() => setOpen((prev) => !prev)}
-          className="-mx-1.5 flex w-fit items-center gap-1.5 rounded-control px-2 py-1 text-[12.5px] text-ink-2 transition-colors duration-100 hover:bg-hover-2 cursor-pointer select-none"
+          aria-label="Tool activity"
+          onClick={() => setChosenOpen(!open)}
+          className="-mx-1.5 flex min-w-0 max-w-full flex-wrap items-center gap-1.5 rounded-control px-2 py-1 text-[12.5px] text-ink-2 transition-colors duration-100 hover:bg-hover-2 cursor-pointer select-none"
         >
           <svg
             width="12"
@@ -829,7 +881,7 @@ export function LiveToolChips({
             {completedCount === totalToolCalls ? " completed" : ""}
           </span>
           {permissionCount > 0 && (
-            <span className="ml-1.5 rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-500 border border-amber-500/30">
+            <span className="ml-1.5 rounded-md bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground border border-border">
               {permissionCount} awaiting authorization
             </span>
           )}
@@ -838,25 +890,27 @@ export function LiveToolChips({
 
       {/* Tool call rows */}
       <div
+        inert={!open}
         className="grid transition-[grid-template-rows,opacity] duration-300"
         style={{ gridTemplateRows: open ? "1fr" : "0fr", opacity: open ? 1 : 0 }}
       >
         <div className="-mx-1 min-h-0 overflow-hidden px-1.5 pb-0.5">
           <div className="mt-1 flex flex-col gap-1">
             {steps.map((row, idx) => {
-              const rowOpen = openRows.has(idx) || row.status === "permission_required";
+              const rowOpen = openRows.has(idx) || row.status === "permission_required" ||
+                (isGenerating && idx === steps.length - 1 && Boolean(row.rawCall?.result?.frame));
               const isTerminal = row.rawCall?.name === "terminal_run_command";
               return (
                 <div
                   key={idx}
                   className={cn(
                     "rounded-md transition-all duration-150",
-                    row.status === "permission_required" && "border border-amber-500/40 bg-amber-500/5 px-2 py-0.5",
+                    row.status === "permission_required" && "border border-border bg-muted/30 px-2 py-0.5",
                     row.status === "error" && "border border-rose-500/40 bg-rose-500/5 px-2 py-0.5"
                   )}
                   style={{ animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both" }}
                 >
-                  <div className="group/row -mx-[3px] flex h-7 w-[calc(100%+6px)] min-w-0 items-center gap-2 rounded-control px-2 text-left transition-colors duration-150 hover:bg-hover-2">
+                  <div className="group/row -mx-[3px] flex min-h-11 w-[calc(100%+6px)] min-w-0 items-center gap-2 rounded-control px-2 text-left transition-colors duration-150 hover:bg-hover-2 sm:h-7 sm:min-h-0">
                     <button
                       type="button"
                       aria-expanded={rowOpen}
@@ -893,7 +947,7 @@ export function LiveToolChips({
                           <path d="M6 9l6 6 6-6" />
                         </svg>
                       </span>
-                      <span className="shrink-0 text-[12px] font-medium text-ink">
+                      <span className="min-w-0 max-w-[45%] truncate text-[12px] font-medium text-ink sm:max-w-none sm:shrink-0">
                         {row.label}
                       </span>
                       <span
@@ -923,9 +977,9 @@ export function LiveToolChips({
                   </div>
 
                   {/* Permission required confirmation banner */}
-                  {row.status === "permission_required" && (
-                    <div className="my-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 flex items-center justify-between gap-3 text-xs">
-                      <div className="flex items-center gap-2 text-amber-500">
+                  {row.status === "permission_required" && (onAllow || onDeny) && (
+                    <div className="my-1.5 rounded-lg border border-border bg-muted/30 p-2.5 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2 text-muted-foreground">
                         <ShieldAlert className="h-4 w-4 shrink-0" />
                         <span>User authorization required to run this tool</span>
                       </div>
@@ -944,7 +998,7 @@ export function LiveToolChips({
                           <button
                             type="button"
                             onClick={() => onAllow(row.rawCall)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium bg-amber-500 text-black hover:bg-amber-400 transition-colors font-semibold cursor-pointer shadow-sm"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors font-semibold cursor-pointer shadow-sm"
                           >
                             <Check className="h-3 w-3" />
                             Allow
@@ -970,7 +1024,7 @@ export function LiveToolChips({
                           {row.detail.map((line, lIdx) => (
                             <span
                               key={lIdx}
-                              className={`truncate text-[11px] leading-[1.6] ${
+                              className={`min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[11px] leading-[1.6] ${
                                 row.detailMono ? "font-mono" : ""
                               } ${line.tone === "add" ? "text-green" : line.tone === "del" ? "text-red" : "text-ink-2"}`}
                             >
@@ -981,7 +1035,7 @@ export function LiveToolChips({
                       )}
 
                       {/* Visual Browser Test Case Card */}
-                      {(row.rawCall?.name === "browser_interact" || row.rawCall?.name === "browser_open_live_session") && (() => {
+                      {(row.rawCall?.name === "browser_interact" || row.rawCall?.name === "browser_assert" || row.rawCall?.name === "browser_open_live_session") && (() => {
                         const isSession = row.rawCall?.name === "browser_open_live_session";
                         const actionName = isSession
                           ? "CONNECT"
@@ -990,7 +1044,7 @@ export function LiveToolChips({
                           row.status === "error" ||
                           Boolean(row.rawCall?.result?.error) ||
                           row.rawCall?.result?.status === "failed";
-                        const isPassed = !isFailed;
+                        const isPassed = row.rawCall?.result?.status === 'passed' || row.rawCall?.result?.status === 'connected';
                         let rawTarget =
                           row.rawCall?.result?.target ||
                           (row.rawCall?.arguments?.element_id !== undefined
@@ -1004,7 +1058,7 @@ export function LiveToolChips({
                           .trim() || actionName;
                         const targetUrl = row.rawCall?.result?.url || row.rawCall?.arguments?.url || "";
                         const docTitle = row.rawCall?.result?.title || "";
-                        const rawFrame = row.rawCall?.result?.frame || row.rawCall?.result?.screenshot;
+                        const rawFrame = row.rawCall?.result?.frame || row.rawCall?.result?.screenshot || artifactFrames[row.rawCall?.result?.frame_artifact];
                         const frameSrc = rawFrame
                           ? (String(rawFrame).startsWith("data:") || String(rawFrame).startsWith("http")
                               ? String(rawFrame)

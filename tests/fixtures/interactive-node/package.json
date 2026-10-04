@@ -1,0 +1,7 @@
+{
+  "name": "stackpilot-console-qualification",
+  "version": "1.0.0",
+  "private": true,
+  "bin": {"calculator": "cli.cjs"},
+  "scripts": {"test": "node test.cjs"}
+}

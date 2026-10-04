@@ -11,7 +11,10 @@ build-mingw/
 # Separate services not needed for backend C++ compilation
 frontend/
 enterprise-frontend/
-ai-service/
+ai-service/**
+!ai-service/app/
+!ai-service/app/repository_discovery.py
+!ai-service/app/repository_toolchains.py
 mcp-server/
 searxng/
 local-projects/

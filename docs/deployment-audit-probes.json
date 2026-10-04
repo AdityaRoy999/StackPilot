@@ -1,0 +1,12 @@
+{
+  "android_generator_has_gradle_build": false,
+  "android_generator_has_sdk_install": false,
+  "missing_apk_portal_http_status": 200,
+  "missing_apk_still_advertises_ready": true,
+  "missing_apk_download_http_status": 404,
+  "nested_apk_exists_but_download_http_status": 404,
+  "source_env_http_status": 200,
+  "source_env_dummy_canary_exposed": true,
+  "cmake_multi_target_selected_executable": "build/a_unit_test",
+  "cmake_multi_target_selected_intended_application": false
+}

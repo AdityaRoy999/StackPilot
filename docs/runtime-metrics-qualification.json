@@ -1,0 +1,172 @@
+{
+  "available": true,
+  "samples": [
+    {
+      "available": true,
+      "deployment_id": "3e1449cf-27f9-4cdb-9d9d-1dbcf9d72d8c",
+      "host": {
+        "cpu_name": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+        "cpu_temperature_celsius": null,
+        "gpu_memory_percent": null,
+        "gpu_name": "",
+        "gpu_temperature_celsius": null,
+        "gpu_usage_percent": null,
+        "host_memory_total_bytes": 8194870000,
+        "sensor_scope": "container"
+      },
+      "message": "Live Docker metrics",
+      "provider": "local_docker",
+      "series": [
+        {
+          "available": true,
+          "block_read_bytes": 2060000,
+          "block_write_bytes": 1730000,
+          "container_status": "running",
+          "cpu_percent": 0.8,
+          "health_status": "",
+          "image": "stackpilot-portable-desktop:qualification",
+          "memory_bytes": 99237232,
+          "memory_limit_bytes": 268435456,
+          "memory_percent": 36.97,
+          "name": "stackpilot-portable-desktop-qualification",
+          "network_rx_bytes": 93400,
+          "network_tx_bytes": 1190000,
+          "pids": 15,
+          "restart_count": "0"
+        }
+      ],
+      "summary": {
+        "available": true,
+        "block_read_bytes": 2060000,
+        "block_write_bytes": 1730000,
+        "container_status": "running",
+        "cpu_percent": 0.8,
+        "health_status": "",
+        "image": "stackpilot-portable-desktop:qualification",
+        "memory_bytes": 99237232,
+        "memory_limit_bytes": 268435456,
+        "memory_percent": 36.97,
+        "name": "stackpilot-portable-desktop-qualification",
+        "network_rx_bytes": 93400,
+        "network_tx_bytes": 1190000,
+        "pids": 15,
+        "pod_count": 1,
+        "ready_pods": 1,
+        "restart_count": "0"
+      },
+      "timestamp": "20260927 20:17:22"
+    },
+    {
+      "available": true,
+      "deployment_id": "3e1449cf-27f9-4cdb-9d9d-1dbcf9d72d8c",
+      "host": {
+        "cpu_name": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+        "cpu_temperature_celsius": null,
+        "gpu_memory_percent": null,
+        "gpu_name": "",
+        "gpu_temperature_celsius": null,
+        "gpu_usage_percent": null,
+        "host_memory_total_bytes": 8194870000,
+        "sensor_scope": "container"
+      },
+      "message": "Live Docker metrics",
+      "provider": "local_docker",
+      "series": [
+        {
+          "available": true,
+          "block_read_bytes": 2060000,
+          "block_write_bytes": 1730000,
+          "container_status": "running",
+          "cpu_percent": 1.22,
+          "health_status": "",
+          "image": "stackpilot-portable-desktop:qualification",
+          "memory_bytes": 99237232,
+          "memory_limit_bytes": 268435456,
+          "memory_percent": 36.97,
+          "name": "stackpilot-portable-desktop-qualification",
+          "network_rx_bytes": 93400,
+          "network_tx_bytes": 1190000,
+          "pids": 15,
+          "restart_count": "0"
+        }
+      ],
+      "summary": {
+        "available": true,
+        "block_read_bytes": 2060000,
+        "block_write_bytes": 1730000,
+        "container_status": "running",
+        "cpu_percent": 1.22,
+        "health_status": "",
+        "image": "stackpilot-portable-desktop:qualification",
+        "memory_bytes": 99237232,
+        "memory_limit_bytes": 268435456,
+        "memory_percent": 36.97,
+        "name": "stackpilot-portable-desktop-qualification",
+        "network_rx_bytes": 93400,
+        "network_tx_bytes": 1190000,
+        "pids": 15,
+        "pod_count": 1,
+        "ready_pods": 1,
+        "restart_count": "0"
+      },
+      "timestamp": "20260927 20:17:23"
+    }
+  ],
+  "health_latency_during_8_metrics_requests_ms": 19.97,
+  "stopped_container": {
+    "available": false,
+    "deployment_id": "3e1449cf-27f9-4cdb-9d9d-1dbcf9d72d8c",
+    "host": {
+      "cpu_name": "11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz",
+      "cpu_temperature_celsius": null,
+      "gpu_memory_percent": null,
+      "gpu_name": "",
+      "gpu_temperature_celsius": null,
+      "gpu_usage_percent": null,
+      "host_memory_total_bytes": 8194870000,
+      "sensor_scope": "container"
+    },
+    "message": "No running container metrics are available.",
+    "provider": "local_docker",
+    "raw_error": "stats=stackpilot-portable-desktop-qualification|0.00%|0B / 0B|0.00%|0B / 0B|0B / 0B|0\ninspect=name=/stackpilot-portable-desktop-qualification|status=exited|health=|restart_count=0|image=stackpilot-portable-desktop:qualification\ncpu_name=11th Gen Intel(R) Core(TM) i7-1165G7 @ 2.80GHz\nhost_memory_total=8.19487e+09\ntemp=\ngpu_name=\ngpu=\n",
+    "series": [
+      {
+        "available": false,
+        "block_read_bytes": null,
+        "block_write_bytes": null,
+        "container_status": "exited",
+        "cpu_percent": null,
+        "health_status": "",
+        "image": "stackpilot-portable-desktop:qualification",
+        "memory_bytes": null,
+        "memory_limit_bytes": null,
+        "memory_percent": null,
+        "name": "stackpilot-portable-desktop-qualification",
+        "network_rx_bytes": null,
+        "network_tx_bytes": null,
+        "pids": null,
+        "restart_count": "0"
+      }
+    ],
+    "summary": {
+      "available": false,
+      "block_read_bytes": null,
+      "block_write_bytes": null,
+      "container_status": "exited",
+      "cpu_percent": null,
+      "health_status": "",
+      "image": "stackpilot-portable-desktop:qualification",
+      "memory_bytes": null,
+      "memory_limit_bytes": null,
+      "memory_percent": null,
+      "name": "stackpilot-portable-desktop-qualification",
+      "network_rx_bytes": null,
+      "network_tx_bytes": null,
+      "pids": null,
+      "pod_count": 1,
+      "ready_pods": 0,
+      "restart_count": "0"
+    },
+    "timestamp": "20260927 20:19:38"
+  }
+}

@@ -24,6 +24,8 @@ export const UI_THEMES = [
   "ibm-carbon",
   "azure-fluent",
   "stackpilot-web",
+  "aurora-glass",
+  "tide",
 ] as const;
 
 export type UiTheme = (typeof UI_THEMES)[number];

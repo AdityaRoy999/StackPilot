@@ -1,0 +1,1 @@
+{"scope": "bounded_hosted_model_request_comparison", "cases": [{"profile": "prior_fast_payload", "passed": false, "error": "ReadTimeout", "elapsed_seconds": 40.21}, {"profile": "documented_low_effort", "passed": false, "error": "ReadTimeout", "elapsed_seconds": 40.34}]}

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { Boxes, Database, Eye, FileCode2, History, Loader2, Play, RefreshCw, RotateCw, ScrollText, Server, ShieldCheck, SlidersHorizontal, Square, Trash2, Undo2 } from "lucide-react";
+import { Boxes, Database, Eye, FileCode2, History, Loader2, Play, RefreshCw, RotateCw, ScrollText, Server, ShieldCheck, SlidersHorizontal, Square, Trash2, Undo2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 
@@ -1027,16 +1027,16 @@ export function InfrastructureMonitor() {
 
   return (
     <div className="space-y-3">
-      <section className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <section className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight">Infrastructure Monitor</h1>
           <p className="mt-2 max-w-3xl text-lg text-muted-foreground">
             Observe, claim, and control Docker and Kubernetes resources on the StackPilot host or a saved SSH server.
           </p>
         </div>
-        <div className="flex flex-nowrap items-center gap-2 shrink-0">
+        <div data-inventory-toolbar className="flex w-full min-w-0 items-center gap-2 xl:w-auto xl:shrink-0">
           <Select value={targetConnectionId} onValueChange={(value) => setTargetConnectionId(value || "local")}>
-            <SelectTrigger className="h-10 w-[200px] sm:w-[240px] md:w-[280px] shrink-0 justify-between">
+            <SelectTrigger aria-label="Infrastructure target" className="h-10 min-w-0 flex-1 justify-between xl:w-[280px] xl:flex-none">
               <span className="truncate">{targetLabel}</span>
             </SelectTrigger>
             <SelectContent align="end" className="min-w-[240px]">
@@ -1073,18 +1073,14 @@ export function InfrastructureMonitor() {
           </Select>
           <Button
             variant="outline"
-            className="h-10 shrink-0 whitespace-nowrap"
+            className="ml-auto h-10 shrink-0 whitespace-nowrap"
             onClick={() => inventoryQuery.refetch()}
             disabled={inventoryQuery.isFetching}
+            aria-busy={inventoryQuery.isFetching}
           >
             <AppIcon name="refresh-cw" fallback={RefreshCw} className={inventoryQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"}  />
             Refresh
           </Button>
-          {inventoryQuery.isFetching && (
-            // Remote inventory takes seconds. Saying so beats a page that
-            // looks stuck.
-            <span className="text-xs text-muted-foreground">Reading target…</span>
-          )}
         </div>
       </section>
 
@@ -1236,7 +1232,7 @@ export function InfrastructureMonitor() {
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="workloads" className="gap-3">
-            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-muted/40">
+            <TabsList aria-label="Cluster resources" className="flex group-data-horizontal/tabs:h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto bg-muted/40 [&>[data-slot=tabs-trigger]]:flex-none [&>[data-slot=tabs-trigger]]:px-3">
               <TabsTrigger value="workloads">Workloads</TabsTrigger>
               <TabsTrigger value="pods">Pods</TabsTrigger>
               <TabsTrigger value="services">Services</TabsTrigger>

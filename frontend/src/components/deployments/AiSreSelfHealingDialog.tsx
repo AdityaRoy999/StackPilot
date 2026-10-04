@@ -27,7 +27,7 @@ import {
   FolderGit2,
   Layers,
   Zap,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";

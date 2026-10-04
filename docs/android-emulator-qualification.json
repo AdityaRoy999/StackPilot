@@ -1,0 +1,24 @@
+{
+  "verified": true,
+  "status": "passed",
+  "scope": "native_scenarios",
+  "deployment_id": "daf5ddd7-f53c-4751-a36a-b920056e3ac4",
+  "package": "dev.stackpilot.qualification",
+  "artifact_digest": "2a3eed0a17a66de2397a58da4041280528ee174fa0ab2ba9b37c6ebf3af1f72b",
+  "serial": "emulator-5580",
+  "scenarios": [
+    {
+      "name": "APK UI",
+      "status": "passed",
+      "steps": [
+        {
+          "action": "assert",
+          "status": "executed"
+        }
+      ]
+    }
+  ],
+  "workflow_verified": true,
+  "preview_available": true,
+  "screen_capture": "launch.png"
+}

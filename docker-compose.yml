@@ -7,6 +7,69 @@ x-stackpilot-logging: &stackpilot-logging
     max-file: ${STACKPILOT_LOG_MAX_FILE:-5}
 
 services:
+  remote-gateway:
+    build: ./remote-gateway
+    container_name: stackpilot-remote-gateway
+    restart: unless-stopped
+    profiles: ["remote"]
+    ports:
+      - "127.0.0.1:8094:8094"
+    depends_on:
+      - backend
+      - frontend
+    read_only: true
+    tmpfs:
+      - /config
+      - /data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+  remote-tunnel:
+    image: cloudflare/cloudflared:2026.9.1
+    container_name: stackpilot-remote-tunnel
+    profiles: ["remote"]
+    restart: "no"
+    command: ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", "http://remote-gateway:8094"]
+    depends_on:
+      - remote-gateway
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: ["ALL"]
+  browser-state-init:
+    image: python:3.12-slim
+    user: "0:0"
+    command: ["python", "/usr/local/bin/init_browser_state.py"]
+    volumes:
+      - agent_run_state:/state
+      - ./ai-service/app/.runtime:/legacy-state
+      - ./ai-service/init_browser_state.py:/usr/local/bin/init_browser_state.py:ro
+    profiles: ["ai", "full"]
+    restart: "no"
+  agent-workspace-init:
+    image: alpine:3
+    user: "0:0"
+    command: ["sh", "-c", "chown 10001:10001 /work && chmod 700 /work"]
+    volumes:
+      - agent_workspaces:/work
+    restart: "no"
+  runtime-gateway:
+    build: ./runtime-gateway
+    container_name: stackpilot-runtime-gateway
+    restart: unless-stopped
+    logging: *stackpilot-logging
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8091:8091"
+    depends_on:
+      postgres:
+        condition: service_healthy
   # ─── PostgreSQL Database ────────────────────────────────────
   postgres:
     image: pgvector/pgvector:pg16
@@ -112,6 +175,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - STACKPILOT_REDIS_QUEUE=${STACKPILOT_REDIS_QUEUE:-stackpilot:jobs:deployment}
       - STACKPILOT_JOB_WORKERS=${STACKPILOT_JOB_WORKERS:-2}
+      - STACKPILOT_LOCAL_PREVIEW_SUFFIX=.preview.localhost:8091
       - STACKPILOT_BLOCKING_WORKERS=${STACKPILOT_BLOCKING_WORKERS:-4}
       - STACKPILOT_JOB_MAX_ATTEMPTS=${STACKPILOT_JOB_MAX_ATTEMPTS:-3}
       - PROMETHEUS_PUBLIC_URL=${PROMETHEUS_PUBLIC_URL:-http://localhost:9090}
@@ -137,12 +201,30 @@ services:
       - BREVO_API_KEY=${BREVO_API_KEY:-}
       - BREVO_FROM_EMAIL=${BREVO_FROM_EMAIL:-}
       - BUILD_WORKSPACE_DIR=/app/uploads/builds
+      - STACKPILOT_AGENT_WORKSPACE_ROOT=/app/agent-workspaces
+      - STACKPILOT_AGENT_RUN_DB=/app/browser-state/browser-runs.sqlite3
+      - STACKPILOT_AGENT_WORKER_NETWORK=${STACKPILOT_AGENT_WORKER_NETWORK:-true}
+      - STACKPILOT_AGENT_WORKER_IMAGES=${STACKPILOT_AGENT_WORKER_IMAGES:-python:3.12-slim,node:22-bookworm-slim,eclipse-temurin:21-jdk,golang:1.24-bookworm,gcc:14-bookworm,ubuntu:24.04,debian:bookworm-slim,alpine:3.21}
+      - STACKPILOT_AGENT_WORKER_MEMORY=${STACKPILOT_AGENT_WORKER_MEMORY:-512m}
+      - STACKPILOT_AGENT_WORKER_FAMILIES=${STACKPILOT_AGENT_WORKER_FAMILIES:-python,node,golang,rust,eclipse-temurin,mcr.microsoft.com/dotnet/sdk,ruby,php,gcc,ubuntu,debian,alpine}
+      - STACKPILOT_AGENT_DOCKER_PROVISIONING=${STACKPILOT_AGENT_DOCKER_PROVISIONING:-true}
+      - STACKPILOT_AGENT_INSTANCE_ROOT=/app/uploads/agent-instances
+      - STACKPILOT_AGENT_INSTANCE_MAX_TOTAL=${STACKPILOT_AGENT_INSTANCE_MAX_TOTAL:-8}
+      - STACKPILOT_AGENT_INSTANCE_MAX_PER_RUN=${STACKPILOT_AGENT_INSTANCE_MAX_PER_RUN:-3}
+      - STACKPILOT_AGENT_INSTANCE_TOTAL_MEMORY_MB=${STACKPILOT_AGENT_INSTANCE_TOTAL_MEMORY_MB:-4096}
+      - STACKPILOT_AGENT_INSTANCE_TOTAL_CPUS=${STACKPILOT_AGENT_INSTANCE_TOTAL_CPUS:-4}
+      - STACKPILOT_AGENT_INSTANCE_MAX_TTL_SECONDS=${STACKPILOT_AGENT_INSTANCE_MAX_TTL_SECONDS:-3600}
+      - STACKPILOT_AGENT_INSTANCE_MAX_MEMORY_MB=${STACKPILOT_AGENT_INSTANCE_MAX_MEMORY_MB:-4096}
+      - STACKPILOT_AGENT_INSTANCE_MAX_CPUS=${STACKPILOT_AGENT_INSTANCE_MAX_CPUS:-8}
+      - STACKPILOT_DOCKER_CAPABILITIES=${STACKPILOT_DOCKER_CAPABILITIES:-}
+      - STACKPILOT_AGENT_LOCAL_WORKERS=${STACKPILOT_AGENT_LOCAL_WORKERS:-true}
       - SOURCE_ARTIFACT_DIR=/app/uploads/source-artifacts
       - BUILD_MAX_LOG_BYTES=${BUILD_MAX_LOG_BYTES:-200000}
       - BUILD_CLONE_TIMEOUT_SECONDS=${BUILD_CLONE_TIMEOUT_SECONDS:-300}
       - BUILD_COMMAND_TIMEOUT_SECONDS=${BUILD_COMMAND_TIMEOUT_SECONDS:-3600}
       - BUILD_DOCKER_MEMORY=${BUILD_DOCKER_MEMORY:-512m}
       - STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS=${STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS:-30}
+      - STACKPILOT_REQUIRED_CI_POLICY=${STACKPILOT_REQUIRED_CI_POLICY:-}
       - LOCAL_SOURCE_ROOTS=${LOCAL_SOURCE_ROOTS:-/app/local-projects}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
@@ -207,7 +289,7 @@ services:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
       - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
       - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
-      - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-meta/llama-3.2-11b-vision-instruct}
+      - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-z-ai/glm-5.3-flash}
       - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-z-ai/glm-5.3-flash}
       - NVIDIA_NIM_THINKING_MODEL=${NVIDIA_NIM_THINKING_MODEL:-deepseek-ai/deepseek-v4-flash-0731}
       - NVIDIA_NIM_ALLOWED_MODELS=${NVIDIA_NIM_ALLOWED_MODELS:-}
@@ -232,11 +314,14 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./uploads:/app/uploads
+      - agent_workspaces:/app/agent-workspaces:ro
       - ${STACKPILOT_LOCAL_PROJECTS_DIR:-./local-projects}:/app/local-projects:ro
       - ${USERPROFILE}/.kube/config:/home/stackpilot/.kube/config:ro
       - ${USERPROFILE}/.kube/config:/root/.kube/config:ro
     depends_on:
       uploads-init:
+        condition: service_completed_successfully
+      agent-workspace-init:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
@@ -259,12 +344,14 @@ services:
       dockerfile: Dockerfile
     container_name: stackpilot-ai-service
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     logging: *stackpilot-logging
     profiles: ["ai", "full"]
     deploy:
       resources:
         limits:
-          memory: 384M
+          memory: 768M
         reservations:
           memory: 128M
     environment:
@@ -280,9 +367,11 @@ services:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
       - NVIDIA_NIM_API_KEY=${NVIDIA_NIM_API_KEY:-}
       - NVIDIA_NIM_BASE_URL=${NVIDIA_NIM_BASE_URL:-https://integrate.api.nvidia.com/v1}
-      - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-openai/gpt-oss-20b}
-      - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-meta/llama-3.2-11b-vision-instruct}
+      - NVIDIA_NIM_MODEL=${NVIDIA_NIM_MODEL:-z-ai/glm-5.3-flash}
+      - NVIDIA_NIM_FAST_MODEL=${NVIDIA_NIM_FAST_MODEL:-z-ai/glm-5.3-flash}
       - NVIDIA_NIM_BROWSER_MODEL=${NVIDIA_NIM_BROWSER_MODEL:-meta/llama-3.2-11b-vision-instruct}
+      - NVIDIA_NIM_BROWSER_PLANNER_MODEL=${NVIDIA_NIM_BROWSER_PLANNER_MODEL:-openai/gpt-oss-20b}
+      - NVIDIA_NIM_BROWSER_FALLBACK_MODEL=${NVIDIA_NIM_BROWSER_FALLBACK_MODEL:-}
       - NVIDIA_NIM_THINKING_MODEL=${NVIDIA_NIM_THINKING_MODEL:-openai/gpt-oss-20b}
       - NVIDIA_NIM_ALLOWED_MODELS=${NVIDIA_NIM_ALLOWED_MODELS:-}
       - NVIDIA_NIM_DISCOVER_MODELS=${NVIDIA_NIM_DISCOVER_MODELS:-true}
@@ -295,6 +384,15 @@ services:
       - OPENAI_COMPATIBLE_THINKING_MODEL=${OPENAI_COMPATIBLE_THINKING_MODEL:-}
       - OPENAI_COMPATIBLE_EMBEDDING_MODEL=${OPENAI_COMPATIBLE_EMBEDDING_MODEL:-text-embedding-3-small}
       - STACKPILOT_AI_REQUEST_TIMEOUT_SECONDS=${STACKPILOT_AI_REQUEST_TIMEOUT_SECONDS:-300}
+      - STACKPILOT_AI_STREAM_HEADER_TIMEOUT_SECONDS=${STACKPILOT_AI_STREAM_HEADER_TIMEOUT_SECONDS:-30}
+      - STACKPILOT_AI_STREAM_IDLE_TIMEOUT_SECONDS=${STACKPILOT_AI_STREAM_IDLE_TIMEOUT_SECONDS:-30}
+      - STACKPILOT_AI_BROWSER_PROVIDER_TIMEOUT_SECONDS=${STACKPILOT_AI_BROWSER_PROVIDER_TIMEOUT_SECONDS:-120}
+      - BROWSER_MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-4}
+      - BROWSER_SESSION_IDLE_SECONDS=${BROWSER_SESSION_IDLE_SECONDS:-900}
+      - STACKPILOT_AI_TEST_MAX_ACTIONS=${STACKPILOT_AI_TEST_MAX_ACTIONS:-120}
+      - STACKPILOT_AI_TEST_MAX_SECONDS=${STACKPILOT_AI_TEST_MAX_SECONDS:-180}
+      - STACKPILOT_AI_TEST_DEEP_MAX_ACTIONS=${STACKPILOT_AI_TEST_DEEP_MAX_ACTIONS:-360}
+      - STACKPILOT_AI_TEST_DEEP_MAX_SECONDS=${STACKPILOT_AI_TEST_DEEP_MAX_SECONDS:-600}
       - STACKPILOT_AI_MAX_TEXT_BYTES=${STACKPILOT_AI_MAX_TEXT_BYTES:-24000}
       - STACKPILOT_AI_EMBEDDING_DIMENSIONS=${STACKPILOT_AI_EMBEDDING_DIMENSIONS:-384}
       - STACKPILOT_AI_EMBEDDING_FALLBACK=${STACKPILOT_AI_EMBEDDING_FALLBACK:-true}
@@ -302,16 +400,79 @@ services:
       - BROWSER_SANDBOX_URL=${BROWSER_SANDBOX_URL:-http://browser-sandbox:9222}
       - BROWSER_STREAM_HOST=${BROWSER_STREAM_HOST:-browser-sandbox}
       - BROWSER_STREAM_PORT=${BROWSER_STREAM_PORT:-8099}
+      - REMOTE_BROWSER_SANDBOX_URL=${REMOTE_BROWSER_SANDBOX_URL:-}
+      - REMOTE_BROWSER_STREAM_HOST=${REMOTE_BROWSER_STREAM_HOST:-}
+      - REMOTE_BROWSER_STREAM_PORT=${REMOTE_BROWSER_STREAM_PORT:-8099}
+      - HOST_BROWSER_CDP_URL=${HOST_BROWSER_CDP_URL:-}
+      - HOST_BROWSER_TOKEN=${HOST_BROWSER_TOKEN:-}
+      - BROWSER_HOST_MEDIA_FPS=${BROWSER_HOST_MEDIA_FPS:-30}
+      - BROWSER_HOST_MEDIA_BITRATE=${BROWSER_HOST_MEDIA_BITRATE:-2000000}
+      - BROWSER_WEBRTC_ENABLED=${BROWSER_WEBRTC_ENABLED:-true}
+      - BROWSER_RTC_ICE_SERVERS=${BROWSER_RTC_ICE_SERVERS:-[]}
+      - BROWSER_RTC_ADVERTISED_IP=${BROWSER_RTC_ADVERTISED_IP:-127.0.0.1}
+      - BROWSER_RTC_UDP_MIN=8011
+      - BROWSER_RTC_UDP_MAX=8026
+      - STACKPILOT_ANDROID_WORKER_URL=${STACKPILOT_ANDROID_WORKER_URL:-}
+      - STACKPILOT_AGENT_WORKSPACE_ROOT=/app/agent-workspaces
+      - STACKPILOT_AGENT_TEAMS_ENABLED=${STACKPILOT_AGENT_TEAMS_ENABLED:-true}
+      - STACKPILOT_TEAM_PARALLELISM=${STACKPILOT_TEAM_PARALLELISM:-3}
+      - STACKPILOT_TEAM_GLOBAL_PARALLELISM=${STACKPILOT_TEAM_GLOBAL_PARALLELISM:-4}
+      - STACKPILOT_TEAM_MAX_TASKS=${STACKPILOT_TEAM_MAX_TASKS:-64}
+      - STACKPILOT_TEAM_MAX_TURNS=${STACKPILOT_TEAM_MAX_TURNS:-256}
+      - STACKPILOT_TEAM_MAX_DEPTH=${STACKPILOT_TEAM_MAX_DEPTH:-6}
+      - STACKPILOT_TEAM_TASK_TURNS=${STACKPILOT_TEAM_TASK_TURNS:-24}
+      - STACKPILOT_TEAM_DEADLINE_SECONDS=${STACKPILOT_TEAM_DEADLINE_SECONDS:-3600}
+      - STACKPILOT_TEAM_PROVIDER_RETRIES=${STACKPILOT_TEAM_PROVIDER_RETRIES:-2}
+      - STACKPILOT_TEAM_PROVIDER_TIMEOUT_SECONDS=${STACKPILOT_TEAM_PROVIDER_TIMEOUT_SECONDS:-120}
     ports:
-      - "${STACKPILOT_AI_SERVICE_PORT:-8010}:8010"
+      - "127.0.0.1:${STACKPILOT_AI_SERVICE_PORT:-8010}:8010"
+      - "127.0.0.1:8011-8026:8011-8026/udp"
     volumes:
       - ./ai-service/app:/app/app
+      - agent_run_state:/app/browser-state
+      - ./uploads:/app/uploads:ro
+      - ${STACKPILOT_LOCAL_PROJECTS_DIR:-./local-projects}:/app/local-projects:ro
+      - agent_workspaces:/app/agent-workspaces
+    depends_on:
+      browser-state-init:
+        condition: service_completed_successfully
+      agent-workspace-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8010/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8010/readyz"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  remote-browser-tunnel:
+    build: ./browser-sandbox/ssh-tunnel
+    image: stackpilot/remote-browser-tunnel:latest
+    container_name: stackpilot-remote-browser-tunnel
+    profiles: ["remote-browser"]
+    restart: unless-stopped
+    init: true
+    logging: *stackpilot-logging
+    environment:
+      REMOTE_BROWSER_SSH_HOST: ${REMOTE_BROWSER_SSH_HOST:-}
+      REMOTE_BROWSER_SSH_USER: ${REMOTE_BROWSER_SSH_USER:-ubuntu}
+      REMOTE_BROWSER_SSH_PORT: ${REMOTE_BROWSER_SSH_PORT:-22}
+    volumes:
+      - remote_browser_ssh:/run/remote-browser-ssh:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    pids_limit: 32
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "4", "http://localhost:9222/json/version"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   browser-sandbox:
     build:
@@ -326,7 +487,11 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - DISPLAY=:99
-      - STREAM_FPS=60
+      - STREAM_FPS=${STREAM_FPS:-30}
+      - STREAM_MAX_FPS=${STREAM_MAX_FPS:-60}
+      - STREAM_IDLE_FPS=${STREAM_IDLE_FPS:-8}
+      - STREAM_ENCODER=${STREAM_ENCODER:-auto}
+      - BROWSER_RENDERER=${BROWSER_RENDERER:-auto}
       - STREAM_WIDTH=1280
       - STREAM_HEIGHT=720
       - STREAM_BITRATE=2500k
@@ -361,42 +526,48 @@ services:
     volumes:
       - ./searxng:/etc/searxng:ro
 
-  # ─── Next.js Frontend (Live Hot-Reloading) ───────────────────
+  # ─── Next.js Frontend (Prebuilt Platform UI) ─────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: dev
-    image: stackpilot-frontend:dev
+      target: runner
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8090/api/v1}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8090}
+        NEXT_PUBLIC_AI_SERVICE_WS_URL: ${NEXT_PUBLIC_AI_SERVICE_WS_URL:-}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        NEXT_PUBLIC_GITHUB_CLIENT_ID: ${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
+    image: stackpilot-frontend:local
     container_name: stackpilot-frontend
+    # Pages are compiled once during the image build, never on navigation.
+    # Hot reload is available with docker-compose.dev.yml.
+    command: ["node", "server.js"]
     restart: unless-stopped
     logging: *stackpilot-logging
     deploy:
       resources:
         limits:
-          memory: 2048M
+          memory: 4096M
         reservations:
-          memory: 256M
+          memory: 512M
+    env_file:
+      - path: ./frontend/.env.local
+        required: false
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
       - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8090/api/v1}
       - NEXT_PUBLIC_WS_BASE_URL=${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8090}
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
       - NEXT_PUBLIC_GITHUB_CLIENT_ID=${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
-      - WATCHPACK_POLLING=true
-      - CHOKIDAR_USEPOLLING=true
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
     ports:
       - "127.0.0.1:3000:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --timeout=15 http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 0"]
+      test: ["CMD-SHELL", "wget -qO- --timeout=15 http://127.0.0.1:3000/api/health >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 15s
       retries: 5
-      start_period: 45s
+      start_period: 120s
     depends_on:
       - backend
 
@@ -440,20 +611,23 @@ services:
       - ./observability/loki/config.yml:/etc/loki/config.yml:ro
       - loki_data:/loki
 
-  promtail:
-    image: grafana/promtail:3.4.2
-    container_name: stackpilot-promtail
+  alloy:
+    image: grafana/alloy:v1.19.0
+    container_name: stackpilot-alloy
     restart: unless-stopped
     logging: *stackpilot-logging
     profiles: ["monitoring"]
     deploy:
       resources:
         limits:
-          memory: 128M
-    command: ["-config.file=/etc/promtail/config.yml"]
+          memory: 256M
+    command: ["run", "--storage.path=/var/lib/alloy/data", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+    ports:
+      - "127.0.0.1:12345:12345"
     volumes:
-      - ./observability/promtail/config.yml:/etc/promtail/config.yml:ro
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
     depends_on:
       - loki
 
@@ -503,8 +677,14 @@ services:
       - loki
 
 volumes:
+  remote_browser_ssh:
+    external: true
+    name: stackpilot_remote_browser_ssh
+  agent_run_state:
+  agent_workspaces:
   postgres_data:
   redis_data:
   prometheus_data:
   loki_data:
   grafana_data:
+  alloy_data:

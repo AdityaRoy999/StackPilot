@@ -53,11 +53,27 @@ public:
     static std::string makeRunCommand(const std::string& containerName,
                                       const std::string& imageName,
                                       int containerPort,
-                                      const std::vector<std::pair<std::string, std::string>>& envVars);
+                                      const std::vector<std::pair<std::string, std::string>>& envVars,
+                                      const std::string& protocol = "http",
+                                      const std::string& healthPath = "/");
 
     /// `docker pause`/`unpause`, followed by an inspect so the caller can
     /// report the resulting state without a second round trip.
     static std::string makePauseCommand(const std::string& containerName, bool paused);
+
+    /// Broker-owned observations of each declared Compose component. The
+    /// identity-only mode does not repeat potentially stateful worker checks.
+    static std::string makeComposeObservationCommand(const std::string& runtimeRoot,
+                                                     const std::string& project,
+                                                     const std::string& modelPath,
+                                                     const std::string& planPath,
+                                                     const std::string& outputPath,
+                                                     bool identityOnly = true,
+                                                     bool allowRestarts = false);
+
+    /// Re-observe a saved local Compose graph without editing sealed source.
+    /// Throws when metadata, contained paths, or current daemon evidence fail.
+    static Json::Value freshComponentContract(const Json::Value& snapshot, bool executeChecks = true);
 
     // ─── execution ──────────────────────────────────────────────
 

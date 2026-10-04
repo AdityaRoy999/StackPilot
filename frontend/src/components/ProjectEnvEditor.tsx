@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useRef } from "react";
-import { Plus, Trash2, Upload } from "lucide-react";
+import { Plus, Trash2, Upload } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";

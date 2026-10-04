@@ -1,0 +1,392 @@
+{
+  "profile": "720p60",
+  "scope": "Remote owned-page producer and SSH arrivals; no frontend viewer qualification.",
+  "seconds": 25.074,
+  "encoded_frames": 1506,
+  "arrival_fps": 60.06,
+  "median_gap_ms": 13.54,
+  "p95_gap_ms": 46.69,
+  "max_gap_ms": 250.16,
+  "page_animation_fps": 60.34,
+  "decoded_sample_frames": 180,
+  "decoded_sample_color_changes": 178,
+  "capture_samples": [
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.97,
+      "jpeg_screencast_fps": 7.99,
+      "last_jpeg_age_ms": 32,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 59.03,
+      "jpeg_screencast_fps": 25.03,
+      "last_jpeg_age_ms": 84,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 59.21,
+      "jpeg_screencast_fps": 27.59,
+      "last_jpeg_age_ms": 78,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 61.2,
+      "jpeg_screencast_fps": 27.58,
+      "last_jpeg_age_ms": 14,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 61.01,
+      "jpeg_screencast_fps": 29.97,
+      "last_jpeg_age_ms": 20,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.03,
+      "jpeg_screencast_fps": 29.71,
+      "last_jpeg_age_ms": 46,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.3,
+      "jpeg_screencast_fps": 27.14,
+      "last_jpeg_age_ms": 79,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 61.99,
+      "jpeg_screencast_fps": 22.86,
+      "last_jpeg_age_ms": 29,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 62.39,
+      "jpeg_screencast_fps": 20.55,
+      "last_jpeg_age_ms": 20,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.63,
+      "jpeg_screencast_fps": 23.75,
+      "last_jpeg_age_ms": 1,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 57.96,
+      "jpeg_screencast_fps": 20.98,
+      "last_jpeg_age_ms": 50,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 58.65,
+      "jpeg_screencast_fps": 20.91,
+      "last_jpeg_age_ms": 28,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 59.04,
+      "jpeg_screencast_fps": 24.54,
+      "last_jpeg_age_ms": 1,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 53.15,
+      "jpeg_screencast_fps": 19.63,
+      "last_jpeg_age_ms": 47,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.34,
+      "jpeg_screencast_fps": 20.37,
+      "last_jpeg_age_ms": 33,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 66.82,
+      "jpeg_screencast_fps": 27.09,
+      "last_jpeg_age_ms": 41,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.66,
+      "jpeg_screencast_fps": 26.73,
+      "last_jpeg_age_ms": 2,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.1,
+      "jpeg_screencast_fps": 28.5,
+      "last_jpeg_age_ms": 33,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 59.96,
+      "jpeg_screencast_fps": 25.91,
+      "last_jpeg_age_ms": 25,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.51,
+      "jpeg_screencast_fps": 23.85,
+      "last_jpeg_age_ms": 50,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.2,
+      "jpeg_screencast_fps": 24.58,
+      "last_jpeg_age_ms": 3,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 59.17,
+      "jpeg_screencast_fps": 24.11,
+      "last_jpeg_age_ms": 42,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 61.25,
+      "jpeg_screencast_fps": 22.7,
+      "last_jpeg_age_ms": 63,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 60.06,
+      "jpeg_screencast_fps": 24.31,
+      "last_jpeg_age_ms": 49,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    },
+    {
+      "h264_active": true,
+      "h264_capture_demand": true,
+      "jpeg_streaming": true,
+      "h264_connections": 1,
+      "h264_connection_errors": 0,
+      "h264_tcp_buffered_bytes": 0,
+      "h264_source_fps": 59.2,
+      "jpeg_screencast_fps": 23.12,
+      "last_jpeg_age_ms": 59,
+      "viewer_codecs": {
+        "h264": 1,
+        "jpeg": 0
+      }
+    }
+  ],
+  "producer_60fps_met": true,
+  "presented_60fps_qualified": false
+}

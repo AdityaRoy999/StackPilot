@@ -20,6 +20,7 @@ struct SshConnectionConfig;
 struct BuildEnvVar {
     std::string key;
     std::string value;
+    bool secret = false;
 };
 
 struct MobileMetadata {
@@ -59,12 +60,19 @@ struct BuildResult {
     std::string archetypeDetails;
     std::vector<std::string> detectedSubServices;
     MobileMetadata mobileMetadata;
+    Json::Value deploymentPlan;
+    Json::Value testEvidence;
+    std::string artifactDigest;
+    std::string sourceDigest;
+    std::string sourceArchive;
 };
 
 typedef std::function<void(const std::string&)> LogCallback;
 
 class BuildService {
 public:
+    using CandidateObserver=std::function<void(const std::string&,const std::string&,const Json::Value&)>;
+    void setCandidateObserver(CandidateObserver observer){candidateObserver_=std::move(observer);}
     static BuildService& getInstance();
     BuildService();
 
@@ -153,7 +161,12 @@ public:
                           std::string& reason,
                           LogCallback onLogLine = nullptr) const;
 
+    std::filesystem::path sourceWorkspace(const std::string& deploymentId) const {
+        return workspaceRoot_ / deploymentId / "source";
+    }
+
 private:
+    CandidateObserver candidateObserver_;
     std::filesystem::path workspaceRoot_;
     int maxLogBytes_;
     int cloneTimeoutSeconds_;

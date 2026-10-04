@@ -180,13 +180,14 @@ const CHART_FALLBACK: ChartTheme = {
   foreground: "#f4f4f5",
 };
 
-/** `oklch(...)` is a valid SVG paint value, so unlike the canvas path these
- *  need no normalisation — the raw variable goes straight through. */
+/** ECharts parses colors before its SVG renderer sees them, so resolve theme
+ *  tokens to standard CSS colors first. */
 function readChartTheme(): ChartTheme {
   const styles = getComputedStyle(document.documentElement);
+  const context = document.createElement("canvas").getContext("2d");
   const token = (name: string, fallback: string) => {
     const value = styles.getPropertyValue(name).trim();
-    return value === "" ? fallback : value;
+    return context ? normalizeColor(context, value, fallback) : value || fallback;
   };
   return {
     axis: token("--muted-foreground", CHART_FALLBACK.axis),
@@ -246,7 +247,7 @@ export interface TerminalTheme {
   brightWhite?: string;
 }
 
-export const POWERSHELL_TERMINAL_THEME: TerminalTheme = {
+export const STACKPILOT_TERMINAL_THEME: TerminalTheme = {
   background: "#0c0c0c",
   foreground: "#f4f4f5",
   cursor: "#f4f4f5",
@@ -270,14 +271,12 @@ export const POWERSHELL_TERMINAL_THEME: TerminalTheme = {
   brightWhite: "#f2f2f2",
 };
 
-const TERMINAL_FALLBACK: TerminalTheme = POWERSHELL_TERMINAL_THEME;
-
 export function readTerminalTheme(): TerminalTheme {
   if (typeof document !== "undefined") {
     const isDark = document.documentElement.classList.contains("dark");
     if (!isDark) {
       return {
-        ...POWERSHELL_TERMINAL_THEME,
+        ...STACKPILOT_TERMINAL_THEME,
         background: "#ffffff",
         foreground: "#18181b",
         cursor: "#18181b",
@@ -287,5 +286,5 @@ export function readTerminalTheme(): TerminalTheme {
       };
     }
   }
-  return POWERSHELL_TERMINAL_THEME;
+  return STACKPILOT_TERMINAL_THEME;
 }

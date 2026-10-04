@@ -1,0 +1,33 @@
+{
+  "switches": [
+    {
+      "requested": "local",
+      "confirmed": "local",
+      "seconds": 3.633,
+      "url_preserved": true,
+      "error": null
+    },
+    {
+      "requested": "remote",
+      "confirmed": "remote",
+      "seconds": 2.425,
+      "url_preserved": true,
+      "error": null
+    },
+    {
+      "requested": "host",
+      "confirmed": "host",
+      "seconds": 3.157,
+      "url_preserved": true,
+      "error": null
+    },
+    {
+      "requested": "local",
+      "confirmed": "local",
+      "seconds": 7.911,
+      "url_preserved": true,
+      "error": null
+    }
+  ],
+  "owned_contexts_cleaned": true
+}

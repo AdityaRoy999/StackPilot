@@ -1,0 +1,219 @@
+{
+  "scope": "real Docker build, repository tests and interactive CLI execution; no autonomous-model or universal-compatibility claim",
+  "passed": false,
+  "cases": [
+    {
+      "language": "python",
+      "passed": true,
+      "toolchain": {
+        "kind": "python",
+        "version": "3.11",
+        "image": "python:3.11-slim",
+        "runtime_version": null,
+        "assumed": false,
+        "evidence": [
+          {
+            "source": ".python-version",
+            "requirement": "3.11",
+            "mode": "pin"
+          }
+        ],
+        "issues": [],
+        "status": "selected",
+        "execution_verified": false
+      },
+      "image_id": "sha256:058acd438f2cb9a4d7c5e7b2dd28e5cde490d55ef9043edb61045decbec0ed61",
+      "tests": {
+        "status": "passed",
+        "results": [
+          {
+            "command": [
+              "python",
+              "-c",
+              "from app import add; assert add(7,-2)==5; assert add(-3,-4)==-7"
+            ],
+            "exit_code": 0,
+            "passed": true
+          }
+        ],
+        "scope": "repository_tests"
+      },
+      "console": {
+        "output": "Numbers: RESULT=5\r\n",
+        "offset": 19,
+        "truncated": false,
+        "exit_code": 0,
+        "timed_out": false
+      },
+      "health": {
+        "workload": "cli",
+        "ready": true
+      },
+      "duration_seconds": 29.29
+    },
+    {
+      "language": "node",
+      "passed": true,
+      "toolchain": {
+        "kind": "node",
+        "version": "20",
+        "image": "node:20-bookworm-slim",
+        "runtime_version": null,
+        "assumed": false,
+        "evidence": [
+          {
+            "source": ".nvmrc",
+            "requirement": "20",
+            "mode": "pin"
+          },
+          {
+            "source": "package.json#engines.node",
+            "requirement": ">=20 <21",
+            "mode": "range"
+          }
+        ],
+        "issues": [],
+        "status": "selected",
+        "execution_verified": false
+      },
+      "image_id": "sha256:c769c37d912556402613329b9888ca5641fe89526f23217d263e0b773433b4bf",
+      "tests": {
+        "status": "passed",
+        "results": [
+          {
+            "command": [
+              "node",
+              "test.cjs"
+            ],
+            "exit_code": 0,
+            "passed": true
+          }
+        ],
+        "scope": "repository_tests"
+      },
+      "console": {
+        "output": "Numbers:\r\nRESULT=5\r\n",
+        "offset": 20,
+        "truncated": false,
+        "exit_code": 0,
+        "timed_out": false
+      },
+      "health": {
+        "workload": "cli",
+        "ready": true
+      },
+      "duration_seconds": 260.09
+    },
+    {
+      "language": "go",
+      "passed": true,
+      "toolchain": {
+        "kind": "go",
+        "version": "1.24",
+        "image": "golang:1.24-bookworm",
+        "runtime_version": null,
+        "assumed": false,
+        "evidence": [
+          {
+            "source": "go.mod#go",
+            "requirement": "1.24",
+            "mode": "minimum"
+          }
+        ],
+        "issues": [],
+        "status": "selected",
+        "execution_verified": false
+      },
+      "image_id": "sha256:d58b4531e6fc3d0f54ee4536313d7e768b4d585ba558bdbdaca2a14b82a3e285",
+      "tests": {
+        "status": "passed",
+        "results": [
+          {
+            "command": [
+              "go",
+              "test",
+              "./..."
+            ],
+            "exit_code": 0,
+            "passed": true
+          }
+        ],
+        "scope": "repository_tests"
+      },
+      "console": {
+        "output": "Numbers:\r\nRESULT=5\r\n",
+        "offset": 20,
+        "truncated": false,
+        "exit_code": 0,
+        "timed_out": false
+      },
+      "health": {
+        "workload": "cli",
+        "ready": true
+      },
+      "duration_seconds": 386.55
+    },
+    {
+      "language": "ruby",
+      "passed": true,
+      "toolchain": {
+        "kind": "ruby",
+        "version": "3.3",
+        "image": "ruby:3.3-slim",
+        "runtime_version": null,
+        "assumed": false,
+        "evidence": [
+          {
+            "source": ".ruby-version",
+            "requirement": "3.3",
+            "mode": "pin"
+          },
+          {
+            "source": "Gemfile#ruby",
+            "requirement": "~> 3.3",
+            "mode": "range"
+          }
+        ],
+        "issues": [],
+        "status": "selected",
+        "execution_verified": false
+      },
+      "image_id": "sha256:d310ac4910503368b77f1de8891b5933b6f192e822ad5e1ec89fd33ea2f6c9e8",
+      "tests": {
+        "status": "passed",
+        "results": [
+          {
+            "command": [
+              "ruby",
+              "-r",
+              "./app.rb",
+              "-e",
+              "raise \"broken\" unless add(7,-2)==5 && add(-3,-4)==-7"
+            ],
+            "exit_code": 0,
+            "passed": true
+          }
+        ],
+        "scope": "repository_tests"
+      },
+      "console": {
+        "output": "Numbers:\r\nRESULT=5\r\n",
+        "offset": 20,
+        "truncated": false,
+        "exit_code": 0,
+        "timed_out": false
+      },
+      "health": {
+        "workload": "cli",
+        "ready": true
+      },
+      "duration_seconds": 187.98
+    },
+    {
+      "language": "java",
+      "passed": false,
+      "error": "Console/jobs need an explicit entrypoint argument array or an unambiguous interactive Python program",
+      "duration_seconds": 0.6
+    }
+  ]
+}

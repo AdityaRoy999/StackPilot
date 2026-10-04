@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/platform-icons";
 
 const ThemeBuilderPage = dynamic(() => import("@/app/theme-builder/page"), {
   ssr: false,

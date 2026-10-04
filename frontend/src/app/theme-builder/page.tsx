@@ -35,7 +35,7 @@ import {
   Flame,
   Activity,
   Terminal,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -272,7 +272,7 @@ export default function ThemeBuilderPage() {
   }, [draftTheme, previewMode, sandboxTokens]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    <div data-mobile-surface className="min-h-screen min-w-0 bg-background text-foreground flex flex-col">
       {/* Header Bar */}
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur-md px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
@@ -355,15 +355,15 @@ export default function ThemeBuilderPage() {
       </header>
 
       {/* Main Split-Screen Workspace */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+      <div className="min-w-0 flex-1 grid grid-cols-1 lg:grid-cols-12">
         {/* Left Column: Editor (JSON & Visual) */}
-        <div className="lg:col-span-6 border-b lg:border-b-0 lg:border-r border-border/70 flex flex-col bg-card/40">
-          <div className="border-b border-border/70 px-4 py-2.5 flex items-center justify-between bg-muted/20">
-            <div className="flex items-center gap-2">
+        <div className="min-w-0 lg:col-span-6 border-b lg:border-b-0 lg:border-r border-border/70 flex flex-col bg-card/40">
+          <div className="min-w-0 border-b border-border/70 px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 bg-muted/20 sm:px-4">
+            <div className="min-w-0 max-w-full flex items-center gap-2">
               <Tabs
                 value={activeTab}
                 onValueChange={(v) => setActiveTab(v as any)}
-                className="w-auto"
+                className="min-w-0 w-auto max-w-full"
               >
                 <TabsList className="h-8 p-0.5 bg-muted/60">
                   <TabsTrigger value="json" className="text-xs px-3 h-7 gap-1.5">
@@ -383,7 +383,7 @@ export default function ThemeBuilderPage() {
             </div>
 
             {/* Quick Editor Actions */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {activeTab === "json" && (
                 <>
                   <Button
@@ -436,7 +436,7 @@ export default function ThemeBuilderPage() {
           {/* TAB 1: JSON Code Editor */}
           {activeTab === "json" && (
             <div className="flex-1 flex flex-col p-4">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <div className="text-xs text-muted-foreground flex items-center gap-2">
                   <span>Configuration File:</span>
                   <span className="font-mono font-medium text-foreground">{draftTheme.id}.json</span>
@@ -451,7 +451,7 @@ export default function ThemeBuilderPage() {
                 onChange={(e) => handleJsonChange(e.target.value)}
                 spellCheck={false}
                 className={cn(
-                  "flex-1 w-full font-mono text-xs p-4 rounded-xl border bg-background/90 text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 leading-relaxed",
+                  "min-h-72 min-w-0 flex-1 w-full font-mono text-xs p-3 sm:p-4 rounded-xl border bg-background/90 text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 leading-relaxed",
                   jsonError ? "border-destructive/60" : "border-border/80"
                 )}
                 placeholder="Paste or write theme JSON configuration here..."

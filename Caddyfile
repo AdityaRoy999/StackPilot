@@ -16,6 +16,10 @@
 		reverse_proxy backend:8090
 	}
 
+	handle /ws/browser/* {
+		reverse_proxy ai-service:8010
+	}
+
 	handle /ws/* {
 		reverse_proxy backend:8090
 	}

@@ -13,6 +13,8 @@ struct DeploymentCleanupOptions {
     bool deleteDatabaseRow = false;
     bool deleteImage = false;
     bool deleteRemoteWorkspace = false;
+    bool preserveWorkspace = false;
+    bool deleteRecordedRuntimes = false;
 };
 
 struct DeploymentCleanupResult {
@@ -36,4 +38,3 @@ public:
 };
 
 } // namespace stackpilot
-

@@ -1,29 +1,24 @@
 "use client";
+import { isRemotePlatform, platformSocketBase, remoteRuntimeHref } from "@/lib/remote-platform";
+import { useRemotePlatform } from "@/lib/use-remote-platform";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { AxiosError } from "axios";
 import { Card, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, Bot, Cpu, HardDrive, Loader2, Terminal, RefreshCw, CheckCircle, XCircle, Server, Maximize2, Minimize2, Pause, Play, Trash2, AlertTriangle, RotateCcw, Globe, Thermometer, Gauge, Search, SlidersHorizontal, ChevronLeft, ChevronRight, X, ExternalLink, Copy, Wand2, ArrowDown, Smartphone, Zap, Sparkles } from "lucide-react";
+import { Activity, Bot, Cpu, HardDrive, Loader2, Terminal, RefreshCw, CheckCircle, XCircle, Server, Maximize2, Minimize2, Pause, Play, Trash2, AlertTriangle, RotateCcw, Globe, Thermometer, Gauge, Search, SlidersHorizontal, ChevronLeft, ChevronRight, X, ExternalLink, Copy, Wand2, ArrowDown, Smartphone, Zap, Sparkles } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode, type SetStateAction } from "react";
 import { MobileSimulatorDialog } from "@/components/deployments/MobileSimulatorDialog";
 
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { ModernChart } from "@/components/ui/modern-chart";
 import { useRouter } from "next/navigation";
 import { useWorkspace } from "@/context/WorkspaceContext";
 
 import { useChartTheme } from "@/lib/canvas-theme";
+import { chartDataRange, chartUpperBound, formatRuntimeBytes, memoryChartUnit, metricReading, sumMetricReadings } from "@/lib/runtime-metrics";
 import {
   Dialog,
   DialogContent,
@@ -85,7 +80,7 @@ interface Deployment {
     archetype?: string;
     archetype_details?: string;
     detected_subservices?: string[];
-    [key: string]: any;
+    [key: string]: unknown;
   };
   created_at: string;
 }
@@ -164,11 +159,12 @@ interface RuntimeMetrics {
 interface RuntimeMetricPoint {
   sample: number;
   time: string;
-  cpu: number;
-  memory: number;
-  memoryBytes: number;
-  networkRxBytes: number;
-  networkTxBytes: number;
+  cpu: number | null;
+  memory: number | null;
+  memoryBytes: number | null;
+  networkRxBytes: number | null;
+  networkTxBytes: number | null;
+  identity: string;
 }
 
 type RuntimeExposureMode = "ingress" | "nodeport";
@@ -255,12 +251,14 @@ interface DeploymentFilters {
 }
 
 function getWebSocketBaseUrl() {
+  if (isRemotePlatform()) return platformSocketBase();
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.hostname;
   return process.env.NEXT_PUBLIC_WS_BASE_URL || `${protocol}//${host}:8090`;
 }
 
 function getAuthToken(): string {
+  if (isRemotePlatform()) return ""; // The gateway authenticates the HttpOnly device cookie.
   if (typeof window === "undefined") return "";
   const localToken = localStorage.getItem("token");
   if (localToken) return localToken;
@@ -423,38 +421,18 @@ function portAdjustmentMessages(deployment: Deployment) {
 }
 
 function formatMetricNumber(value: number | null | undefined, suffix = "") {
-  if (value === null || value === undefined || Number.isNaN(value)) {
+  if (metricReading(value) === null) {
     return "Unavailable";
   }
-  return `${value.toFixed(value >= 100 ? 0 : 1)}${suffix}`;
+  return `${value!.toFixed(value! >= 100 ? 0 : value! > 0 && value! < 0.1 ? 2 : 1)}${suffix}`;
 }
 
 function formatBytes(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(value)) {
-    return "Unavailable";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = Math.max(0, value);
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-  return `${size.toFixed(size >= 100 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  return formatRuntimeBytes(value);
 }
 
 function formatGigabytes(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(value)) {
-    return "Unavailable";
-  }
-
-  const gb = Math.max(0, value) / 1024 / 1024 / 1024;
-  return `${gb.toFixed(gb >= 10 ? 1 : 2)} GB`;
-}
-
-function metricValue(value: number | null | undefined) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return formatRuntimeBytes(value);
 }
 
 function truncateMiddle(value: string | undefined, maxLength = 42) {
@@ -503,6 +481,25 @@ function aiRootCause(output: Record<string, unknown> | undefined) {
     }
   }
   return "";
+}
+
+interface RecoverySession {
+  id: string;
+  deployment_id: string;
+  session_type: string;
+  status: string;
+}
+
+function requestErrorMessage(error: unknown, fallback: string) {
+  const candidate = error as { message?: string; response?: { data?: { error?: string } } };
+  return candidate.response?.data?.error || candidate.message || fallback;
+}
+
+function mergeLogStreams(historical: string, live: string) {
+  if (!live) return historical;
+  if (!historical || live.startsWith(historical)) return live;
+  if (historical.endsWith(live)) return historical;
+  return `${historical}${historical.endsWith("\n") ? "" : "\n"}${live}`;
 }
 
 function detectBrowserGpuName() {
@@ -563,6 +560,7 @@ function hasRuntimeFilterMatch(deployment: Deployment, selectedRuntimes: string[
 }
 
 export default function DeploymentsPage() {
+  const remotePlatform = useRemotePlatform();
   const router = useRouter();
   const { activeWorkspaceId } = useWorkspace();
   const [selectedDeployment, setSelectedDeployment] = useState<string | null>(null);
@@ -599,6 +597,22 @@ export default function DeploymentsPage() {
   });
 
   const deployments: Deployment[] = useMemo(() => data?.deployments || [], [data?.deployments]);
+  const { data: recoverySessions = [] } = useQuery<RecoverySession[]>({
+    queryKey: ["deployment-recovery-sessions"],
+    queryFn: async () => {
+      const response = await api.get<{ sessions?: RecoverySession[] }>("/ai/sessions");
+      return (response.data.sessions || []).filter((session) => session.session_type === "sre_incident");
+    },
+    enabled: deployments.some((deployment) => deployment.status === "failed" || deployment.trigger_source === "ai_repair"),
+    refetchInterval: 4000,
+  });
+  const recoveryByDeployment = useMemo(() => {
+    const byDeployment = new Map<string, RecoverySession>();
+    for (const session of recoverySessions) {
+      if (!byDeployment.has(session.deployment_id)) byDeployment.set(session.deployment_id, session);
+    }
+    return byDeployment;
+  }, [recoverySessions]);
 
   useEffect(() => {
     if (deployments.length > 0) {
@@ -719,7 +733,7 @@ export default function DeploymentsPage() {
       const res = await api.post(`/api/v1/deployments/${deploymentId}/rollback`);
       return res.data;
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: { message?: string } | undefined) => {
       toast.success(data?.message || "Successfully rolled back to healthy checkpoint!");
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
     },
@@ -739,8 +753,8 @@ export default function DeploymentsPage() {
     onSuccess: (_data, variables) => {
       const deploymentId = variables.deploymentId;
       toast.success("Deployment deleted");
-      queryClient.setQueriesData(
-        { queryKey: ["deployments"] },
+      queryClient.setQueryData(
+        ["deployments", activeWorkspaceId],
         (current: { deployments?: Deployment[]; count?: number } | undefined) => {
           const filtered = (current?.deployments || []).filter((deployment) => deployment.id !== deploymentId);
           return {
@@ -811,8 +825,8 @@ export default function DeploymentsPage() {
                 toast.info(adjustment.message);
               }
             }
-            queryClient.setQueriesData(
-              { queryKey: ["deployments"] },
+            queryClient.setQueryData(
+              ["deployments", activeWorkspaceId],
               (current: { deployments?: Deployment[]; count?: number } | undefined) => {
                 const nextDeployments = upsertDeployment(current?.deployments || [], deployment);
                 return {
@@ -825,8 +839,8 @@ export default function DeploymentsPage() {
           }
 
           if (message.type === "deployment_deleted" && message.deployment_id) {
-            queryClient.setQueriesData(
-              { queryKey: ["deployments"] },
+            queryClient.setQueryData(
+              ["deployments", activeWorkspaceId],
               (current: { deployments?: Deployment[]; count?: number } | undefined) => {
                 const filtered = (current?.deployments || []).filter(
                   (deployment) => deployment.id !== message.deployment_id
@@ -1051,7 +1065,7 @@ export default function DeploymentsPage() {
                       <div className="flex items-center gap-2 flex-wrap">
                         {liveUrl ? (
                           <a
-                            href={liveUrl}
+                            href={remoteRuntimeHref(liveUrl, dep.id, remotePlatform)}
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex min-w-0 max-w-[24rem] items-center gap-1 font-medium text-foreground hover:text-primary hover:underline"
@@ -1064,12 +1078,6 @@ export default function DeploymentsPage() {
                           <div className="max-w-[24rem] truncate font-medium text-foreground" title={displayName}>
                             {displayName}
                           </div>
-                        )}
-                        {liveUrl?.includes("trycloudflare.com") && (
-                          <Badge variant="outline" className="border-amber-500/40 bg-amber-500/10 text-amber-300 text-[10px] px-1.5 py-0 flex items-center gap-1">
-                            <AppIcon name="zap" fallback={Zap} className="h-2.5 w-2.5 text-amber-400" />
-                            Cloudflare
-                          </Badge>
                         )}
                         {liveUrl?.includes(".localhost") && (
                           <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-300 text-[10px] px-1.5 py-0 flex items-center gap-1">
@@ -1102,7 +1110,14 @@ export default function DeploymentsPage() {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="px-6 py-4">{getStatusBadge(dep.status)}</TableCell>
+                    <TableCell className="px-6 py-4">
+                      {recoveryByDeployment.get(dep.id)?.status === "healing" ? (
+                        <Badge variant="outline" className="gap-1.5 border-amber-500/40 bg-amber-500/10 text-amber-400" title="Build failed; AI recovery is working on it">
+                          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                          Repairing
+                        </Badge>
+                      ) : getStatusBadge(dep.status)}
+                    </TableCell>
                     <TableCell className="px-6 py-4">
                       <div className="font-mono text-sm text-foreground">{dep.branch || "-"}</div>
                     </TableCell>
@@ -1138,6 +1153,16 @@ export default function DeploymentsPage() {
                             <AppIcon name="loader2" fallback={Loader2} className="h-3 w-3 animate-spin" />
                             Auto-Healing
                           </span>
+                        )}
+                        {recoveryByDeployment.get(dep.id) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 text-xs"
+                            onClick={() => router.push(`/dashboard/ai?session_id=${recoveryByDeployment.get(dep.id)?.id}`)}
+                          >
+                            View repair
+                          </Button>
                         )}
                         {isMobileDeployment(dep) && (
                           <Button
@@ -1362,7 +1387,7 @@ function DeploymentFilterDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-3xl md:max-w-4xl max-w-[95vw] p-6">
+      <DialogContent className="sm:max-w-3xl md:max-w-4xl max-w-[95vw] [--dialog-padding:1.5rem]">
         <DialogHeader className="pb-2">
           <DialogTitle className="flex items-center gap-2 text-lg">
             <AppIcon name="sliders-horizontal" fallback={SlidersHorizontal} className="h-5 w-5 text-primary" />
@@ -1506,13 +1531,31 @@ function DeploymentLogsDialog({
   onCancelBuild?: () => void;
   isCancellingBuild?: boolean;
 }) {
-  const [logs, setLogs] = useState<string>("");
+  const [logsState, setLogsState] = useState({ deploymentId, value: "" });
+  const logs = logsState.deploymentId === deploymentId ? logsState.value : "";
+  const setLogs = useCallback((update: SetStateAction<string>) => {
+    setLogsState((current) => {
+      const currentValue = current.deploymentId === deploymentId ? current.value : "";
+      return {
+        deploymentId,
+        value: typeof update === "function" ? update(currentValue) : update,
+      };
+    });
+  }, [deploymentId]);
   const hasReceivedWsLog = useRef(false);
-  const [liveStatus, setLiveStatus] = useState<string | null>(null);
+  const [liveStatusState, setLiveStatusState] = useState<{ deploymentId: string; value: string | null }>({ deploymentId, value: null });
+  const liveStatus = liveStatusState.deploymentId === deploymentId ? liveStatusState.value : null;
+  const setLiveStatus = useCallback((value: string | null) => {
+    setLiveStatusState({ deploymentId, value });
+  }, [deploymentId]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [isWsConnecting, setIsWsConnecting] = useState(false);
-  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+  const [scrollState, setScrollState] = useState({ deploymentId, value: false });
+  const isUserScrolledUp = scrollState.deploymentId === deploymentId ? scrollState.value : false;
+  const setIsUserScrolledUp = useCallback((value: boolean) => {
+    setScrollState({ deploymentId, value });
+  }, [deploymentId]);
   const isUserScrolledUpRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -1533,30 +1576,8 @@ function DeploymentLogsDialog({
     },
   });
 
-  useEffect(() => {
-    setLogs("");
-    hasReceivedWsLog.current = false;
-    setIsUserScrolledUp(false);
-    isUserScrolledUpRef.current = false;
-  }, [deploymentId]);
-
-  useEffect(() => {
-    const historicalLogs = initialData?.deployment?.logs;
-    if (historicalLogs) {
-      setLogs((currentLogs) => {
-        if (!currentLogs || historicalLogs.length > currentLogs.length) {
-          return historicalLogs;
-        }
-        return currentLogs;
-      });
-    }
-  }, [initialData]);
-
   const initialLogs = initialData?.deployment?.logs || "";
-  const initialDeployment = initialData?.deployment as Partial<Deployment> | undefined;
-  const logCommitSha = initialDeployment ? realCommitSha(initialDeployment) : "";
-  const logCommitUrl = initialDeployment ? githubCommitUrl(initialDeployment) : "";
-  const displayLogs = logs || initialLogs;
+  const displayLogs = mergeLogStreams(initialLogs, logs);
   const displayStatus = liveStatus ?? initialData?.deployment?.status ?? "loading";
   const hasCapturedFailureReason =
     displayLogs.includes("failed with exit code") ||
@@ -1667,6 +1688,8 @@ function DeploymentLogsDialog({
     if (!deploymentId) return;
 
     let isActive = true;
+    hasReceivedWsLog.current = false;
+    isUserScrolledUpRef.current = false;
 
     const connectWebSocket = () => {
       if (!isActive) return;
@@ -1745,7 +1768,7 @@ function DeploymentLogsDialog({
         socketRef.current = null;
       }
     };
-  }, [deploymentId]);
+  }, [deploymentId, setLiveStatus, setLogs]);
 
   const handleScroll = () => {
     if (!scrollRef.current) return;
@@ -1776,37 +1799,38 @@ function DeploymentLogsDialog({
       <DialogContent 
         showCloseButton={false}
         className={cn(
-          "flex flex-col p-0 overflow-hidden border border-zinc-800 bg-[#0c0c0c] text-[#cccccc] shadow-2xl transition-all duration-300 ease-in-out rounded-md",
+          "flex flex-col overflow-hidden rounded-lg border border-border bg-card p-0 text-card-foreground shadow-2xl transition-all duration-300 ease-in-out",
           isExpanded 
             ? "!max-w-[96vw] sm:!max-w-[96vw] !w-[96vw] h-[92vh]" 
             : "!max-w-[95vw] sm:!max-w-4xl !w-[95vw] sm:!w-auto max-h-[85vh] h-auto min-h-[260px]"
         )}
       >
-        <div className="h-8 border-b border-zinc-800 bg-[#18181b] px-2 flex items-center justify-between select-none shrink-0">
-          <div className="flex min-w-0 items-center gap-2 text-xs text-white/90">
-            <svg className="h-3.5 w-3.5 shrink-0 text-sky-400" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2h-13zm0 1h13a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5z"/>
-              <path d="m3.854 5.146 2.5 2.5a.5.5 0 0 1 0 .708l-2.5 2.5a.5.5 0 0 1-.708-.708L5.293 8 3.146 5.854a.5.5 0 1 1 .708-.708zm3 5.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 1-.5-.5z"/>
-            </svg>
-            <span className="font-normal font-sans text-xs text-white/90 truncate">
-              Windows PowerShell - Deployments: {deploymentId.slice(0, 8)} ({displayStatus})
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-muted/30 px-3 select-none">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-background text-primary shadow-sm">
+              <AppIcon name="terminal" fallback={Terminal} className="size-4" />
             </span>
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-xs font-semibold">StackPilot Build Console</div>
+              <div className="truncate text-[11px] text-muted-foreground">
+                Deployment {deploymentId.slice(0, 8)} · <span className="capitalize">{displayStatus}</span>
+              </div>
+            </div>
           </div>
 
-          {/* Windows-style Header caption controls: Maximize and Close */}
-          <div className="flex shrink-0 items-center h-full">
+          <div className="flex shrink-0 items-center gap-1">
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={() => setIsExpanded(!isExpanded)}
-              className="h-full w-10 rounded-none text-white/70 hover:bg-white/10 hover:text-white"
+              className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
               title={isExpanded ? "Restore" : "Maximize"}
             >
               {isExpanded ? (
-                <span className="text-xs font-mono select-none">❐</span>
+                <AppIcon name="minimize-2" fallback={Minimize2} className="size-3.5" />
               ) : (
-                <span className="text-xs font-mono select-none">□</span>
+                <AppIcon name="maximize-2" fallback={Maximize2} className="size-3.5" />
               )}
             </Button>
             <Button
@@ -1814,30 +1838,29 @@ function DeploymentLogsDialog({
               variant="ghost"
               size="icon"
               onClick={onClose}
-              className="h-full w-10 rounded-none text-white/70 hover:bg-[#e81123] hover:text-white transition-colors"
+              className="h-8 w-8 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               title="Close"
+              aria-label="Close build console"
             >
-              <span className="text-xs font-mono select-none">✕</span>
+              <AppIcon name="x" fallback={X} className="size-3.5" />
             </Button>
           </div>
         </div>
         
-        <div className="relative flex-1 min-h-0 flex flex-col bg-[#0c0c0c]">
+        <div className="relative flex min-h-0 flex-1 flex-col bg-background">
           <div 
             ref={scrollRef}
             onScroll={handleScroll}
             className={cn(
-              "overflow-y-auto px-4 py-2.5 font-mono text-[13px] font-normal leading-relaxed bg-[#0c0c0c] text-[#cccccc] scrollbar-thin select-text",
+              "overflow-y-auto bg-background px-4 py-3 font-mono text-[13px] font-normal leading-relaxed text-foreground scrollbar-thin select-text",
               isExpanded ? "flex-1" : "max-h-[55vh] min-h-[140px]"
             )}
           >
-            <div className="mb-2 text-[#cccccc] text-xs font-normal select-none leading-relaxed">
-              Windows PowerShell<br />
-              Copyright (C) Microsoft Corporation. All rights reserved.<br />
-              <br />
-              PS C:\stackpilot\deployments\{deploymentId.slice(0, 8)}&gt; (streaming build logs...)
+            <div className="mb-2 text-xs font-normal leading-relaxed text-muted-foreground select-none">
+              StackPilot deployment log stream<br />
+              build:{deploymentId.slice(0, 8)}$ streaming logs...
             </div>
-            <pre className="whitespace-pre-wrap break-all text-[#cccccc] font-mono font-normal m-0 p-0 leading-relaxed">
+            <pre className="m-0 whitespace-pre-wrap break-all p-0 font-mono font-normal leading-relaxed text-foreground">
               {displayLogs ? (
                 displayLogs
               ) : (
@@ -1909,7 +1932,7 @@ function DeploymentLogsDialog({
           </div>
         )}
 
-        <div className="px-4 py-2 border-t border-sky-900/50 bg-[#0c1d3b] flex items-center justify-between text-xs text-sky-200/90 shrink-0">
+        <div className="flex shrink-0 items-center justify-between border-t border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
             <div
               className={cn(
@@ -2009,6 +2032,7 @@ function RuntimeDialog({
   onViewLogs: (deploymentId: string) => void;
   onChanged: () => void;
 }) {
+  const remotePlatform = useRemotePlatform();
   const displayName = deploymentDisplayName(deployment);
   const [namespaceInput, setNamespaceInput] = useState(deployment.k8s_namespace || "stackpilot-apps");
   const [replicasDraft, setReplicasDraft] = useState<string | null>(null);
@@ -2079,7 +2103,7 @@ function RuntimeDialog({
     },
     onSuccess: () => {
       setReplicasDraft(null);
-      toast.success(wantsLocalDocker ? "Local Docker runtime started" : "Kubernetes deployment started");
+      toast.success("Release queued for build, tests and runtime verification");
       runtimeQuery.refetch();
       onChanged();
     },
@@ -2281,13 +2305,15 @@ function RuntimeDialog({
       runtimeQuery.refetch();
       onChanged();
     },
-    onError: (error: any) => {
-      toast.error(error?.message || "Failed to update exposure mode");
+    onError: (error: unknown) => {
+      toast.error(requestErrorMessage(error, "Failed to update exposure mode"));
     },
   });
 
   const runtimeQueryRef = useRef(runtimeQuery);
-  runtimeQueryRef.current = runtimeQuery;
+  useEffect(() => {
+    runtimeQueryRef.current = runtimeQuery;
+  }, [runtimeQuery]);
 
   useEffect(() => {
     const wsBaseUrl = getWebSocketBaseUrl();
@@ -2353,23 +2379,6 @@ function RuntimeDialog({
                     Switch exposure anytime without restarting or rebuilding the container.
                   </p>
                 </div>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "text-[10px] uppercase font-semibold",
-                    localExposureMode === "cloudflare_tunnel"
-                      ? "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                      : localExposureMode === "portless"
-                      ? "border-blue-500/40 bg-blue-500/10 text-blue-300"
-                      : "border-border text-muted-foreground"
-                  )}
-                >
-                  {localExposureMode === "cloudflare_tunnel"
-                    ? "Cloudflare Tunnel"
-                    : localExposureMode === "portless"
-                    ? "Portless Local"
-                    : "Direct Port"}
-                </Badge>
               </div>
 
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-1">
@@ -2694,7 +2703,7 @@ function RuntimeDialog({
                     <div className="min-w-0 break-all">
                       {liveRuntimeUrl ? (
                         <a
-                          href={liveRuntimeUrl}
+                          href={remoteRuntimeHref(liveRuntimeUrl, deployment.id, remotePlatform)}
                           target="_blank"
                           rel="noreferrer"
                           className="text-primary hover:underline"
@@ -2899,37 +2908,43 @@ function MetricsDialog({
   const chart = useChartTheme();
 
   const [history, setHistory] = useState<RuntimeMetricPoint[]>([]);
+  const metricsClient = useQueryClient();
   const displayName = deploymentDisplayName(deployment);
 
   const metricsQuery = useQuery({
     queryKey: ["deployment-metrics", deployment.id],
-    queryFn: async () => {
-      const res = await api.get(`/deployments/${deployment.id}/metrics`);
-      const nextMetrics = res.data as RuntimeMetrics;
-      if (nextMetrics.timestamp) {
-        const point: RuntimeMetricPoint = {
-          sample: Date.now(),
-          time: new Date().toLocaleTimeString([], { hour12: false, minute: "2-digit", second: "2-digit" }),
-          cpu: metricValue(nextMetrics.summary?.cpu_percent),
-          memory: metricValue(nextMetrics.summary?.memory_percent),
-          memoryBytes: metricValue(nextMetrics.summary?.memory_bytes),
-          networkRxBytes: metricValue(nextMetrics.summary?.network_rx_bytes),
-          networkTxBytes: metricValue(nextMetrics.summary?.network_tx_bytes),
-        };
-
-        setHistory((current) => {
-          if (current[current.length - 1]?.sample === point.sample) {
-            return current;
-          }
-          const next = [...current, point];
-          return next.slice(Math.max(0, next.length - 30));
-        });
-      }
-      return nextMetrics;
+    queryFn: async ({ signal }) => {
+      const res = await api.get(`/deployments/${deployment.id}/metrics`, { signal });
+      return res.data as RuntimeMetrics;
     },
     enabled: !!deployment.id,
     refetchInterval: 3000,
+    retry: 1,
   });
+
+  // Record only completed responses; canceled requests must not mutate history.
+  useEffect(() => metricsClient.getQueryCache().subscribe((event) => {
+    if (event.type !== "updated" || event.query.queryKey[0] !== "deployment-metrics" || event.query.queryKey[1] !== deployment.id ||
+        !["success", "error"].includes(event.action.type)) return;
+    const next = event.query.state.data as RuntimeMetrics | undefined;
+    const failed = event.action.type === "error";
+    const receivedAt = failed ? event.query.state.errorUpdatedAt : event.query.state.dataUpdatedAt;
+    if (!next?.timestamp || !receivedAt) return;
+    const summary = next.available && !failed ? next.summary : undefined;
+    const point: RuntimeMetricPoint = {
+      sample: receivedAt,
+      time: new Date(receivedAt).toLocaleTimeString([], { hour12: false, minute: "2-digit", second: "2-digit" }),
+      cpu: metricReading(summary?.cpu_percent), memory: metricReading(summary?.memory_percent),
+      memoryBytes: metricReading(summary?.memory_bytes),
+      networkRxBytes: metricReading(summary?.network_rx_bytes), networkTxBytes: metricReading(summary?.network_tx_bytes),
+      identity: `${next.provider}:${next.summary?.name || deployment.id}`,
+    };
+    setHistory((current) => {
+      if (current.at(-1)?.sample === point.sample) return current;
+      const retained = current.at(-1)?.identity === point.identity ? current : [];
+      return [...retained, point].slice(-30);
+    });
+  }), [metricsClient, deployment.id]);
 
   const metrics = metricsQuery.data;
   const summary = metrics?.summary;
@@ -2937,42 +2952,31 @@ function MetricsDialog({
   const series = metrics?.series || [];
   const memoryPercent = summary?.memory_percent;
   const cpuName = host?.cpu_name || "Unavailable";
-  const gpuName = host?.gpu_name || (typeof host?.gpu_usage_percent === "number" ? "Host GPU" : "No host GPU detected");
+  const gpuName = host?.gpu_name || (typeof host?.gpu_usage_percent === "number" ? "Host GPU" : "Host GPU telemetry unavailable");
+  const hasTemperature = metricReading(host?.cpu_temperature_celsius) !== null;
+  const hasGpuTelemetry = metricReading(host?.gpu_usage_percent) !== null;
   const memoryLimitBytes = summary?.memory_limit_bytes;
-  const networkTotalBytes = metricValue(summary?.network_rx_bytes) + metricValue(summary?.network_tx_bytes);
-  const diskTotalBytes = metricValue(summary?.block_read_bytes) + metricValue(summary?.block_write_bytes);
-  const readyUnits = summary?.ready_pods ?? series.length;
-  const totalUnits = summary?.pod_count ?? series.length;
-  const sensorHint =
-    !host?.cpu_temperature_celsius && !host?.gpu_usage_percent
-      ? "Docker Desktop is not exposing host sensors to the backend container."
-      : "";
-  const chartHistory = history.length >= 2
-      ? history
-      : [
-        {
-          sample: 0,
-          time: "previous",
-          cpu: metricValue(summary?.cpu_percent),
-          memory: metricValue(summary?.memory_percent),
-          memoryBytes: metricValue(summary?.memory_bytes),
-          networkRxBytes: metricValue(summary?.network_rx_bytes),
-          networkTxBytes: metricValue(summary?.network_tx_bytes),
-        },
-        {
-          sample: 1,
-          time: "now",
-          cpu: metricValue(summary?.cpu_percent),
-          memory: metricValue(summary?.memory_percent),
-          memoryBytes: metricValue(summary?.memory_bytes),
-          networkRxBytes: metricValue(summary?.network_rx_bytes),
-          networkTxBytes: metricValue(summary?.network_tx_bytes),
-        },
-      ];
-  const memoryChart = chartHistory.map((point) => ({
+  const networkTotalBytes = sumMetricReadings(summary?.network_rx_bytes, summary?.network_tx_bytes);
+  const diskTotalBytes = sumMetricReadings(summary?.block_read_bytes, summary?.block_write_bytes);
+  const readyUnits = metricReading(summary?.ready_pods);
+  const totalUnits = metricReading(summary?.pod_count);
+  const sensorHint = !hasTemperature || !hasGpuTelemetry
+    ? `Host ${[!hasTemperature && "temperature", !hasGpuTelemetry && "GPU usage"].filter(Boolean).join(" and ")} cannot be measured from this runtime. Docker Desktop does not forward Windows host sensors into its Linux VM; StackPilot needs a host-side collector to provide these readings.`
+    : "";
+  const chartHistory = history;
+  const memoryUnit = memoryChartUnit(history.map((point) => point.memoryBytes));
+  const memoryChart = history.map((point) => ({
     ...point,
-    memoryGb: point.memoryBytes / 1024 / 1024 / 1024,
+    memoryUsage: point.memoryBytes === null ? null : point.memoryBytes / memoryUnit.divisor,
   }));
+  const cpuMaximum = chartUpperBound(history.map((point) => point.cpu), 0.05);
+  const memoryRange = chartDataRange(memoryChart.map((point) => point.memoryUsage));
+  const hasCpuHistory = history.some((point) => point.cpu !== null);
+  const hasMemoryHistory = history.some((point) => point.memoryBytes !== null);
+  const measuredCpu = history.map((point) => point.cpu).filter((value): value is number => value !== null);
+  const measuredMemory = memoryChart.map((point) => point.memoryUsage).filter((value): value is number => value !== null);
+  const mostlyIdle = measuredCpu.length >= 2 && Math.max(...measuredCpu) < 0.1;
+  const stableMemory = measuredMemory.length >= 2 && Math.max(...measuredMemory) - Math.min(...measuredMemory) < 0.1;
 
   return (
     <Dialog open={!!deployment} onOpenChange={(open) => !open && onClose()}>
@@ -2985,7 +2989,8 @@ function MetricsDialog({
                 Runtime Metrics
               </DialogTitle>
               <DialogDescription className="mt-2">
-                Live usage for {displayName}. Updates every few seconds.
+                Container usage for {displayName}. Samples every 3 seconds.
+                {metricsQuery.dataUpdatedAt > 0 && ` Last received ${new Date(metricsQuery.dataUpdatedAt).toLocaleTimeString()}.`}
               </DialogDescription>
             </div>
             <Badge variant="outline" className="shrink-0 capitalize">
@@ -2995,7 +3000,7 @@ function MetricsDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className={cn("grid gap-4", hasTemperature && hasGpuTelemetry ? "md:grid-cols-4" : hasTemperature || hasGpuTelemetry ? "md:grid-cols-3" : "md:grid-cols-2")}>
             <MetricCard
               icon={<AppIcon name="cpu" fallback={Cpu} className="h-4 w-4"  />}
               label="CPU"
@@ -3014,13 +3019,13 @@ function MetricsDialog({
                     : "Current working set"
               }
             />
-            <MetricCard
+            {hasTemperature && <MetricCard
               icon={<AppIcon name="thermometer" fallback={Thermometer} className="h-4 w-4"  />}
               label="CPU Temp"
               value={formatMetricNumber(host?.cpu_temperature_celsius, " C")}
-              detail={host?.cpu_temperature_celsius ? truncateMiddle(cpuName, 34) : "Host sensor hidden"}
-            />
-            <MetricCard
+              detail={truncateMiddle(cpuName, 34)}
+            />}
+            {hasGpuTelemetry && <MetricCard
               icon={<AppIcon name="gauge" fallback={Gauge} className="h-4 w-4"  />}
               label="GPU"
               value={formatMetricNumber(host?.gpu_usage_percent, "%")}
@@ -3029,14 +3034,14 @@ function MetricsDialog({
                   ? `${host.gpu_memory_percent.toFixed(1)}% VRAM`
                   : truncateMiddle(gpuName, 34)
               }
-            />
+            />}
           </div>
 
           <div className="mt-4 grid gap-4 md:grid-cols-4">
             <MetricCard
               icon={<AppIcon name="server" fallback={Server} className="h-4 w-4"  />}
               label="Ready"
-              value={`${readyUnits || 0}/${totalUnits || 0}`}
+              value={readyUnits !== null && totalUnits !== null ? `${readyUnits}/${totalUnits}` : "Unavailable"}
               detail="Runtime units"
             />
             <MetricCard
@@ -3047,13 +3052,13 @@ function MetricsDialog({
             />
             <MetricCard
               icon={<AppIcon name="activity" fallback={Activity} className="h-4 w-4"  />}
-              label="Network"
+              label="Network total"
               value={formatBytes(networkTotalBytes)}
               detail={`Rx ${formatBytes(summary?.network_rx_bytes)} / Tx ${formatBytes(summary?.network_tx_bytes)}`}
             />
             <MetricCard
               icon={<AppIcon name="gauge" fallback={Gauge} className="h-4 w-4"  />}
-              label="Disk I/O"
+              label="Disk I/O total"
               value={formatGigabytes(diskTotalBytes)}
               detail={`Read ${formatGigabytes(summary?.block_read_bytes)} / Write ${formatGigabytes(summary?.block_write_bytes)}`}
             />
@@ -3061,7 +3066,7 @@ function MetricsDialog({
 
           {sensorHint && (
             <div className="mt-4 rounded-xl border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-              CPU and GPU names are best-effort. Temperature and GPU usage require host sensor access; {sensorHint}
+              {sensorHint}
             </div>
           )}
 
@@ -3075,6 +3080,11 @@ function MetricsDialog({
               ) : null}
             </div>
           )}
+          {metricsQuery.isError && (
+            <p role="alert" className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              Metrics connection failed. {metrics ? "Displayed readings are from the last successful response." : "No readings have been received."} Retrying automatically.
+            </p>
+          )}
 
           <div className="mt-5 grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border border-border bg-muted/20 p-4">
@@ -3086,70 +3096,40 @@ function MetricsDialog({
                 {metricsQuery.isFetching ? <AppIcon name="loader2" fallback={Loader2} className="h-4 w-4 animate-spin text-muted-foreground"  /> : null}
               </div>
               <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                  <AreaChart data={chartHistory} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
-                        {/* Was hsl(var(--primary)). Every theme defines --primary
-                            as oklch(...) or a hex literal, so hsl() wrapped a value
-                            it could not parse and the gradient never rendered. */}
-                        <stop offset="5%" stopColor={chart.foreground} stopOpacity={0.4} />
-                        <stop offset="95%" stopColor={chart.foreground} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
-                    <XAxis dataKey="sample" tickFormatter={() => ""} tickLine={false} axisLine={{ stroke: chart.axisLine }} />
-                    <YAxis tick={{ fill: chart.axis, fontSize: 11 }} width={36} axisLine={{ stroke: chart.axisLine }} domain={[0, "dataMax + 5"]} />
-                    <Tooltip
-                      contentStyle={{
-                        background: chart.tooltipBackground,
-                        border: `1px solid ${chart.tooltipBorder}`,
-                        borderRadius: 8,
-                        color: chart.tooltipText,
-                      }}
-                      labelFormatter={(_label, payload) => payload?.[0]?.payload?.time || ""}
-                      labelStyle={{ color: chart.tooltipText }}
-                      itemStyle={{ color: chart.tooltipText }}
-                    />
-                    <Area type="monotone" dataKey="cpu" stroke={chart.foreground} fill="url(#cpuGradient)" name="CPU %" dot={false} isAnimationActive={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
+                {!hasCpuHistory ? <p className="flex h-full items-center justify-center text-sm text-muted-foreground">Waiting for a measured CPU sample…</p> : (
+                <ModernChart option={{
+                  animation: false,
+                  grid: { left: 56, right: 14, top: 12, bottom: 34 },
+                  tooltip: { trigger: "axis", backgroundColor: chart.tooltipBackground, borderColor: chart.tooltipBorder, textStyle: { color: chart.tooltipText }, valueFormatter: (value) => `${Number(value).toFixed(2)}%` },
+                  xAxis: { type: "category", boundaryGap: false, data: chartHistory.map((point) => point.time), axisLabel: { color: chart.axis }, axisLine: { lineStyle: { color: chart.axisLine } }, axisTick: { show: false } },
+                  yAxis: { type: "value", min: 0, max: cpuMaximum, axisLabel: { color: chart.axis, formatter: (value: number) => `${value.toFixed(cpuMaximum < 1 ? 2 : 1)}%` }, splitLine: { lineStyle: { color: chart.grid, type: "dashed" } } },
+                  series: [{ type: "line", name: "CPU %", data: chartHistory.map((point) => point.cpu), connectNulls: false, showSymbol: history.length === 1, smooth: true,
+                    lineStyle: { width: 2, color: chart.foreground }, itemStyle: { color: chart.foreground }, areaStyle: { color: chart.foreground, opacity: 0.13 } }],
+                }} />
+                )}
               </div>
+              {mostlyIdle && <p className="mt-2 text-xs text-muted-foreground">The container is idle; Docker measured less than 0.1% CPU throughout this window.</p>}
             </div>
 
             <div className="rounded-xl border border-border bg-muted/20 p-4">
               <div className="mb-3">
                 <h3 className="font-semibold text-foreground">Memory Trend</h3>
-                <p className="text-xs text-muted-foreground">Memory usage in gigabytes</p>
+                <p className="text-xs text-muted-foreground">Working set in {memoryUnit.label}</p>
               </div>
               <div className="h-56">
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                  <AreaChart data={memoryChart} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="memoryGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#22c55e" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
-                    <XAxis dataKey="sample" tickFormatter={() => ""} tickLine={false} axisLine={{ stroke: chart.axisLine }} />
-                    <YAxis tick={{ fill: chart.axis, fontSize: 11 }} width={44} axisLine={{ stroke: chart.axisLine }} domain={["dataMin - 2", "dataMax + 2"]} />
-                    <Tooltip
-                      contentStyle={{
-                        background: chart.tooltipBackground,
-                        border: `1px solid ${chart.tooltipBorder}`,
-                        borderRadius: 8,
-                        color: chart.tooltipText,
-                      }}
-                      labelFormatter={(_label, payload) => payload?.[0]?.payload?.time || ""}
-                      formatter={(value) => [`${Number(value).toFixed(2)} GB`, "Memory"]}
-                      labelStyle={{ color: chart.tooltipText }}
-                      itemStyle={{ color: "#22c55e" }}
-                    />
-                    <Area type="monotone" dataKey="memoryGb" stroke="#22c55e" fill="url(#memoryGradient)" name="Memory GB" dot={false} isAnimationActive={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
+                {!hasMemoryHistory ? <p className="flex h-full items-center justify-center text-sm text-muted-foreground">Waiting for a measured memory sample…</p> : (
+                <ModernChart option={{
+                  animation: false,
+                  grid: { left: 56, right: 14, top: 12, bottom: 34 },
+                  tooltip: { trigger: "axis", backgroundColor: chart.tooltipBackground, borderColor: chart.tooltipBorder, textStyle: { color: chart.tooltipText }, valueFormatter: (value) => `${Number(value).toFixed(2)} ${memoryUnit.label}` },
+                  xAxis: { type: "category", boundaryGap: false, data: memoryChart.map((point) => point.time), axisLabel: { color: chart.axis }, axisLine: { lineStyle: { color: chart.axisLine } }, axisTick: { show: false } },
+                  yAxis: { type: "value", min: memoryRange.min, max: memoryRange.max, axisLabel: { color: chart.axis, formatter: (value: number) => value.toFixed(1) }, splitLine: { lineStyle: { color: chart.grid, type: "dashed" } } },
+                  series: [{ type: "line", name: `Memory ${memoryUnit.label}`, data: memoryChart.map((point) => point.memoryUsage), connectNulls: false, showSymbol: history.length === 1, smooth: true,
+                    lineStyle: { width: 2, color: "#22c55e" }, itemStyle: { color: "#22c55e" }, areaStyle: { color: "#22c55e", opacity: 0.18 } }],
+                }} />
+                )}
               </div>
+              {stableMemory && <p className="mt-2 text-xs text-muted-foreground">Memory is steady at about {measuredMemory.at(-1)?.toFixed(2)} {memoryUnit.label}; an idle app may keep the same working set.</p>}
             </div>
           </div>
 
@@ -3178,10 +3158,10 @@ function MetricsDialog({
                         <td className="max-w-[20rem] break-all py-2 pr-4 font-mono text-xs">{item.name}</td>
                         <td className="py-2 pr-4">{formatMetricNumber(item.cpu_percent, "%")}</td>
                         <td className="py-2 pr-4">{formatGigabytes(item.memory_bytes)} / {formatGigabytes(item.memory_limit_bytes)}</td>
-                        <td className="py-2 pr-4">{formatBytes(metricValue(item.network_rx_bytes) + metricValue(item.network_tx_bytes))}</td>
-                        <td className="py-2 pr-4">{formatGigabytes(metricValue(item.block_read_bytes) + metricValue(item.block_write_bytes))}</td>
+                        <td className="py-2 pr-4">{formatBytes(sumMetricReadings(item.network_rx_bytes, item.network_tx_bytes))}</td>
+                        <td className="py-2 pr-4">{formatBytes(sumMetricReadings(item.block_read_bytes, item.block_write_bytes))}</td>
                         <td className="py-2 pr-4">{item.pids ?? "-"}</td>
-                        <td className="py-2 pr-4 capitalize">{item.container_status || "running"}</td>
+                        <td className="py-2 pr-4 capitalize">{item.container_status || "Unknown"}</td>
                       </tr>
                     ))
                   ) : (

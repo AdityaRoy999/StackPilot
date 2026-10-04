@@ -339,7 +339,7 @@ rewrite_conflicting_application_ports() {
   return "$changed"
 }
 compose_up_exit=0
-compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
+compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans --wait --wait-timeout 180 2>&1) || compose_up_exit=$?
 printf '%s\n' "$compose_up_output"
 if [ "$compose_up_exit" -ne 0 ]; then
   if printf '%s\n' "$compose_up_output" | grep -Eqi 'address already in use|ports are not available|only one usage of each socket address|bind:'; then
@@ -355,7 +355,7 @@ if [ "$compose_up_exit" -ne 0 ]; then
       echo "__STACKPILOT_PORT_ADJUSTED__=STACKPILOT_HTTPS_PORT:${old_https_port:-443}:${https_port}"
       echo "Host port conflict detected; retrying Compose with STACKPILOT_HTTP_PORT=$http_port and STACKPILOT_HTTPS_PORT=$https_port"
     fi
-    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
+    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans --wait --wait-timeout 180
   else
     exit "$compose_up_exit"
   fi
@@ -974,7 +974,6 @@ SshOperationResult SshService::provisionDockerHost(const SshConnectionConfig& co
         "echo __STACKPILOT_PROVISION_DOCKER_START__; "
         "if command -v docker >/dev/null 2>&1 && (docker info >/dev/null 2>&1 || run_sudo docker info >/dev/null 2>&1); then "
         "  run_sudo usermod -aG docker \"$(id -un)\" >/dev/null 2>&1 || true; "
-        "  run_sudo chmod 666 /var/run/docker.sock >/dev/null 2>&1 || true; "
         "  echo docker_status=ready; echo __STACKPILOT_PROVISION_DOCKER_DONE__; exit 0; "
         "fi; "
         "if ! " + sudoCheck + "; then "
@@ -1010,7 +1009,6 @@ SshOperationResult SshService::provisionDockerHost(const SshConnectionConfig& co
         "fi; "
         "(run_sudo systemctl enable --now docker >/dev/null 2>&1 || run_sudo service docker start >/dev/null 2>&1 || true); "
         "run_sudo usermod -aG docker \"$(id -un)\" >/dev/null 2>&1 || true; "
-        "run_sudo chmod 666 /var/run/docker.sock >/dev/null 2>&1 || true; "
         "if docker info >/dev/null 2>&1 || run_sudo docker info >/dev/null 2>&1; then "
         "  echo docker_status=ready; "
         "else "
@@ -1901,22 +1899,24 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         result.error = "Remote path must be an absolute Linux path";
         return result;
     }
-    if (containerPort < 1 || containerPort > 65535) {
+    if (containerPort < 0 || containerPort > 65535) {
         result.error = "Container port must be between 1 and 65535";
         return result;
     }
 
     std::ostringstream envContent;
+    std::string runtimeEnvArgs;
     for (const auto& envVar : envVars) {
         if (isValidEnvKeyValue(envVar.first)) {
             envContent << envVar.first << "=" << encodeEnvFileValue(envVar.second) << "\n";
+            runtimeEnvArgs += " --env " + shellQuote(envVar.first+"="+envVar.second);
         }
     }
 
     const SessionFiles files = prepareSessionFiles(config);
-    const std::string envFile = ".env.StackPilot." + containerName;
+    const std::string envFile = "../runtime.StackPilot." + containerName;
     const std::string remoteCommand =
-        "set -e; "
+        "set -e; umask 077; "
         "target=" + shellQuote(remotePath) + "; "
         "[ -d \"$target\" ] || { echo __STACKPILOT_INVALID_PATH__; exit 9; }; "
         "cd \"$target\"; "
@@ -1924,168 +1924,28 @@ SshOperationResult SshService::buildAndRunDockerProject(const SshConnectionConfi
         "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
         "compose_file=''; "
         "for f in docker-compose.StackPilot.yml docker-compose.StackPilot.yaml docker-compose.prod.yml docker-compose.prod.yaml compose.prod.yml compose.prod.yaml docker-compose.yml docker-compose.yaml compose.yml compose.yaml; do [ -f \"$f\" ] && { compose_file=\"$f\"; break; }; done; "
-        "if [ -n \"$compose_file\" ]; then "
-        "  compose_cmd='docker compose'; "
-        "  if ! docker compose version >/dev/null 2>&1; then if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; else echo __STACKPILOT_COMPOSE_MISSING__; exit 20; fi; fi; "
-        "  cat > " + shellQuote(envFile) + " <<'__STACKPILOT_ENV_EOF__'\n" +
-        envContent.str() +
-        "__STACKPILOT_ENV_EOF__\n"
-        "  cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
-        "  cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
-        "  cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
-        "  compose_parallel_limit=$(sed -n 's/^STACKPILOT_COMPOSE_PARALLEL_LIMIT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  [ -n \"$compose_parallel_limit\" ] || compose_parallel_limit=1; "
-        "  export COMPOSE_PARALLEL_LIMIT=\"$compose_parallel_limit\"; "
-        "  echo 'Detected Docker Compose project: '\"$compose_file\"; "
-        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " config --services > .stackpilot-compose-services; "
-        "  services=$(paste -sd, .stackpilot-compose-services 2>/dev/null || true); "
-        "  echo __STACKPILOT_REMOTE_COMPOSE_PROJECT__=" + containerName + "; "
-        "  echo __STACKPILOT_REMOTE_COMPOSE_FILE__=$compose_file; "
-        "  echo __STACKPILOT_REMOTE_COMPOSE_SERVICES__=$services; "
-        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " pull --ignore-pull-failures || true; "
-        + composePortFallbackShell("\"$compose_file\"", shellQuote(containerName)) +
-        "  runtime=''; preferred_public_port=$(sed -n 's/^APP_PUBLIC_UI_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  require_https=$(sed -n 's/^STACKPILOT_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
-        "  http_port=$(sed -n 's/^STACKPILOT_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-        "  if [ -n \"$domain\" ]; then "
-        "    if [ \"$require_https\" = 'true' ]; then "
-        "      if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; "
-        "    else "
-        "      if [ -n \"$http_port\" ] && [ \"$http_port\" != '80' ]; then runtime=\"http://$domain:$http_port\"; else runtime=\"http://$domain\"; fi; "
-        "    fi; "
-        "  fi; "
-        "  if [ -z \"$runtime\" ] && [ -n \"$preferred_public_port\" ]; then runtime=\"http://" + config.host + ":$preferred_public_port\"; fi; "
-        "  if [ -z \"$runtime\" ]; then "
-        "    for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
-        "      for port in 9001 15672 8222 3000 8080 8000 5000 5173 9090 3100 80 443 5432 3306 6379 27017 5672 9000 4222; do "
-        "        mapped=$($compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
-        "        if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://" + config.host + ":$mapped\"; break 2; fi; "
-        "      done; "
-        "    done; "
-        "  fi; "
-        "  echo __STACKPILOT_REMOTE_URL__=$runtime; "
-        "  $compose_cmd -f \"$compose_file\" -p " + shellQuote(containerName) + " ps; "
-        "  exit 0; "
-        "fi; "
-        "dockerfile_arg='-f Dockerfile'; "
-        "if [ ! -f Dockerfile ]; then "
-        "  mkdir -p .StackPilot; "
-        "  dockerfile_arg='-f .StackPilot/Dockerfile'; "
-        "  if [ -f package.json ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM node:20-alpine\n"
-        "WORKDIR /app\n"
-        "COPY package*.json ./\n"
-        "RUN npm ci || npm install\n"
-        "COPY . .\n"
-        "RUN if [ -f next.config.js ] || [ -f next.config.mjs ] || [ -f next.config.ts ] || node -e \"const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));if(!(pkg.scripts&&pkg.scripts.build)) process.exit(1)\"; then npm run build; fi\n"
-        "EXPOSE 3000\n"
-        "CMD [\"sh\", \"-c\", \"node -e \\\"const p=require('./package.json');process.exit(p.scripts&&p.scripts.start?0:1)\\\" && npm start || node server.js || node index.js || node app.js\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f requirements.txt ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM python:3.12-slim\n"
-        "WORKDIR /app\n"
-        "COPY requirements.txt ./\n"
-        "RUN pip install --no-cache-dir -r requirements.txt\n"
-        "COPY . .\n"
-        "EXPOSE 3000\n"
-        "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(ls app.py main.py *.py 2>/dev/null | head -n1); exec streamlit run ${f:-app.py} --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); exec uvicorn ${m}:app --host 0.0.0.0 --port 3000; else exec python $( [ -f app.py ] && echo app.py || echo main.py ); fi\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f pyproject.toml ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM python:3.12-slim\n"
-        "WORKDIR /app\n"
-        "COPY . .\n"
-        "RUN pip install --no-cache-dir .\n"
-        "EXPOSE 3000\n"
-        "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(ls app.py main.py *.py 2>/dev/null | head -n1); exec streamlit run ${f:-app.py} --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); exec uvicorn ${m}:app --host 0.0.0.0 --port 3000; else exec python $( [ -f app.py ] && echo app.py || echo main.py ); fi\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f main.py ] || [ -f app.py ]; then "
-        "    entry='app.py'; [ -f app.py ] || entry='main.py'; "
-        "    cat > .StackPilot/Dockerfile <<__STACKPILOT_DOCKERFILE_EOF__\n"
-        "FROM python:3.12-slim\n"
-        "WORKDIR /app\n"
-        "COPY . .\n"
-        "EXPOSE 3000\n"
-        "CMD [\"python\", \"$entry\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f go.mod ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM golang:1.24-alpine AS build\n"
-        "WORKDIR /src\n"
-        "COPY go.mod go.sum* ./\n"
-        "RUN go mod download\n"
-        "COPY . .\n"
-        "RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server .\n"
-        "FROM alpine:3.20\n"
-        "WORKDIR /app\n"
-        "COPY --from=build /app/server ./server\n"
-        "ENV PORT=3000\n"
-        "EXPOSE 3000\n"
-        "CMD [\"./server\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f CMakeLists.txt ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM ubuntu:24.04\n"
-        "RUN apt-get update && apt-get install -y build-essential cmake libssl-dev zlib1g-dev uuid-dev && rm -rf /var/lib/apt/lists/*\n"
-        "WORKDIR /app\n"
-        "COPY . .\n"
-        "RUN cmake -S . -B build && cmake --build build --config Release\n"
-        "ENV PORT=3000\n"
-        "EXPOSE 3000\n"
-        "CMD [\"/bin/sh\", \"-c\", \"exe=$(find build -maxdepth 4 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No executable found after CMake build'; exit 1; }; exec \\\"$exe\\\"\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f Cargo.toml ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM rust:1-bookworm AS build\n"
-        "WORKDIR /src\n"
-        "COPY . .\n"
-        "RUN cargo build --release\n"
-        "FROM debian:bookworm-slim\n"
-        "WORKDIR /app\n"
-        "COPY --from=build /src/target/release /app/bin\n"
-        "ENV PORT=3000\n"
-        "EXPOSE 3000\n"
-        "CMD [\"/bin/sh\", \"-c\", \"exe=$(find /app/bin -maxdepth 1 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No Rust release binary found'; exit 1; }; exec \\\"$exe\\\"\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  elif [ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ] || [ -f gradlew ]; then "
-        "    cat > .StackPilot/Dockerfile <<'__STACKPILOT_DOCKERFILE_EOF__'\n"
-        "FROM eclipse-temurin:21-jdk AS build\n"
-        "WORKDIR /src\n"
-        "COPY . .\n"
-        "RUN if [ -f mvnw ]; then chmod +x mvnw && ./mvnw -DskipTests package; elif [ -f pom.xml ]; then apt-get update && apt-get install -y maven && mvn -DskipTests package; elif [ -f gradlew ]; then chmod +x gradlew && ./gradlew build -x test; else apt-get update && apt-get install -y gradle && gradle build -x test; fi\n"
-        "FROM eclipse-temurin:21-jre\n"
-        "WORKDIR /app\n"
-        "COPY --from=build /src .\n"
-        "ENV PORT=3000\n"
-        "ENV SERVER_PORT=3000\n"
-        "EXPOSE 3000\n"
-        "CMD [\"/bin/sh\", \"-c\", \"jar=$(find . -path '*/target/*.jar' -o -path '*/build/libs/*.jar' | grep -v plain | head -n1); [ -n \\\"$jar\\\" ] || { echo 'No runnable jar found'; exit 1; }; exec java -jar \\\"$jar\\\"\"]\n"
-        "__STACKPILOT_DOCKERFILE_EOF__\n"
-        "  else echo __STACKPILOT_DOCKERFILE_MISSING__; exit 12; fi; "
-        "  echo 'Generated remote Dockerfile at .StackPilot/Dockerfile'; "
-        "fi; "
+        "[ -z \"$compose_file\" ] || { echo 'Remote Compose requires a qualified isolated runtime adapter'; exit 20; }; "
+        "dockerfile_arg='-f Dockerfile'; [ -f Dockerfile ] || { echo 'Prepared deployment Dockerfile missing; unsafe fallback refused'; exit 12; }; "
         "cat > " + shellQuote(envFile) + " <<'__STACKPILOT_ENV_EOF__'\n" +
         envContent.str() +
         "__STACKPILOT_ENV_EOF__\n"
-        "cp " + shellQuote(envFile) + " .env 2>/dev/null || true; "
-        "cp " + shellQuote(envFile) + " .env.local 2>/dev/null || true; "
-        "cp " + shellQuote(envFile) + " .env.production.local 2>/dev/null || true; "
+        "chmod 600 " + shellQuote(envFile) + "; printf '\\n.env\\n.env.*\\n**/.env\\n**/.env.*\\n.git\\n!.env.production.local\\n' >> .dockerignore; "
         "build_parallel=$(sed -n 's/^STACKPILOT_BACKEND_BUILD_PARALLELISM=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
         "[ -n \"$build_parallel\" ] || build_parallel=1; "
         "echo 'Building remote Docker image " + imageName + "'; "
         "docker build --pull=false --build-arg STACKPILOT_BACKEND_BUILD_PARALLELISM=\"$build_parallel\" $dockerfile_arg -t " + shellQuote(imageName) + " .; "
-        "docker rm -f " + shellQuote(containerName) + " >/dev/null 2>&1 || true; "
+        "image_digest=$(docker image inspect --format '{{.Id}}' " + shellQuote(imageName) + "); "
+        "python3 .stackpilot-runtime/image_evidence.py \"$image_digest\" .stackpilot-remote-evidence.json .stackpilot-plan.json; "
+        "echo __STACKPILOT_REMOTE_DIGEST__=$image_digest; "
+        "printf '__STACKPILOT_REMOTE_TEST_EVIDENCE__='; cat .stackpilot-remote-evidence.json; printf '\\n'; "
+        "if docker inspect " + shellQuote(containerName) + " >/dev/null 2>&1; then echo 'Existing runtime replacement requires a separate candidate'; exit 14; fi; "
+        "container_port=" + std::to_string(containerPort) + "; if [ \"$container_port\" -eq 0 ]; then container_port=$(docker image inspect --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' " + shellQuote(imageName) + " | sed -n 's#/tcp$##p' | head -n1); [ -n \"$container_port\" ] || { echo 'No runtime port declared'; exit 15; }; fi; "
         "echo 'Starting remote container " + containerName + "'; "
         "docker run -d --restart unless-stopped --name " + shellQuote(containerName) +
-        " --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 1 "
-        " --env-file " + shellQuote(envFile) +
-        " -p " + std::to_string(containerPort) +
-        " " + shellQuote(imageName) + "; "
-        "published=$(docker port " + shellQuote(containerName) + " " + std::to_string(containerPort) + "/tcp 2>/dev/null | head -n1 | awk -F: '{print $NF}'); "
+        " --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges --memory 2g --cpus 2 --pids-limit 256 --label stackpilot.managed=true "
+        + runtimeEnvArgs +
+        " -p $container_port \"$image_digest\"; "
+        "published=$(docker port " + shellQuote(containerName) + " $container_port/tcp 2>/dev/null | head -n1 | awk -F: '{print $NF}'); "
         "echo __STACKPILOT_REMOTE_IMAGE__=" + imageName + "; "
         "echo __STACKPILOT_REMOTE_CONTAINER__=" + containerName + "; "
         "echo __STACKPILOT_REMOTE_PORT__=$published";

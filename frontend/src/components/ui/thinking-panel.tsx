@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight, Sparkles } from "@/lib/platform-icons";
 import { useTheme } from "next-themes";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
 
 import { cn } from "@/lib/utils";
 import { AnimatedMarkdown } from "@/components/ui/animated-markdown";
-import { AnimatedStreamingText } from "@/components/ui/animated-streaming-text";
+
 
 export interface ThinkingStats {
   latencyMs?: number;
@@ -49,16 +49,28 @@ export function ThinkingPanel({
   orbStyle?: OrbState | "off";
   className?: string;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState<boolean | null>(null);
+  const [phone, setPhone] = useState(false);
+  // Keep completed diagnostics tucked away on phones. An explicit toggle
+  // remains the user's choice, including when the next stream update arrives.
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 639px)");
+    const update = () => setPhone(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const preRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isGenerating && preRef.current) {
-      preRef.current.scrollTop = preRef.current.scrollHeight;
+    const scroller = phone ? contentRef.current : preRef.current;
+    if (isGenerating && scroller) {
+      scroller.scrollTop = scroller.scrollHeight;
     }
-  }, [reasoning, isGenerating]);
+  }, [reasoning, isGenerating, phone]);
 
   const rawBlocks = Array.isArray(reasoning)
     ? reasoning
@@ -83,7 +95,8 @@ export function ThinkingPanel({
 
   if (!hasReasoning && chips.length === 0 && !isGenerating) return null;
 
-  const isExpanded = open && hasReasoning;
+  const showReasoning = open ?? (isGenerating || !phone);
+  const isExpanded = showReasoning && hasReasoning;
 
   return (
     <div className={cn("transition-[margin] duration-200", isExpanded ? "mb-2.5 space-y-1.5" : "mb-0 space-y-0", className)}>
@@ -91,9 +104,9 @@ export function ThinkingPanel({
         {(hasReasoning || isGenerating) && (
           <button
             type="button"
-            onClick={() => setOpen((value) => !value)}
+            onClick={() => setOpen(!showReasoning)}
             className="-mx-1 inline-flex items-center gap-2 rounded-control px-2 py-0.5 hover:bg-hover-2 text-ink-2 transition-colors cursor-pointer select-none"
-            aria-expanded={open}
+            aria-expanded={isExpanded}
           >
             <svg
               width="14"
@@ -126,10 +139,9 @@ export function ThinkingPanel({
                 </span>
               ) : (
                 <span
-                  className="text-[13px] font-medium whitespace-nowrap text-ink-2"
-                  style={{ animation: "fade-in 350ms ease-out both" }}
+                  className="text-[13px] font-medium whitespace-nowrap text-muted-foreground"
                 >
-                  {open
+                  {showReasoning
                     ? `Hide thinking${rawBlocks.length > 1 ? ` (${rawBlocks.length} blocks)` : ""}`
                     : `Show thinking${rawBlocks.length > 1 ? ` (${rawBlocks.length} blocks)` : ""}`}
                 </span>
@@ -146,7 +158,7 @@ export function ThinkingPanel({
               strokeLinecap="round"
               strokeLinejoin="round"
               className="transition-transform duration-300 shrink-0"
-              style={{ transform: open ? "rotate(180deg)" : "rotate(0)" }}
+              style={{ transform: showReasoning ? "rotate(180deg)" : "rotate(0)" }}
             >
               <path d="M6 9l6 6 6-6" />
             </svg>
@@ -175,7 +187,7 @@ export function ThinkingPanel({
               aria-hidden
               className="absolute left-[3px] top-0 bottom-1 w-px bg-line"
             />
-            <div className="rounded-lg border border-line bg-surface/60 p-3 space-y-2.5">
+            <div ref={contentRef} data-thinking-content className="max-h-[min(28dvh,14rem)] overflow-y-auto overscroll-contain rounded-lg border border-line bg-surface/60 p-2 space-y-2 sm:max-h-none sm:overflow-visible sm:p-3 sm:space-y-2.5">
               <p className="text-[11.5px] text-ink-3">
                 The model&apos;s working trace. Internal deliberation and diagnostics.
               </p>
@@ -183,32 +195,21 @@ export function ThinkingPanel({
               {rawBlocks.length === 1 ? (
                 <div
                   ref={preRef}
-                  className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink-2"
+                  className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-[11px] leading-relaxed text-ink-2 sm:max-h-96 sm:overflow-y-auto sm:text-[12px]"
                 >
-                  <AnimatedStreamingText
-                    content={rawBlocks[0]}
-                    isStreaming={isGenerating}
-                    animation="blurIn"
-                    animationDuration="0.32s"
-                  />
+                  {rawBlocks[0]}
                 </div>
               ) : (
                 <div className="space-y-2">
                   {rawBlocks.map((block, idx) => {
-                    const isLatestBlock = idx === rawBlocks.length - 1;
                     return (
                       <div key={idx} className="rounded-md border border-line/80 bg-field/40 p-2.5">
                         <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-ink-2">
                           <Sparkles className="h-3 w-3 text-amber-500" />
                           <span>Thinking Block {idx + 1}</span>
                         </div>
-                        <div className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-ink-2">
-                          <AnimatedStreamingText
-                            content={block}
-                            isStreaming={isGenerating && isLatestBlock}
-                            animation="blurIn"
-                            animationDuration="0.32s"
-                          />
+                        <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-[11px] leading-relaxed text-ink-2 sm:max-h-80 sm:overflow-y-auto sm:text-[12px]">
+                          {block}
                         </div>
                       </div>
                     );

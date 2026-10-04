@@ -138,7 +138,11 @@ AiServiceResult AiServiceClient::get(const std::string& path) const {
 }
 
 AiServiceResult AiServiceClient::postWorkflow(const std::string& path, const Json::Value& payload) const {
-    return performRequest(serviceUrl() + path, "POST", compactJson(payload), timeoutSeconds());
+    // Repair includes real builds and runtime verification; the short planning
+    // timeout otherwise severs the caller while executor work continues.
+    const long timeout = path.rfind("/repair/", 0) == 0 ? std::max<long>(timeoutSeconds(), 600) :
+        path == "/runtime/verify" ? std::max<long>(timeoutSeconds(),240) : timeoutSeconds();
+    return performRequest(serviceUrl() + path, "POST", compactJson(payload), timeout);
 }
 
 } // namespace stackpilot

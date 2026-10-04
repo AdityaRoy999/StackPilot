@@ -117,6 +117,16 @@ export function getModelOrg(modelId: string): string {
     if (rawOrg.includes("ai21")) return "AI21 Labs";
     return parts[0];
   }
+  const id = modelId.toLowerCase();
+  if (/^(gpt-|o[134]-|chatgpt|text-embedding)/.test(id)) return "OpenAI";
+  if (id.startsWith("claude")) return "Anthropic";
+  if (id.startsWith("gemini") || id.startsWith("gemma")) return "Google";
+  if (id.startsWith("deepseek")) return "DeepSeek";
+  if (id.startsWith("qwen") || id.startsWith("qwq")) return "Qwen";
+  if (id.startsWith("nemotron")) return "NVIDIA";
+  if (id.startsWith("llama")) return "Meta";
+  if (id.startsWith("grok")) return "xAI";
+  if (id.startsWith("mistral") || id.startsWith("ministral") || id.startsWith("codestral")) return "Mistral";
   return "AI";
 }
 

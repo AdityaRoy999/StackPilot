@@ -1,6 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { ChatMarkdown } from "@/components/ui/chat-markdown";
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { getModelOrg } from "@/lib/model-capabilities";
+import { ProviderLogo } from "@/components/ProviderLogo";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -12,7 +17,7 @@ import {
   RefreshCw,
   Trash2,
   XCircle,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 
 import api from "@/lib/api";
@@ -28,6 +33,8 @@ interface AiChatSession {
   preview?: string;
   message_count?: number;
   last_model?: string;
+  last_provider?: string;
+  provider_connection_name?: string;
   memory_summary?: string;
   created_at: string;
   updated_at: string;
@@ -79,6 +86,7 @@ function sessionTypeLabel(type: string) {
 }
 
 export default function AiHistoryPage() {
+  const [search, setSearch] = useState("");
   const sessionsQuery = useQuery({
     queryKey: ["ai-chat-sessions"],
     queryFn: async () => {
@@ -107,11 +115,17 @@ export default function AiHistoryPage() {
   const sessions = sessionsQuery.data || [];
   const totalMessages = sessions.reduce((total, session) => total + (session.message_count || 0), 0);
   const rememberedChats = sessions.filter((session) => (session.memory_summary || "").trim()).length;
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredSessions = sessions.filter((session) =>
+    `${session.title} ${session.preview || ""} ${session.last_model || ""}`
+      .toLowerCase()
+      .includes(normalizedSearch)
+  );
   const lastChat = sessions[0]?.updated_at;
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6 min-w-0 w-full overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Link href="/dashboard/ai">
             <Button variant="ghost" size="icon" className="h-9 w-9">
@@ -120,10 +134,10 @@ export default function AiHistoryPage() {
           </Link>
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold">AI Chat History</h1>
-            <p className="text-sm text-muted-foreground">Resume conversations with their saved context and memory.</p>
+
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-end gap-2">
           <Button variant="outline" size="sm" onClick={() => sessionsQuery.refetch()} disabled={sessionsQuery.isFetching}>
             {sessionsQuery.isFetching ? <AppIcon name="loader2" fallback={Loader2} className="h-4 w-4 animate-spin"  /> : <AppIcon name="refresh-cw" fallback={RefreshCw} className="h-4 w-4"  />}
             Refresh
@@ -155,14 +169,24 @@ export default function AiHistoryPage() {
         <div className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <AppIcon name="message-square" fallback={MessageSquare} className="h-4 w-4"  />
-            Memory
+            Saved context
           </div>
           <p className="mt-2 text-3xl font-semibold">{rememberedChats}</p>
           <p className="mt-1 text-xs text-muted-foreground">{lastChat ? `Latest ${formatDate(lastChat)}` : "No chats yet"}</p>
         </div>
       </div>
 
-      {sessionsQuery.isLoading || (sessionsQuery.isFetching && !sessionsQuery.isFetchedAfterMount) ? (
+      <div className="flex items-center">
+        <Input
+          aria-label="Search chat history"
+          placeholder="Search conversations or models…"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="h-9 w-full sm:max-w-md"
+        />
+      </div>
+      {!sessionsQuery.isError && !sessionsQuery.isLoading && sessions.length > 0 && filteredSessions.length === 0 && <p className="rounded-xl border p-6 text-muted-foreground">No conversations match these filters.</p>}
+      {sessionsQuery.isError ? <div role="alert" className="rounded-xl border border-destructive/30 p-6"><p>Chat history could not be loaded.</p><Button className="mt-3" variant="outline" onClick={() => sessionsQuery.refetch()}>Try again</Button></div> : sessionsQuery.isLoading || (sessionsQuery.isFetching && !sessionsQuery.isFetchedAfterMount) ? (
         <div className="flex items-center justify-center rounded-xl border border-border bg-card py-20 text-muted-foreground">
           <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-5 w-5 animate-spin"  />
           Loading conversations...
@@ -179,7 +203,7 @@ export default function AiHistoryPage() {
         </div>
       ) : (
         <div className="grid gap-3 min-w-0">
-          {sessions.map((session) => (
+          {filteredSessions.map((session) => (
             <div
               key={session.id}
               className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent/30"
@@ -209,7 +233,7 @@ export default function AiHistoryPage() {
                     )}
                     {session.last_model && (
                       <Badge variant="secondary" className="max-w-64 truncate shrink-0">
-                        {session.last_model}
+                        <ProviderLogo provider={getModelOrg(session.last_model)} size={14} /> {session.last_model}
                       </Badge>
                     )}
                   </div>
@@ -219,7 +243,7 @@ export default function AiHistoryPage() {
                   <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                     <span>{session.message_count || 0} messages</span>
                     <span>Updated {formatDate(session.updated_at)}</span>
-                    {(session.memory_summary || "").trim() && <span>Memory saved</span>}
+                    {(session.memory_summary || "").trim() && <span>Context saved</span>}
                   </div>
                 </Link>
                 <div className="flex items-center gap-2 shrink-0 self-end sm:self-start">
@@ -237,6 +261,7 @@ export default function AiHistoryPage() {
                   </Button>
                 </div>
               </div>
+                {session.memory_summary?.trim() && <details className="mt-3 rounded-lg border border-border/60 px-3 py-2 text-xs"><summary className="cursor-pointer font-medium">Saved conversation context</summary><div className="prose-ai mt-2 max-h-64 overflow-y-auto break-words [overflow-wrap:anywhere] text-muted-foreground [&_pre]:whitespace-pre-wrap [&_code]:break-all"><ChatMarkdown content={session.memory_summary} /></div></details>}
             </div>
           ))}
         </div>

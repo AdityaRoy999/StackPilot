@@ -1,0 +1,47 @@
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "container_labels" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.process "recent_logs" {
+  forward_to = [loki.write.local.receiver]
+
+  // Docker Desktop may retain several days of logs. Drop records outside Loki's
+  // retention window before they can reject fresh batches at the Loki API.
+  stage.drop {
+    older_than          = "168h"
+    drop_counter_reason = "outside_loki_retention"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.container_labels.output
+  refresh_interval = "5s"
+  labels           = { job = "docker" }
+  forward_to       = [loki.process.recent_logs.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

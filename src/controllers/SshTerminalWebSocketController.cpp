@@ -6,6 +6,7 @@
 #include "../utils/StringUtils.h"
 #include "../db/Database.h"
 #include "../utils/JwtHelper.h"
+#include "../services/RemoteAccess.h"
 #include "../utils/TokenCrypto.h"
 
 #include <fcntl.h>
@@ -277,6 +278,7 @@ void SshTerminalWebSocketController::handleNewConnection(
 
         session->childPid = child;
         conn->setContext(session);
+        if(payload.isMember("remote_device_id"))remote::watchConnection(req,conn);
         sendJson(conn, "ready", "SSH terminal connected");
 
         session->reader = std::thread([conn, session]() {

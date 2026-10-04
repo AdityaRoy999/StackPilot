@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stackpilot-qualification-math"
+version = "1.0.0"
+description = "An actual built and installed package qualification fixture"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]

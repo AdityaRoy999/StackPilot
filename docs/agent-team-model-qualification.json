@@ -1,0 +1,52 @@
+{
+  "scope": "local_model_team_delivery",
+  "run_id": "c8e20d67-7e54-4da5-92cb-edd995a026be",
+  "model": "z-ai/glm-5.3-flash",
+  "cases": [
+    {
+      "case": "real_models_repaired_distinct_files",
+      "passed": true,
+      "agents": [
+        "b0a99525-0d3b-49b2-9ac7-76257c76f147",
+        "525842af-b2e1-4434-9360-6c7100d13edf"
+      ]
+    },
+    {
+      "case": "release_requires_independent_current_revision_tests",
+      "passed": true
+    },
+    {
+      "case": "independent_original_tests_passed_in_real_worker",
+      "passed": true,
+      "revision": "18453344a9d7647445697e26ae953ff85548862d"
+    },
+    {
+      "case": "first_deployment_built_accepted_revision_and_verified_routed_application",
+      "passed": true,
+      "job_id": "b8e13552-85fe-4457-8a8a-cd7ad56cd77f",
+      "deployment_id": "26218f52-cf4e-4e74-84c0-df6e112e4a04",
+      "url": "http://93ed5e82-7229-4955-954c-3363b363edf7.preview.localhost:8091",
+      "revision": "18453344a9d7647445697e26ae953ff85548862d"
+    },
+    {
+      "case": "individual_events_persisted_by_worker_id",
+      "passed": true,
+      "events": 43
+    }
+  ],
+  "elapsed_seconds": 285.96,
+  "model_calls": 10,
+  "model_latency_ms": [
+    46475,
+    54690,
+    48991,
+    58625,
+    46399,
+    35610,
+    64582,
+    25495,
+    35094,
+    38084
+  ],
+  "passed": true
+}

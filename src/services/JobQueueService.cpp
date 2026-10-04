@@ -16,6 +16,9 @@
 #include "DeploymentCleanupService.h"
 #include "KubernetesService.h"
 #include "SshService.h"
+#include "LocalDockerRuntime.h"
+#include "PendingRuntime.h"
+#include "ComponentRuntimeVerification.h"
 #include <thread>
 
 #include <algorithm>
@@ -31,6 +34,7 @@
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #ifndef _WIN32
 #include <sys/wait.h>
 #include <unistd.h>
@@ -183,9 +187,11 @@ Json::Value runtimeSnapshot(const std::string& provider,
     snapshot["runtime_url"] = runtimeUrl;
     snapshot["exposure_mode"] = exposureMode;
     snapshot["replicas"] = replicas;
-    snapshot["container_port"] = containerPort;
-    snapshot["resource_preset"] = resourcePreset.empty() ? "small" : resourcePreset;
-    snapshot["health_path"] = healthPath.empty() ? "/" : healthPath;
+    snapshot["container_port"] = buildResult ? buildResult->deploymentPlan.get("port",containerPort).asInt() : containerPort;
+    snapshot["resource_preset"] = buildResult ? buildResult->deploymentPlan.get("resource_preset",resourcePreset.empty()?"small":resourcePreset).asString() : resourcePreset.empty() ? "small" : resourcePreset;
+    snapshot["health_path"] = buildResult ? buildResult->deploymentPlan.get("health_path",healthPath.empty()?"/":healthPath).asString() : healthPath.empty() ? "/" : healthPath;
+    if(buildResult){snapshot["deployment_plan"]=buildResult->deploymentPlan;snapshot["test_evidence"]=buildResult->testEvidence;snapshot["artifact_digest"]=buildResult->artifactDigest;}
+    if(buildResult){snapshot["source_digest"]=buildResult->sourceDigest;snapshot["source_archive"]=buildResult->sourceArchive;}
     snapshot["runtime_scheme"] = scheme;
     snapshot["tls_enabled"] = scheme == "https";
     if (buildResult && !buildResult->archetype.empty()) {
@@ -389,80 +395,11 @@ bool isValidRuntimeEnvKey(const std::string& key) {
 std::string makeLocalDockerRunCommand(const std::string& containerName,
                                       const std::string& imageName,
                                       int containerPort,
-                                      const std::vector<BuildEnvVar>& envVars) {
-    std::string envArgs;
-    for (const auto& envVar : envVars) {
-        if (!isValidRuntimeEnvKey(envVar.key)) {
-            continue;
-        }
-        envArgs += " --env " + shellQuote(envVar.key + "=" + envVar.value);
-    }
-
-    const std::string container = shellQuote(containerName);
-    const std::string image = shellQuote(imageName);
-    const std::string requestedPort = std::to_string(std::clamp(containerPort, 0, 65535));
-    return
-        "set -e; "
-        "command -v docker >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_MISSING__; exit 10; }; "
-        "docker info >/dev/null 2>&1 || { echo __STACKPILOT_DOCKER_DAEMON_DOWN__; exit 11; }; "
-        "docker image inspect " + image + " >/dev/null 2>&1 || { echo __STACKPILOT_IMAGE_MISSING__; exit 12; }; "
-        "requested_port=" + requestedPort + "; "
-        "if [ \"$requested_port\" -gt 0 ]; then "
-        "container_port=\"$requested_port\"; "
-        "else "
-        "container_port=$(docker image inspect --format '{{range $p, $_ := .Config.ExposedPorts}}{{println $p}}{{end}}' " + image + " 2>/dev/null | sed -n 's#/tcp$##p' | head -n 1); "
-        "[ -n \"$container_port\" ] || container_port=3000; "
-        "fi; "
-        "container=" + container + "; "
-        "docker rm -f " + container + " >/dev/null 2>&1 || true; "
-        "docker run -d --restart unless-stopped --name " + container + envArgs +
-        " -p 127.0.0.1::$container_port " + image + " >/tmp/stackpilot-local-container-id; "
-        "host_port=$(docker port " + container + " $container_port/tcp 2>/dev/null | awk -F: 'NF {print $NF; exit}'); "
-        "[ -n \"$host_port\" ] || { echo __STACKPILOT_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
-        "ready=0; "
-        "for i in $(seq 1 15); do "
-        "status=$(docker inspect --format '{{.State.Status}}' \"$container\" 2>/dev/null || echo \"exited\"); "
-        "if [ \"$status\" = \"exited\" ] || [ \"$status\" = \"dead\" ]; then "
-        "echo \"Container crashed on startup:\"; "
-        "docker logs --tail 50 \"$container\" 2>&1; "
-        "exit 1; "
-        "fi; "
-        "if [ -n \"$host_port\" ]; then "
-        "if curl -s -o /dev/null -w \"%{http_code}\" \"http://127.0.0.1:$host_port/\" >/dev/null 2>&1 || "
-        "curl -s -o /dev/null -w \"%{http_code}\" \"http://host.docker.internal:$host_port/\" >/dev/null 2>&1 || "
-        "nc -z 127.0.0.1 \"$host_port\" >/dev/null 2>&1 || "
-        "[ \"$status\" = \"running\" ]; then "
-        "ready=1; "
-        "break; "
-        "fi; "
-        "else "
-        "if [ \"$status\" = \"running\" ]; then ready=1; break; fi; "
-        "fi; "
-        "sleep 1; "
-        "done; "
-        "status=$(docker inspect --format '{{.State.Status}}' \"$container\" 2>/dev/null || echo \"exited\"); "
-        "if [ \"$status\" = \"exited\" ] || [ \"$status\" = \"dead\" ]; then "
-        "echo \"Container crashed on startup:\"; "
-        "docker logs --tail 50 \"$container\" 2>&1; "
-        "exit 1; "
-        "fi; "
-        "if [ \"$ready\" -ne 1 ]; then "
-        "echo \"Container readiness probe failed or timed out:\"; "
-        "docker logs --tail 50 \"$container\" 2>&1 || true; "
-        "exit 1; "
-        "fi; "
-        "running=$(docker inspect --format '{{.State.Running}}' \"$container\" 2>/dev/null || echo \"true\"); "
-        "echo __STACKPILOT_LOCAL_DOCKER_RUNNING__; "
-        "echo __STACKPILOT_LOCAL_DOCKER_PORT__=$host_port; "
-        "echo container_name=" + containerName + "; "
-        "echo container_port=$container_port; "
-        "echo host_port=$host_port; "
-        "echo runtime_url=http://localhost:$host_port; "
-        "echo status=$status; "
-        "echo running=$running; "
-        "echo image=" + imageName + "; "
-        "echo __STACKPILOT_LOCAL_LOG_TAIL__; "
-        "docker logs --tail 80 \"$container\" 2>&1 || true";
+                                      const std::vector<BuildEnvVar>& envVars,
+                                      const Json::Value& plan) {
+    std::vector<std::pair<std::string,std::string>> values;
+    for(const auto& item:envVars)values.emplace_back(item.key,item.value);
+    return LocalDockerRuntime::makeRunCommand(containerName,imageName,containerPort,values,plan.get("protocol","http").asString(),plan.get("health_path","/").asString());
 }
 
 struct GitHubCheckProbe {
@@ -485,92 +422,27 @@ std::string jsonEscapeForCurlConfig(const std::string& value) {
     return out;
 }
 
-GitHubCheckProbe queryGitHubCheckRuns(const std::string& repoUrl,
-                                      const std::string& commitSha,
-                                      const std::string& token) {
-    GitHubCheckProbe probe;
-    const std::string fullName = githubFullNameFromUrl(repoUrl);
-    if (fullName.empty() || commitSha.empty()) {
-        probe.detail = "Repository or commit could not be parsed for GitHub check lookup.";
-        return probe;
-    }
-
-    const auto configPath = std::filesystem::temp_directory_path() /
-        ("stackpilot-github-checks-" + std::to_string(std::rand()) + ".curl");
-    {
-        std::ofstream cfg(configPath, std::ios::trunc);
-        if (!cfg.is_open()) {
-            probe.detail = "Unable to create temporary GitHub check query config.";
-            return probe;
+GitHubCheckProbe queryGitHubCheckRuns(const std::string& repoUrl,const std::string& commitSha,const std::string& token) {
+    GitHubCheckProbe probe;const auto fullName=githubFullNameFromUrl(repoUrl);
+    if(fullName.empty()||commitSha.empty()){probe.detail="Repository and immutable commit are required for CI";return probe;}
+    std::string templatePath=(std::filesystem::temp_directory_path()/"stackpilot-ci-XXXXXX").string();
+    std::vector<char> name(templatePath.begin(),templatePath.end());name.push_back('\0');
+    const int descriptor=mkstemp(name.data());if(descriptor<0){probe.detail="CI credential file unavailable";return probe;}close(descriptor);
+    const std::filesystem::path file(name.data());Json::Value config;config["repo"]=fullName;config["sha"]=commitSha;config["token"]=token;
+    const auto policy=getEnvOrDefault("STACKPILOT_REQUIRED_CI_POLICY","");
+    if(!policy.empty()) {
+        Json::CharReaderBuilder reader;Json::Value parsed;std::string errors;std::istringstream input(policy);
+        if(!Json::parseFromStream(reader,input,&parsed,&errors) || !parsed.isObject()) {
+            std::filesystem::remove(file);probe.detail="Required CI policy is invalid; release refused";return probe;
         }
-        cfg << "silent\n";
-        cfg << "show-error\n";
-        cfg << "fail\n";
-        cfg << "location\n";
-        cfg << "url = \"https://api.github.com/repos/" << jsonEscapeForCurlConfig(fullName)
-            << "/commits/" << jsonEscapeForCurlConfig(commitSha) << "/check-runs?per_page=100\"\n";
-        cfg << "header = \"Accept: application/vnd.github+json\"\n";
-        cfg << "header = \"X-GitHub-Api-Version: 2022-11-28\"\n";
-        cfg << "header = \"User-Agent: stackpilot-Platform\"\n";
-        if (!token.empty()) {
-            cfg << "header = \"Authorization: Bearer " << jsonEscapeForCurlConfig(token) << "\"\n";
-        }
+        config["policy"]=parsed;
     }
-    std::error_code permissionError;
-    std::filesystem::permissions(
-        configPath,
-        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-        std::filesystem::perm_options::replace,
-        permissionError
-    );
-
-    const std::string output = runCommandCapture("curl --config " + shellQuote(configPath.string()) + " 2>/dev/null");
-    std::filesystem::remove(configPath);
-    if (output.empty()) {
-        probe.detail = "GitHub check lookup returned no response.";
-        return probe;
-    }
-
-    Json::Value payload;
-    Json::CharReaderBuilder builder;
-    builder["collectComments"] = false;
-    std::string errors;
-    std::istringstream stream(output);
-    if (!Json::parseFromStream(builder, stream, &payload, &errors) || !payload.isObject()) {
-        probe.detail = "GitHub check lookup returned an invalid payload.";
-        return probe;
-    }
-
-    probe.queried = true;
-    const int totalCount = payload.get("total_count", 0).asInt();
-    const Json::Value runs = payload["check_runs"];
-    if (totalCount <= 0 || !runs.isArray() || runs.empty()) {
-        probe.hasChecks = false;
-        probe.passed = true;
-        probe.detail = "No GitHub check runs exist for this commit.";
-        return probe;
-    }
-
-    probe.hasChecks = true;
-    bool anyPending = false;
-    bool anyFailed = false;
-    for (const auto& run : runs) {
-        const std::string status = toLower(run.get("status", "").asString());
-        const std::string conclusion = toLower(run.get("conclusion", "").asString());
-        if (status != "completed") {
-            anyPending = true;
-            continue;
-        }
-        if (!(conclusion == "success" || conclusion == "skipped" || conclusion == "neutral")) {
-            anyFailed = true;
-        }
-    }
-    probe.pending = anyPending;
-    probe.failed = anyFailed;
-    probe.passed = !anyPending && !anyFailed;
-    probe.detail = probe.passed ? "GitHub check runs passed." :
-        (probe.failed ? "One or more GitHub check runs failed." : "GitHub check runs are still pending.");
-    return probe;
+    {std::ofstream output(file);output<<compactJson(config);}
+    const auto root=getEnvOrDefault("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT","/app/deployment-runtime");
+    const auto output=runCommandCapture("timeout 60s python3 "+shellQuote(root+"/github_ci.py")+" "+shellQuote(file.string()));
+    std::filesystem::remove(file);const auto result=parseJsonObject(output);
+    probe.queried=result.get("queried",false).asBool();probe.hasChecks=result.get("has_checks",false).asBool();
+    probe.pending=result.get("pending",false).asBool();probe.passed=result.get("passed",false).asBool();probe.failed=result.get("failed",false).asBool();probe.detail=result.get("detail","CI evidence unavailable").asString();return probe;
 }
 
 SshConnectionConfig rowToSshConfig(const pqxx::row& row,
@@ -666,6 +538,18 @@ Json::Value JobQueueService::enqueueDeploymentBuild(const std::string& deploymen
     pqxx::work txn(*conn);
 
     std::string safeMeta = metadataJson.empty() ? "{}" : metadataJson;
+    // Serialize enqueue against the deployment row. Two repair requests must
+    // not concurrently build/rewrite the same source workspace and container.
+    auto active = txn.exec_params(
+        "SELECT d.id, j.id AS active_job, j.status AS job_status FROM deployments d "
+        "LEFT JOIN deployment_jobs j ON j.id = d.job_id WHERE d.id = $1 FOR UPDATE OF d", deploymentId);
+    if (active.empty()) throw std::runtime_error("Deployment not found");
+    if (!active[0]["job_status"].is_null()) {
+        const std::string state = active[0]["job_status"].as<std::string>();
+        if (state == "queued" || state == "running" || state == "retrying") {
+            throw std::runtime_error("A build is already active for this deployment. Wait for job " + active[0]["active_job"].as<std::string>() + " before queuing another build.");
+        }
+    }
     auto jobRows = txn.exec_params(
         "INSERT INTO deployment_jobs (deployment_id, user_id, type, status, max_attempts, metadata) "
         "VALUES ($1, $2, 'deployment_build', 'queued', $3, $4::jsonb) "
@@ -712,8 +596,7 @@ void JobQueueService::recoverInterruptedJobs() {
         txn.exec_params(
             "UPDATE deployment_jobs "
             "SET status = 'queued', locked_by = '', locked_at = NULL, next_run_at = NOW(), updated_at = NOW() "
-            "WHERE status = 'running' AND (locked_by = $1 OR locked_at < NOW() - INTERVAL '15 minutes')",
-            workerId_
+            "WHERE status = 'running' AND locked_at < NOW() - INTERVAL '3 minutes'"
         );
         txn.exec(
             "UPDATE deployments "
@@ -784,7 +667,7 @@ std::optional<JobQueueService::DeploymentJobRecord> JobQueueService::claimJob(co
     pqxx::work txn(*conn);
     auto rows = txn.exec_params(
         "UPDATE deployment_jobs "
-        "SET status = 'running', attempts = attempts + 1, locked_by = $2, locked_at = NOW(), "
+        "SET status = 'running', attempts = attempts + CASE WHEN metadata ? 'awaiting_runtime' THEN 0 ELSE 1 END, locked_by = $2, locked_at = NOW(), "
         "started_at = COALESCE(started_at, NOW()), updated_at = NOW() "
         "WHERE id = $1 AND status IN ('queued', 'retrying') AND next_run_at <= NOW() "
         "RETURNING id, deployment_id, user_id, attempts, max_attempts",
@@ -817,7 +700,7 @@ std::optional<JobQueueService::DeploymentJobRecord> JobQueueService::claimNextDb
         "  FOR UPDATE SKIP LOCKED LIMIT 1"
         ") "
         "UPDATE deployment_jobs j "
-        "SET status = 'running', attempts = attempts + 1, locked_by = " + txn.quote(workerId_) + ", "
+        "SET status = 'running', attempts = attempts + CASE WHEN metadata ? 'awaiting_runtime' THEN 0 ELSE 1 END, locked_by = " + txn.quote(workerId_) + ", "
         "locked_at = NOW(), started_at = COALESCE(started_at, NOW()), updated_at = NOW() "
         "FROM candidate WHERE j.id = candidate.id "
         "RETURNING j.id, j.deployment_id, j.user_id, j.attempts, j.max_attempts"
@@ -862,8 +745,8 @@ void JobQueueService::completeJob(const DeploymentJobRecord& job) {
         txn.exec_params(
             "UPDATE deployment_jobs "
             "SET status = 'completed', completed_at = NOW(), locked_by = '', locked_at = NULL, updated_at = NOW() "
-            "WHERE id = $1",
-            job.id
+            "WHERE id = $1 AND status='running' AND locked_by=$2 AND attempts=$3",
+            job.id, workerId_, job.attempts
         );
         txn.commit();
     } catch (const std::exception& e) {
@@ -876,6 +759,9 @@ void JobQueueService::failJob(const DeploymentJobRecord& job, const std::string&
     try {
         auto conn = Database::getInstance().getConnection();
         pqxx::work txn(*conn);
+        auto lease=txn.exec_params("SELECT id FROM deployment_jobs WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 FOR UPDATE",job.id,workerId_,job.attempts);
+        if(lease.empty()){txn.commit();return;}
+
         if (shouldRetry) {
             const int delaySeconds = std::min(300, 10 * job.attempts * job.attempts);
             txn.exec_params(
@@ -915,12 +801,29 @@ void JobQueueService::failJob(const DeploymentJobRecord& job, const std::string&
 }
 
 void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) {
+    bool pendingObservation=false;
+    double pendingDeadline=0;
+    std::jthread lease([this, job](std::stop_token token) {
+        while(!token.stop_requested()) {
+            for(int i=0;i<20&&!token.stop_requested();++i)std::this_thread::sleep_for(std::chrono::seconds(1));
+            if(token.stop_requested())return;
+            try {
+                auto conn=Database::getInstance().getConnection();pqxx::work renew(*conn);
+                auto owned=renew.exec_params("UPDATE deployment_jobs SET locked_at=NOW() WHERE id=$1 AND status='running' AND locked_by=$2 AND attempts=$3 RETURNING id",job.id,workerId_,job.attempts);
+                renew.commit();
+                if(owned.empty()) { BuildService::getInstance().cancelBuild(job.deploymentId);return; }
+            } catch(const std::exception& e){spdlog::warn("Job heartbeat unavailable: {}",e.what());}
+        }
+    });
+
     try {
         auto conn = Database::getInstance().getConnection();
         pqxx::work txn(*conn);
         auto deploymentRows = txn.exec_params(
             "SELECT d.id, d.version, d.status, d.environment_id, d.source_artifact_id, d.branch, d.commit_sha, d.project_id, "
             "d.trigger_source, d.ci_required, d.ci_status, d.created_at AS deployment_created_at, "
+            "(SELECT metadata::text FROM deployment_jobs WHERE id=d.job_id) AS job_metadata, "
+            "d.remote_container_name AS previous_container, d.runtime_url AS previous_url, d.runtime_snapshot::text AS previous_snapshot, d.runtime_provider AS previous_provider, "
             "EXTRACT(EPOCH FROM (NOW() - d.created_at))::int AS deployment_age_seconds, "
             "e.cleanup_previous_on_success, e.current_deployment_id AS previous_current_deployment_id, "
             "sa.storage_path AS artifact_storage_path, "
@@ -956,6 +859,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
 
         const auto& row = deploymentRows[0];
         const std::string deploymentStatus = row["status"].as<std::string>();
+        const std::string previousContainer=row["previous_container"].is_null()?"":row["previous_container"].as<std::string>();
+        const std::string previousProvider=row["previous_provider"].is_null()?"":row["previous_provider"].as<std::string>();
+        const std::string previousUrl=row["previous_url"].is_null()?"":row["previous_url"].as<std::string>();
+        const Json::Value previousSnapshot=row["previous_snapshot"].is_null()?Json::Value(Json::objectValue):parseJsonObject(row["previous_snapshot"].as<std::string>());
         const std::string environmentId = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
         const bool ciRequired = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
         const std::string ciStatus = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
@@ -979,22 +886,15 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             DeploymentJournal::broadcastSummary(job.deploymentId);
             return;
         }
-        if (ciRequired && ciStatus == "pending" &&
-            (triggerSource != "github_push" || sourceTypeForCi != "github" || repoUrlForCi.empty() || commitShaForCi.empty())) {
-            txn.exec_params(
-                "UPDATE deployments "
-                "SET ci_status = 'not_required', "
-                "ci_details = ci_details || '{\"ci_bypassed_for_non_github_push\":true}'::jsonb, "
-                "logs = COALESCE(logs, '') || E'CI gate skipped because this deployment was not triggered by a GitHub push with a commit SHA.\\n', "
-                "updated_at = NOW() "
-                "WHERE id = $1",
-                job.deploymentId
-            );
+        if (ciRequired && ciStatus != "passed" &&
+            (sourceTypeForCi != "github" || repoUrlForCi.empty() || commitShaForCi.empty())) {
+            txn.exec_params("UPDATE deployments SET status='blocked',ci_status='pending',updated_at=NOW() WHERE id=$1",job.deploymentId);
+            txn.commit(); failJob(job,"Required CI cannot be verified: source and commit check evidence are missing",false); return;
         }
         if (ciRequired && ciStatus == "pending" &&
-            triggerSource == "github_push" && sourceTypeForCi == "github" && !repoUrlForCi.empty() && !commitShaForCi.empty()) {
+            sourceTypeForCi == "github" && !repoUrlForCi.empty() && !commitShaForCi.empty()) {
             const int graceSeconds = std::max(15, getEnvIntOrDefault("STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS", 90));
-            if (triggerSource == "github_push" && deploymentAgeSeconds >= graceSeconds) {
+            if (deploymentAgeSeconds >= graceSeconds) {
                 const auto probe = queryGitHubCheckRuns(repoUrlForCi, commitShaForCi, githubTokenForCi);
                 if (!probe.queried) {
                     txn.exec_params(
@@ -1063,14 +963,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                         job.deploymentId
                     );
                 } else {
-                    txn.exec_params(
-                        "UPDATE deployments "
-                        "SET ci_status = 'not_required', ci_details = ci_details || '{\"no_checks_found\":true}'::jsonb, "
-                        "logs = COALESCE(logs, '') || E'No GitHub check runs were found for this commit. Continuing because this repository may not define CI workflows.\\n', "
-                        "updated_at = NOW() "
-                        "WHERE id = $1",
-                        job.deploymentId
-                    );
+                    txn.exec_params("UPDATE deployments SET status='blocked',ci_status='pending',updated_at=NOW() WHERE id=$1",job.deploymentId);
+                    txn.commit(); failJob(job,"Required CI has no check runs; deployment remains blocked",false);return;
                 }
             } else {
                 const int retryDelay = std::min(30, std::max(5, graceSeconds - deploymentAgeSeconds));
@@ -1119,11 +1013,17 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             }
         }
 
-        const std::string version = row["version"].as<std::string>();
+        const std::string version = row["version"].as<std::string>() + "-" + job.id.substr(0,12) + "-a" + std::to_string(job.attempts);
         const std::string projectName = row["project_name"].as<std::string>();
         const std::string sourceType = row["source_type"].is_null() ? "github" : row["source_type"].as<std::string>();
-        const std::string executionMode = row["execution_mode"].is_null() ? "local" : row["execution_mode"].as<std::string>();
-        const std::string remoteRuntimeType = row["remote_runtime_type"].is_null() ? "docker" : row["remote_runtime_type"].as<std::string>();
+        const Json::Value jobMetadata=parseJsonObject(row["job_metadata"].is_null()?"{}":row["job_metadata"].as<std::string>());
+        const bool resumeRuntime=jobMetadata["awaiting_runtime"].isObject();
+        pendingObservation=resumeRuntime;
+        pendingDeadline=jobMetadata["awaiting_runtime"].get("deadline_at",0).asDouble();
+        const std::string runtimeTarget=jobMetadata.get("runtime_target", "").asString();
+        const Json::Value runtimeOptions=jobMetadata["runtime_options"];
+        const std::string executionMode = !runtimeTarget.empty()?"local":row["execution_mode"].is_null() ? "local" : row["execution_mode"].as<std::string>();
+        const std::string remoteRuntimeType = !runtimeTarget.empty()?(runtimeTarget=="kubernetes"?"kubernetes":"docker"):row["remote_runtime_type"].is_null() ? "docker" : row["remote_runtime_type"].as<std::string>();
         const std::string remoteK8sExposure = row["remote_k8s_exposure"].is_null() ? "nodeport" : row["remote_k8s_exposure"].as<std::string>();
         const std::string remoteConnectionId = row["remote_connection_id"].is_null() ? "" : row["remote_connection_id"].as<std::string>();
         const std::string runtimeScheme = normalizeRuntimeScheme(row["runtime_scheme"].is_null() ? "http" : row["runtime_scheme"].as<std::string>());
@@ -1143,6 +1043,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         const std::string githubPat = !projectToken.empty() ? projectToken : linkedGitHubToken;
 
         std::unordered_map<std::string, std::string> mergedEnvVars;
+        std::unordered_set<std::string> secretKeys;
         auto envRows = txn.exec_params(
             "SELECT key, value_encrypted FROM project_env_vars "
             "WHERE project_id = (SELECT project_id FROM deployments WHERE id = $1) "
@@ -1177,7 +1078,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             );
             std::vector<std::string> injectedIds;
             for (const auto& secretRow : secretRows) {
-                mergedEnvVars[secretRow["key"].as<std::string>()] =
+                secretKeys.insert(secretRow["key"].as<std::string>());
+                    mergedEnvVars[secretRow["key"].as<std::string>()] =
                     TokenCrypto::decrypt(secretRow["value_encrypted"].as<std::string>());
                 injectedIds.push_back(secretRow["id"].as<std::string>());
             }
@@ -1189,6 +1091,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     environmentId
                 );
                 for (const auto& secretRow : scopedRows) {
+                    secretKeys.insert(secretRow["key"].as<std::string>());
                     mergedEnvVars[secretRow["key"].as<std::string>()] =
                         TokenCrypto::decrypt(secretRow["value_encrypted"].as<std::string>());
                     injectedIds.push_back(secretRow["id"].as<std::string>());
@@ -1212,11 +1115,17 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         std::vector<BuildEnvVar> envVars;
         envVars.reserve(mergedEnvVars.size());
         for (const auto& item : mergedEnvVars) {
-            envVars.push_back({item.first, item.second});
+            envVars.push_back({item.first, item.second, secretKeys.count(item.first)>0});
         }
         std::sort(envVars.begin(), envVars.end(), [](const BuildEnvVar& left, const BuildEnvVar& right) {
             return left.key < right.key;
         });
+        if(resumeRuntime) {
+            auto original=parseJsonObject(TokenCrypto::decrypt(jobMetadata["awaiting_runtime"]["configuration_encrypted"].asString()));
+            if(!original["variables"].isArray())throw std::runtime_error("Pending execution configuration is unavailable");
+            envVars.clear();
+            for(const auto& item:original["variables"])envVars.push_back({item["key"].asString(),item["value"].asString(),item.get("secret",false).asBool()});
+        }
 
         if (sourceType == "github" && repoUrl.empty()) {
             txn.commit();
@@ -1257,6 +1166,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             remoteExecutionConfig = rowToSshConfig(row, "remote_", "ssh");
         }
 
+        if(!resumeRuntime) {
         txn.exec_params("DELETE FROM deployment_env_vars WHERE deployment_id = $1", job.deploymentId);
         for (const auto& envVar : envVars) {
             txn.exec_params(
@@ -1293,12 +1203,20 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             compactJson(envKeySnapshot(envVars)),
             remoteConnectionId
         );
+        }
         txn.commit();
 
         LogWebSocketController::broadcastStatus(job.deploymentId, "building");
         DeploymentJournal::broadcastSummary(job.deploymentId);
 
+        auto candidateObserver=[this,job](const std::string& provider,const std::string& resource,const Json::Value& snapshot){
+            auto connection=Database::getInstance().getConnection();pqxx::work registerCandidate(*connection);
+            auto owned=registerCandidate.exec_params("SELECT j.id FROM deployment_jobs j JOIN deployments d ON d.id=j.deployment_id WHERE j.id=$1 AND j.status='running' AND j.locked_by=$2 AND j.attempts=$3 AND d.job_id=j.id AND d.status NOT IN ('canceled','cancelled') FOR UPDATE OF j",job.id,workerId_,job.attempts);
+            if(owned.empty())throw std::runtime_error("Candidate creation rejected after job ownership was lost");
+            registerCandidate.exec_params("INSERT INTO deployment_runtime_candidates(job_id,attempt,deployment_id,provider,resource_key,snapshot) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT DO NOTHING",job.id,job.attempts,job.deploymentId,provider,resource,compactJson(snapshot));registerCandidate.commit();
+        };
         BuildService buildService;
+        buildService.setCandidateObserver(candidateObserver);
         const auto logSink = [deploymentId = job.deploymentId](const std::string& line) {
             DeploymentJournal::appendLine(deploymentId, line);
             LogWebSocketController::broadcastLog(deploymentId, line);
@@ -1313,7 +1231,13 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         // Check if this is an AI repair rebuild (skip re-clone, use modified source)
         bool isAiRepair = false;
         std::string aiSessionId;
+        std::string agentSourcePath, agentSourceRevision;
         int aiRepairAttempt = 0;
+        if(resumeRuntime) {
+            buildResult=pending_runtime::restore(jobMetadata["awaiting_runtime"]["build"]);
+            isAiRepair=jobMetadata.get("ai_repair",false).asBool();
+            aiSessionId=jobMetadata.get("ai_session_id","").asString();
+        } else {
         try {
             auto metaConn = Database::getInstance().getConnection();
             pqxx::work metaTxn(*metaConn);
@@ -1321,6 +1245,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 "SELECT COALESCE(dj.metadata->>'ai_repair', 'false') AS ai_repair, "
                 "COALESCE(dj.metadata->>'ai_session_id', '') AS ai_session_id, "
                 "COALESCE(dj.metadata->>'ai_repair_attempt', '0') AS ai_repair_attempt, "
+                "COALESCE(dj.metadata->>'agent_source_path', '') AS agent_source_path, "
+                "COALESCE(dj.metadata->>'agent_source_revision', '') AS agent_source_revision, "
                 "COALESCE(d.trigger_source, '') AS trigger_source "
                 "FROM deployment_jobs dj "
                 "LEFT JOIN deployments d ON d.id = dj.deployment_id "
@@ -1331,6 +1257,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 std::string flag = metaRows[0]["ai_repair"].as<std::string>();
                 std::string trig = metaRows[0]["trigger_source"].as<std::string>();
                 aiSessionId = metaRows[0]["ai_session_id"].as<std::string>();
+                agentSourcePath = metaRows[0]["agent_source_path"].as<std::string>();
+                agentSourceRevision = metaRows[0]["agent_source_revision"].as<std::string>();
                 try { aiRepairAttempt = std::stoi(metaRows[0]["ai_repair_attempt"].as<std::string>()); } catch (...) {}
                 if (flag == "true" || trig == "ai_repair") {
                     isAiRepair = true;
@@ -1341,14 +1269,28 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         }
 
         if (isAiRepair) {
-            const std::filesystem::path deploymentDir = std::filesystem::path("uploads/builds") / job.deploymentId;
-            const std::filesystem::path aiSourceDir = deploymentDir / "source";
+            const std::filesystem::path deploymentDir = buildService.sourceWorkspace(job.deploymentId).parent_path();
+            std::filesystem::path aiSourceDir = deploymentDir / "source";
             const std::filesystem::path aiLogFile = deploymentDir / "build.log";
+            if(!agentSourcePath.empty()) {
+                const auto prepared=deploymentDir/("agent-source-"+job.id+"-a"+std::to_string(job.attempts));
+                const char* runtimeEnv=std::getenv("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT");
+                const auto runtimeRoot=runtimeEnv&&*runtimeEnv?std::filesystem::path(runtimeEnv):std::filesystem::path("/app/deployment-runtime");
+                const auto command="python3 "+strings::shellQuote((runtimeRoot/"agent_source.py").string())+" "+strings::shellQuote(agentSourcePath)+" "+strings::shellQuote(prepared.string())+" "+strings::shellQuote(agentSourceRevision);
+                std::string exported;
+                if(runCommandCaptureExit("timeout 60s "+command+" 2>&1",exported)!=0) throw std::runtime_error("Accepted repaired source could not be verified/exported: "+exported);
+                aiSourceDir=prepared;
+                logSink("Agent team: building accepted repaired source revision "+agentSourceRevision);
+            }
             if (std::filesystem::exists(aiSourceDir)) {
                 logSink("AI Repair: Rebuilding from modified source (no re-clone)");
-                buildResult = buildService.buildFromPreparedSource(
-                    job.deploymentId, aiSourceDir, aiLogFile, version, envVars, logSink);
+                if(executionMode=="remote_host") {
+                    buildResult=buildService.buildGeneratedSourceAndRunOnRemoteDocker(job.deploymentId,remoteExecutionConfig,aiSourceDir.string(),sourcePath,version,projectName,0,envVars,logSink);
+                } else {
+                    buildResult = buildService.buildFromPreparedSource(job.deploymentId, aiSourceDir, aiLogFile, version, envVars, logSink);
+                }
             } else {
+                if(!agentSourcePath.empty()) throw std::runtime_error("Accepted repaired source missing; original-source fallback refused");
                 logSink("AI Repair: Source directory not found, falling back to normal build");
                 isAiRepair = false; // fall through to normal dispatch
             }
@@ -1366,7 +1308,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     branch,
                     commitSha,
                     projectName,
-                    3000,
+                    0,
                     envVars,
                     logSink
                 );
@@ -1378,7 +1320,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     sourcePath.empty() ? "/tmp" : sourcePath,
                     version,
                     projectName,
-                    3000,
+                    0,
                     envVars,
                     logSink
                 );
@@ -1398,7 +1340,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     sourcePath.empty() ? "/tmp" : sourcePath,
                     version,
                     projectName,
-                    3000,
+                    0,
                     envVars,
                     logSink
                 );
@@ -1409,80 +1351,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     sourcePath,
                     projectName,
                     version,
-                    3000,
+                    0,
                     envVars,
                     logSink
                 );
-            }
-            if (buildResult.success && remoteRuntimeType == "kubernetes") {
-                SshService sshService;
-                if (buildResult.composeProject) {
-                    KubernetesDeployOptions options;
-                    options.deploymentId = job.deploymentId;
-                    options.projectName = projectName;
-                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
-                    options.runtimeScheme = runtimeScheme;
-                    options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
-                    options.replicas = 1;
-                    options.containerPort = 3000;
-                    options.resourcePreset = "small";
-                    options.healthPath = "/";
-                    for (const auto& envVar : envVars) {
-                        options.envVars.emplace_back(envVar.key, envVar.value);
-                    }
-
-                    logSink("Deploying Docker Compose stack to remote Kubernetes...");
-                    remoteK8sRuntime = sshService.deployComposeKubernetesRuntime(
-                        remoteExecutionConfig,
-                        options,
-                        buildResult.composeWorkdir,
-                        buildResult.composeFile,
-                        buildResult.composeProjectName,
-                        buildResult.composeServices
-                    );
-                } else if (!buildResult.remoteContainerName.empty()) {
-                    const auto cleanup = sshService.removeDockerContainer(
-                        remoteExecutionConfig,
-                        buildResult.remoteContainerName,
-                        buildResult.imageName,
-                        false
-                    );
-                    if (!cleanup.output.empty()) {
-                        buildResult.logs += "\n" + cleanup.output;
-                    }
-                    logSink("Temporary remote Docker container removed before Kubernetes deployment");
-                }
-
-                if (!buildResult.composeProject) {
-                    KubernetesDeployOptions options;
-                    options.deploymentId = job.deploymentId;
-                    options.projectName = projectName;
-                    options.imageName = buildResult.imageName;
-                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
-                    options.runtimeScheme = runtimeScheme;
-                    options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
-                    options.replicas = 1;
-                    options.containerPort = 3000;
-                    options.resourcePreset = "small";
-                    options.healthPath = "/";
-                    for (const auto& envVar : envVars) {
-                        options.envVars.emplace_back(envVar.key, envVar.value);
-                    }
-
-                    logSink("Deploying image to remote Kubernetes...");
-                    remoteK8sRuntime = sshService.deployKubernetesRuntime(remoteExecutionConfig, options);
-                }
-                hasRemoteK8sRuntime = true;
-                buildResult.logs += "\n" + remoteK8sRuntime.logs;
-                buildResult.runtimeProvider = "remote_kubernetes";
-                buildResult.runtimeUrl = remoteK8sRuntime.runtimeUrl;
-                buildResult.remoteContainerName.clear();
-                if (!remoteK8sRuntime.success) {
-                    buildResult.success = false;
-                    buildResult.error = remoteK8sRuntime.error.empty()
-                        ? "Remote Kubernetes deployment failed"
-                        : remoteK8sRuntime.error;
-                }
             }
         } else if (!isAiRepair && sourceType == "ssh") {
             buildResult = buildService.buildFromSshSource(
@@ -1538,17 +1410,111 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             );
         }
 
+        if(buildResult.success && buildResult.deploymentPlan.get("tests_required",false).asBool() && buildResult.testEvidence.get("status",buildResult.testEvidence.get("tests","unrecorded")).asString()!="passed"){
+            buildResult.success=false;buildResult.error="Required repository tests did not provide passed evidence";
+        }
+        if(buildResult.success && buildResult.deploymentPlan["repository_plan"].isObject() &&
+           (executionMode=="remote_host" || remoteRuntimeType=="kubernetes")) {
+            buildResult.success=false;
+            buildResult.error="Component execution requires the registered local Linux Docker sandbox; remote/Kubernetes component identity verification is not implemented";
+        }
+        if (buildResult.success && executionMode == "remote_host" && remoteRuntimeType == "kubernetes") {
+                SshService sshService;
+                if (buildResult.composeProject) {
+                    KubernetesDeployOptions options;
+                    options.deploymentId = job.deploymentId;
+                    options.projectName = projectName;
+                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
+                    options.runtimeScheme = runtimeScheme;
+                    options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
+                    options.replicas = 1;
+                    options.containerPort = buildResult.deploymentPlan.get("port",3000).asInt();
+                    if(options.containerPort==0)options.containerPort=3000;
+                    options.resourcePreset = "small";
+                    options.healthPath = buildResult.deploymentPlan.get("health_path","/").asString();
+                    for (const auto& envVar : envVars) {
+                        options.envVars.emplace_back(envVar.key, envVar.value);
+                    }
+
+                    logSink("Deploying Docker Compose stack to remote Kubernetes...");
+                    remoteK8sRuntime = sshService.deployComposeKubernetesRuntime(
+                        remoteExecutionConfig,
+                        options,
+                        buildResult.composeWorkdir,
+                        buildResult.composeFile,
+                        buildResult.composeProjectName,
+                        buildResult.composeServices
+                    );
+                } else if (!buildResult.remoteContainerName.empty()) {
+                    const auto cleanup = sshService.removeDockerContainer(
+                        remoteExecutionConfig,
+                        buildResult.remoteContainerName,
+                        buildResult.imageName,
+                        false
+                    );
+                    if (!cleanup.output.empty()) {
+                        buildResult.logs += "\n" + cleanup.output;
+                    }
+                    logSink("Temporary remote Docker container removed before Kubernetes deployment");
+                }
+
+                if (!buildResult.composeProject) {
+                    KubernetesDeployOptions options;
+                    options.deploymentId = job.deploymentId;
+                    options.projectName = projectName;
+                    options.imageName = buildResult.imageName;
+                    options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
+                    options.runtimeScheme = runtimeScheme;
+                    options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
+                    options.replicas = 1;
+                    options.containerPort = buildResult.deploymentPlan.get("port",3000).asInt();
+                    if(options.containerPort==0)options.containerPort=3000;
+                    options.resourcePreset = "small";
+                    options.healthPath = buildResult.deploymentPlan.get("health_path","/").asString();
+                    for (const auto& envVar : envVars) {
+                        options.envVars.emplace_back(envVar.key, envVar.value);
+                    }
+
+                    logSink("Deploying image to remote Kubernetes...");
+                    remoteK8sRuntime = sshService.deployKubernetesRuntime(remoteExecutionConfig, options);
+                }
+                hasRemoteK8sRuntime = true;
+                buildResult.logs += "\n" + remoteK8sRuntime.logs;
+                buildResult.runtimeProvider = "remote_kubernetes";
+                buildResult.runtimeUrl = remoteK8sRuntime.runtimeUrl;
+                buildResult.remoteContainerName.clear();
+                if (!remoteK8sRuntime.success) {
+                    buildResult.success = false;
+                    buildResult.error = remoteK8sRuntime.error.empty()
+                        ? "Remote Kubernetes deployment failed"
+                        : remoteK8sRuntime.error;
+                }
+            }
+
+        if(buildResult.success && runtimeOptions.isMember("container_port") &&
+           buildResult.deploymentPlan.get("port",0).asInt()!=0 &&
+           buildResult.deploymentPlan["port"].asInt()!=runtimeOptions["container_port"].asInt()) {
+            buildResult.success=false;buildResult.error="Requested port conflicts with the source deployment contract";
+        }
+        if(buildResult.success && runtimeOptions.isMember("container_port"))buildResult.deploymentPlan["port"]=runtimeOptions["container_port"];
+        if(buildResult.success && runtimeOptions.isMember("health_path"))buildResult.deploymentPlan["health_path"]=runtimeOptions["health_path"];
+        if(buildResult.success && runtimeOptions.isMember("resource_preset"))buildResult.deploymentPlan["resource_preset"]=runtimeOptions["resource_preset"];
+
         if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "docker" && !buildResult.composeProject) {
             const std::string containerName =
                 "stackpilot-local-" + sanitizeDockerContainerName(projectName) + "-" +
-                sanitizeDockerContainerName(job.deploymentId).substr(0, 12);
+                sanitizeDockerContainerName(job.id).substr(0, 12) + "-a" + std::to_string(job.attempts);
+            candidateObserver("local_docker",containerName,Json::Value(Json::objectValue));
             logSink("Deploying image to local Docker...");
             std::string dockerOutput;
             const int dockerExit = runCommandCaptureExit(
-                "timeout 120s sh -lc " + shellQuote(makeLocalDockerRunCommand(containerName, buildResult.imageName, 3000, envVars)),
+                "timeout 120s sh -lc " + shellQuote(makeLocalDockerRunCommand(containerName, buildResult.artifactDigest.empty()?buildResult.imageName:buildResult.artifactDigest, buildResult.deploymentPlan.get("port",0).asInt(), envVars,buildResult.deploymentPlan)),
                 dockerOutput
             );
             buildResult.logs += "\n" + dockerOutput;
+            if(dockerOutput.find("__STACKPILOT_CANDIDATE_CREATED__")!=std::string::npos) {
+                buildResult.runtimeProvider="local_docker";buildResult.remoteContainerName=containerName;
+            }
             if (dockerExit != 0 || dockerOutput.find("__STACKPILOT_LOCAL_DOCKER_RUNNING__") == std::string::npos) {
                 buildResult.success = false;
                 if (dockerOutput.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
@@ -1566,6 +1532,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             } else {
                 buildResult.runtimeProvider = "local_docker";
                 buildResult.runtimeUrl = valueFromKeyValueOutput(dockerOutput, "runtime_url");
+                if(buildResult.deploymentPlan.get("protocol","http").asString()!="process")buildResult.deploymentPlan["port"]=std::stoi(valueFromKeyValueOutput(dockerOutput,"container_port"));
                 buildResult.remoteContainerName = containerName;
                 logSink("Runtime URL: " + buildResult.runtimeUrl);
             }
@@ -1576,13 +1543,14 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             options.deploymentId = job.deploymentId;
             options.projectName = projectName;
             options.imageName = buildResult.imageName;
-            options.nameSpace = getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps");
+            options.nameSpace = runtimeOptions.get("namespace",getEnvOrDefault("K8S_NAMESPACE", "stackpilot-apps")).asString();
             options.runtimeScheme = "http";
-            options.exposureMode = "nodeport";
-            options.replicas = 1;
-            options.containerPort = 3000;
-            options.resourcePreset = "small";
-            options.healthPath = "/";
+            options.exposureMode = runtimeOptions.get("exposure_mode","nodeport").asString();
+            options.replicas = runtimeOptions.get("replicas",1).asInt();
+            options.containerPort = buildResult.deploymentPlan.get("port",3000).asInt();
+                    if(options.containerPort==0)options.containerPort=3000;
+            options.resourcePreset = runtimeOptions.get("resource_preset","small").asString();
+            options.healthPath = buildResult.deploymentPlan.get("health_path","/").asString();
             for (const auto& envVar : envVars) {
                 options.envVars.emplace_back(envVar.key, envVar.value);
             }
@@ -1613,10 +1581,140 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             }
         }
 
+        }
+        // A running container/HTTP 200 does not prove a web frontend rendered.
+        // Gate promotion on an observed browser smoke check; unavailable checks
+        // fail closed instead of advertising an unverified green deployment.
+        Json::Value runtimeVerification(Json::objectValue);
+        const auto directIdentity=[&]() {
+            std::string observed;
+            const std::string format=R"({"container_id":{{json .Id}},"image_id":{{json .Image}},"started_at":{{json .State.StartedAt}},"restart_count":{{.RestartCount}},"running":{{.State.Running}}})";
+            if(runCommandCaptureExit("timeout 8s docker inspect --format "+shellQuote(format)+" "+shellQuote(buildResult.remoteContainerName),observed)!=0)
+                throw std::runtime_error("Candidate runtime identity observation failed");
+            return parseJsonObject(observed);
+        };
+        if(buildResult.success && buildResult.runtimeProvider=="local_docker") {
+            const auto observed=directIdentity();
+            const auto pinned=buildResult.deploymentPlan["runtime_identity"];
+            if(!observed.get("running",false).asBool() || observed.get("restart_count",-1).asInt()!=0 ||
+               (!pinned.isNull() && pinned!=observed) ||
+               (buildResult.artifactDigest.rfind("sha256:",0)==0 && buildResult.artifactDigest!=observed["image_id"].asString())) {
+                buildResult.success=false;buildResult.error="Candidate identity differs from the built or pending execution";
+            } else buildResult.deploymentPlan["runtime_identity"]=observed;
+        }
+        if(buildResult.success && buildResult.runtimeProvider=="local_docker" && buildResult.deploymentPlan.get("protocol","http").asString()=="process") {
+            std::string observed;
+            int code=runCommandCaptureExit("timeout 8s docker inspect --format '{{.State.Running}} {{.RestartCount}}' "+shellQuote(buildResult.remoteContainerName),observed);
+            bool stable=code==0 && trim(observed)=="true 0";
+            runtimeVerification["verified"]=stable;runtimeVerification["scope"]="process";
+            runtimeVerification["status"]=stable?"passed":"failed";runtimeVerification["observation"]=observed;
+            runtimeVerification["reason"]="Fresh process observation; undeclared worker workflows remain unverified";
+            if(!stable){buildResult.success=false;buildResult.error="Process workload exited or restarted before promotion";}
+        }
+        if(buildResult.success && buildResult.runtimeProvider=="local_compose" && buildResult.deploymentPlan["repository_plan"].isObject() && resumeRuntime) {
+            const auto directory=std::filesystem::path(buildResult.composeWorkdir);
+            {std::ofstream plan(directory/"observation-plan.json");plan<<compactJson(buildResult.deploymentPlan);}
+            std::string output;
+            auto command=LocalDockerRuntime::makeComposeObservationCommand(
+                getEnvOrDefault("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT","/app/deployment-runtime"),buildResult.composeProjectName,
+                (directory/"compose.safe.json").string(),(directory/"observation-plan.json").string(),(directory/"component-runtime-current.json").string(),false);
+            if(runCommandCaptureExit(command,output)!=0)throw std::runtime_error("Current component runtime observation is unavailable");
+            Json::Value current;{std::ifstream input(directory/"component-runtime-current.json");input>>current;}
+            if(!sameComponentIdentities(buildResult.deploymentPlan["component_runtime"]["components"],current["components"])) {
+                buildResult.success=false;buildResult.error="Pending component candidate was replaced or restarted";
+            } else buildResult.deploymentPlan["component_runtime"]=current;
+        }
+        if (buildResult.success && (!buildResult.runtimeUrl.empty() ||
+            (buildResult.runtimeProvider=="local_compose" && buildResult.deploymentPlan["repository_plan"].isObject()))) {
+            Json::Value probe(Json::objectValue);
+            probe["url"] = buildResult.runtimeUrl;
+            probe["deployment_id"] = job.deploymentId;
+            probe["contract"] = buildResult.deploymentPlan;
+            auto verified = AiServiceClient::instance().postWorkflow("/runtime/verify", probe);
+            runtimeVerification = verified.body;
+            // Retain execution identity even when a finite job completes on
+            // its first observation; future health checks must not accept a replay.
+            const auto execution=verified.body["job"].get("execution_id","").asString();
+            if(!execution.empty())buildResult.deploymentPlan["job_execution_id"]=execution;
+            if(verified.body["job_execution_ids"].isObject()) {
+                for(const auto& component:verified.body["job_execution_ids"].getMemberNames())
+                    buildResult.deploymentPlan["component_contracts"][component]["job_execution_id"]=verified.body["job_execution_ids"][component];
+            }
+            const auto nowSeconds=std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+            const bool temporaryUnavailability=resumeRuntime && (!verified.ok || verified.body.get("status","").asString()=="unverified") &&
+                jobMetadata["awaiting_runtime"].get("deadline_at",0).asDouble()>nowSeconds;
+            if((temporaryUnavailability || (verified.ok && !verified.body.get("verified",false).asBool() && verified.body.get("status","").asString()=="running" && verified.body.get("pending",false).asBool())) &&
+               (buildResult.runtimeProvider=="local_docker" || buildResult.runtimeProvider=="local_compose")) {
+                // Persist this exact candidate and release the queue worker.
+                // Polls resume observation, never rerun its command or rebuild.
+                Json::Value pending(Json::objectValue);pending["build"]=pending_runtime::snapshot(buildResult);
+                pending["deadline_at"]=resumeRuntime?jobMetadata["awaiting_runtime"]["deadline_at"]:
+                    verified.body.get("deadline_at",verified.body["job"].get("deadline_at",0));
+                Json::Value configuration(Json::objectValue);configuration["variables"]=Json::Value(Json::arrayValue);
+                for(const auto& e:envVars){Json::Value value;value["key"]=e.key;value["value"]=e.value;value["secret"]=e.secret;configuration["variables"].append(value);}
+                pending["configuration_encrypted"]=TokenCrypto::encrypt(compactJson(configuration));
+                auto connection=Database::getInstance().getConnection();pqxx::work wait(*connection);
+                auto owned=wait.exec_params("SELECT j.id FROM deployment_jobs j JOIN deployments d ON d.id=j.deployment_id WHERE j.id=$1 AND j.status='running' AND j.locked_by=$2 AND j.attempts=$3 AND d.job_id=j.id AND d.status NOT IN ('canceled','cancelled') FOR UPDATE OF j,d",job.id,workerId_,job.attempts);
+                if(owned.empty()){wait.commit();return;}
+                wait.exec_params("UPDATE deployment_jobs SET status='retrying',locked_by='',locked_at=NULL,next_run_at=NOW()+INTERVAL '5 seconds',metadata=metadata||jsonb_build_object('awaiting_runtime',$2::jsonb,'runtime_verification',$3::jsonb),updated_at=NOW() WHERE id=$1",job.id,compactJson(pending),compactJson(runtimeVerification));
+                wait.exec_params("UPDATE deployments SET runtime_snapshot=COALESCE(runtime_snapshot,'{}'::jsonb)||jsonb_build_object('pending_runtime',$2::jsonb,'runtime_verification',$3::jsonb),updated_at=NOW() WHERE id=$1",job.deploymentId,compactJson(buildResult.deploymentPlan),compactJson(runtimeVerification));
+                wait.commit();DeploymentJournal::broadcastSummary(job.deploymentId);return;
+            }
+            if (!verified.ok || !verified.body.get("verified", false).asBool()) {
+                buildResult.success = false;
+                buildResult.error = "Runtime browser verification failed: " +
+                    (verified.ok ? verified.body.get("reason", "No verification evidence").asString() : verified.error);
+                buildResult.logs += "\n" + buildResult.error + "\n";
+            } else {
+                buildResult.logs += "\nRuntime workload contract passed (undeclared workflows unverified).\n";
+            }
+        }
+        if(buildResult.success && buildResult.runtimeProvider=="local_docker" &&
+           directIdentity()!=buildResult.deploymentPlan["runtime_identity"]) {
+            buildResult.success=false;buildResult.error="Candidate runtime changed during verification";
+        }
+        if(buildResult.success && buildResult.runtimeProvider=="local_compose" && buildResult.deploymentPlan["repository_plan"].isObject()) {
+            const auto directory=std::filesystem::path(buildResult.composeWorkdir);
+            {std::ofstream plan(directory/"observation-plan.json");plan<<compactJson(buildResult.deploymentPlan);}
+            std::string output;
+            const auto command=LocalDockerRuntime::makeComposeObservationCommand(
+                getEnvOrDefault("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT","/app/deployment-runtime"),buildResult.composeProjectName,
+                (directory/"compose.safe.json").string(),(directory/"observation-plan.json").string(),(directory/"component-runtime-after.json").string(),true);
+            Json::Value after;
+            if(runCommandCaptureExit(command,output)==0){std::ifstream input(directory/"component-runtime-after.json");input>>after;}
+            if(!sameComponentIdentities(runtimeVerification["identities"],after["components"])) {
+                buildResult.success=false;buildResult.error="Component runtime changed during verification";
+            }
+        }
+        if(!buildResult.success && buildResult.runtimeProvider=="local_docker" && !buildResult.remoteContainerName.empty() && buildResult.remoteContainerName!=previousContainer) {
+            const auto cleanup=LocalDockerRuntime::removeContainer(buildResult.remoteContainerName,"",false);
+            if(!cleanup.success)buildResult.logs+="\nFailed candidate cleanup requires retry: "+cleanup.error;
+        }
+        if(!buildResult.success && buildResult.runtimeProvider=="local_compose" && !buildResult.composeProjectName.empty()) {
+            std::string cleanup;
+            if(runCommandCaptureExit("timeout 30s docker compose -p "+shellQuote(buildResult.composeProjectName)+" -f "+shellQuote((std::filesystem::path(buildResult.composeWorkdir)/buildResult.composeFile).string())+" down --remove-orphans",cleanup)!=0)
+                buildResult.logs+="\nFailed Compose candidate cleanup requires reconciliation: "+cleanup;
+        }
         auto connUpdate = Database::getInstance().getConnection();
         pqxx::work updateTxn(*connUpdate);
+        std::string stableRuntimeUrl;
+        Json::Value previousRoute;
         std::string deploymentToRetire;
         bool cleanupPreviousDeployment = false;
+        auto promotionLease=updateTxn.exec_params("SELECT j.id FROM deployment_jobs j JOIN deployments d ON d.id=j.deployment_id WHERE j.id=$1 AND j.status='running' AND j.locked_by=$2 AND j.attempts=$3 AND d.job_id=j.id AND d.status NOT IN ('canceled','cancelled') FOR UPDATE OF j,d",job.id,workerId_,job.attempts);
+        if(promotionLease.empty()){
+            updateTxn.commit();
+            if(buildResult.runtimeProvider=="local_docker" && !buildResult.remoteContainerName.empty() && buildResult.remoteContainerName!=previousContainer)
+                LocalDockerRuntime::removeContainer(buildResult.remoteContainerName,"",false);
+            if(buildResult.runtimeProvider=="local_compose" && !buildResult.composeProjectName.empty()){
+                std::string ignored;
+                runCommandCaptureExit("timeout 30s docker compose -p "+shellQuote(buildResult.composeProjectName)+" -f "+shellQuote((std::filesystem::path(buildResult.composeWorkdir)/buildResult.composeFile).string())+" down --remove-orphans",ignored);
+            }
+            return;
+        }
+        updateTxn.exec_params(
+            "UPDATE deployment_jobs SET metadata = (COALESCE(metadata, '{}'::jsonb)-'awaiting_runtime') || jsonb_build_object('runtime_verification', $2::jsonb) WHERE id = $1 AND locked_by=$3 AND attempts=$4",
+            job.id, compactJson(runtimeVerification),workerId_,job.attempts);
         if (buildResult.success) {
             if (buildResult.runtimeProvider == "remote_kubernetes" && hasRemoteK8sRuntime) {
                 updateTxn.exec_params(
@@ -1703,7 +1801,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     compactJson(composeRuntimeSnapshot(buildResult, "remote_compose", "http")),
                     job.deploymentId
                 );
-                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
+                // Publish status after the transaction and routed verification.
             } else if (buildResult.runtimeProvider == "remote_docker") {
                 updateTxn.exec_params(
                     "UPDATE deployments "
@@ -1721,7 +1819,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     compactJson(runtimeSnapshot("remote_docker", buildResult.imageName, buildResult.runtimeUrl, "remote_docker", 1, 3000, "small", "/", "http", &buildResult)),
                     job.deploymentId
                 );
-                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
+                // Publish status after the transaction and routed verification.
             } else if (buildResult.runtimeProvider == "local_compose") {
                 updateTxn.exec_params(
                     "UPDATE deployments "
@@ -1736,9 +1834,9 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     compactJson(composeRuntimeSnapshot(buildResult, "local_compose", "http")),
                     job.deploymentId
                 );
-                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
+                // Publish status after the transaction and routed verification.
             } else if (buildResult.runtimeProvider == "local_docker") {
-                int containerPort = 3000;
+                int containerPort = buildResult.deploymentPlan.get("port",0).asInt();
                 updateTxn.exec_params(
                     "UPDATE deployments "
                     "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'local_docker', "
@@ -1755,7 +1853,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     compactJson(runtimeSnapshot("local_docker", buildResult.imageName, buildResult.runtimeUrl, "local_docker", 1, containerPort, "small", "/", "http", &buildResult)),
                     job.deploymentId
                 );
-                LogWebSocketController::broadcastStatus(job.deploymentId, "running");
+                // Publish status after the transaction and routed verification.
             } else {
                 updateTxn.exec_params(
                     "UPDATE deployments "
@@ -1825,18 +1923,55 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     job.deploymentId
                 );
             }
+            if(!environmentId.empty() && (buildResult.runtimeProvider=="local_docker"||buildResult.runtimeProvider=="local_compose") && buildResult.deploymentPlan.get("protocol","http").asString()=="http") {
+                const auto suffix=getEnvOrDefault("STACKPILOT_LOCAL_PREVIEW_SUFFIX","");
+                if(!suffix.empty()) {
+                    auto old=updateTxn.exec_params("SELECT deployment_id::text,job_id::text,upstream_url,verification::text FROM environment_runtime_routes WHERE environment_id=$1",environmentId);
+                    if(!old.empty()){previousRoute["deployment_id"]=old[0]["deployment_id"].as<std::string>();previousRoute["job_id"]=old[0]["job_id"].as<std::string>();previousRoute["upstream_url"]=old[0]["upstream_url"].as<std::string>();previousRoute["verification"]=parseJsonObject(old[0]["verification"].as<std::string>());}
+                    stableRuntimeUrl="http://"+environmentId+suffix;
+                    updateTxn.exec_params("INSERT INTO environment_runtime_routes(environment_id,deployment_id,job_id,upstream_url,verification) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(environment_id) DO UPDATE SET deployment_id=EXCLUDED.deployment_id,job_id=EXCLUDED.job_id,upstream_url=EXCLUDED.upstream_url,verification=EXCLUDED.verification,generation=environment_runtime_routes.generation+1,updated_at=NOW()",environmentId,job.deploymentId,job.id,buildResult.runtimeUrl,compactJson(runtimeVerification));
+                    updateTxn.exec_params("UPDATE deployments SET runtime_url=$2,runtime_snapshot=runtime_snapshot||jsonb_build_object('runtime_url',$2::text,'candidate_url',$3::text,'stable_origin',TRUE) WHERE id=$1",job.deploymentId,stableRuntimeUrl,buildResult.runtimeUrl);
+                }
+            }
             updateTxn.exec_params(
                 "UPDATE deployments "
                 "SET ci_status = CASE WHEN ci_required = TRUE AND ci_status = 'pending' THEN 'passed' ELSE ci_status END "
                 "WHERE id = $1",
                 job.deploymentId
             );
+            if(runtimeVerification.get("verified",false).asBool()){
+                Json::Value configuration(Json::arrayValue);
+                for(const auto& e:envVars){Json::Value value;value["key"]=e.key;value["value"]=e.value;configuration.append(value);}
+                const auto encrypted=TokenCrypto::encrypt(compactJson(configuration));
+                updateTxn.exec_params("UPDATE deployments SET runtime_snapshot=COALESCE(runtime_snapshot,'{}'::jsonb)||jsonb_build_object('runtime_verification',$2::jsonb,'job_id',$3::text,'attempt',$4::int) WHERE id=$1",job.deploymentId,compactJson(runtimeVerification),job.id,job.attempts);
+                updateTxn.exec_params("INSERT INTO deployment_release_checkpoints(deployment_id,project_id,environment_id,job_id,attempt,provider,image_digest,runtime_snapshot,runtime_config_encrypted) SELECT id,project_id,environment_id,$2::uuid,$3,runtime_provider,$4,runtime_snapshot,$5 FROM deployments WHERE id=$1 ON CONFLICT(job_id,attempt) DO NOTHING",job.deploymentId,job.id,job.attempts,buildResult.artifactDigest,encrypted);
+            }
         } else {
             std::string failureLogs = buildResult.logs.empty() ? buildResult.error : buildResult.logs;
             if (!buildResult.error.empty() && failureLogs.find(buildResult.error) == std::string::npos) {
                 failureLogs += "\nFailure reason: " + buildResult.error + "\n";
             }
             Json::Value failSnapshot(Json::objectValue);
+            // A failed replacement can still reference the previous serving
+            // runtime. Preserve its cleanup identity instead of leaving an
+            // inherited Compose provider with no safe project/path metadata.
+            if(!previousContainer.empty() && previousSnapshot.isObject())
+                failSnapshot=previousSnapshot;
+            else if(buildResult.composeProject && !buildResult.composeProjectName.empty() &&
+                    !buildResult.composeWorkdir.empty() && !buildResult.composeFile.empty())
+                failSnapshot=composeRuntimeSnapshot(buildResult,
+                    buildResult.runtimeProvider.empty()?"local_compose":buildResult.runtimeProvider,runtimeScheme);
+            failSnapshot["runtime_verification"] = runtimeVerification;
+            failSnapshot["runtime_url"] = buildResult.runtimeUrl;
+            failSnapshot["deployment_plan"]=buildResult.deploymentPlan;
+            failSnapshot["test_evidence"]=buildResult.testEvidence;
+            failSnapshot["artifact_digest"]=buildResult.artifactDigest;
+            if(!previousContainer.empty()) {
+                failSnapshot["serving_previous_runtime"]=true;
+                failSnapshot["previous_runtime_snapshot"]=previousSnapshot;
+                failSnapshot["serving_url"]=previousUrl;
+                failSnapshot["serving_provider"]=previousProvider;
+            }
             if (!buildResult.archetype.empty()) {
                 failSnapshot["archetype"] = buildResult.archetype;
                 failSnapshot["archetype_details"] = buildResult.archetypeDetails;
@@ -1863,7 +1998,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 "artifact_available = FALSE, updated_at = NOW() "
                 "WHERE id = $4 AND status <> 'canceled'",
                 failureLogs,
-                buildResult.remoteContainerName,
+                previousContainer.empty()?buildResult.remoteContainerName:previousContainer,
                 compactJson(failSnapshot),
                 job.deploymentId
             );
@@ -1872,15 +2007,51 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 LogWebSocketController::broadcastStatus(job.deploymentId, "failed");
             }
         }
+        if(buildResult.success && !stableRuntimeUrl.empty()) {
+            updateTxn.exec_params("UPDATE deployment_jobs SET metadata=metadata||jsonb_build_object('release_committed',TRUE) WHERE id=$1",job.id);
+            updateTxn.exec_params("UPDATE deployments SET status='deploying' WHERE id=$1 AND job_id=$2",job.deploymentId,job.id);
+        }
+        if(buildResult.success)updateTxn.exec_params("UPDATE deployment_runtime_candidates SET status='promoted',updated_at=NOW() WHERE job_id=$1 AND attempt=$2",job.id,job.attempts);
         updateTxn.commit();
         DeploymentJournal::broadcastSummary(job.deploymentId);
+
+        if(buildResult.success && !stableRuntimeUrl.empty()) {
+            Json::Value transport=buildResult.deploymentPlan;transport["verification_scope"]="http_contract";transport["workload"]="api";
+            transport.removeMember("repository_plan");transport.removeMember("component_contracts");transport.removeMember("component_runtime");
+            Json::Value request;request["url"]=stableRuntimeUrl;request["contract"]=transport;
+            const auto routed=AiServiceClient::instance().postWorkflow("/runtime/verify",request);
+            if(!routed.ok||!routed.body.get("verified",false).asBool()) {
+                // Compensate only if this attempt still owns the route. A newer
+                // release's traffic must never be overwritten by a late probe.
+                auto connection=Database::getInstance().getConnection();pqxx::work rollback(*connection);
+                auto owned=rollback.exec_params("SELECT environment_id FROM environment_runtime_routes WHERE environment_id=$1 AND job_id=$2 FOR UPDATE",environmentId,job.id);
+                if(!owned.empty()) {
+                    if(previousRoute.isObject()&&!previousRoute.empty()) {
+                        rollback.exec_params("UPDATE environment_runtime_routes SET deployment_id=$2::uuid,job_id=$3::uuid,upstream_url=$4,verification=$5::jsonb,generation=generation+1,updated_at=NOW() WHERE environment_id=$1",environmentId,previousRoute["deployment_id"].asString(),previousRoute["job_id"].asString(),previousRoute["upstream_url"].asString(),compactJson(previousRoute["verification"]));
+                        rollback.exec_params("UPDATE project_environments SET current_deployment_id=$2::uuid WHERE id=$1",environmentId,previousRoute["deployment_id"].asString());
+                    } else {rollback.exec_params("DELETE FROM environment_runtime_routes WHERE environment_id=$1",environmentId);rollback.exec_params("UPDATE project_environments SET current_deployment_id=NULL WHERE id=$1",environmentId);}
+                    rollback.exec_params("UPDATE deployments SET status='failed',runtime_snapshot=runtime_snapshot||jsonb_build_object('routed_verification',$2::jsonb),updated_at=NOW() WHERE id=$1 AND job_id=$3",job.deploymentId,compactJson(routed.body),job.id);
+                    rollback.exec_params("DELETE FROM deployment_release_checkpoints WHERE job_id=$1 AND attempt=$2",job.id,job.attempts);
+                    rollback.exec_params("UPDATE deployment_runtime_candidates SET status='cleanup_failed',updated_at=NOW() WHERE job_id=$1 AND attempt=$2",job.id,job.attempts);
+                }
+                rollback.commit();
+                buildResult.success=false;buildResult.error="Stable route verification failed; prior route retained";
+                if(buildResult.runtimeProvider=="local_docker")LocalDockerRuntime::removeContainer(buildResult.remoteContainerName,"",false);
+                if(buildResult.runtimeProvider=="local_compose"){std::string ignored;runCommandCaptureExit("timeout 30s docker compose -p "+shellQuote(buildResult.composeProjectName)+" -f "+shellQuote((std::filesystem::path(buildResult.composeWorkdir)/buildResult.composeFile).string())+" down --remove-orphans",ignored);}
+            } else {
+                auto connection=Database::getInstance().getConnection();pqxx::work observed(*connection);
+                observed.exec_params("UPDATE deployments SET status='running',runtime_snapshot=runtime_snapshot||jsonb_build_object('routed_verification',$2::jsonb) WHERE id=$1 AND job_id=$3",job.deploymentId,compactJson(routed.body),job.id);observed.commit();
+                LogWebSocketController::broadcastStatus(job.deploymentId,"running");
+            }
+        }
 
         if (buildResult.success) {
             if (cleanupPreviousDeployment && !deploymentToRetire.empty() && deploymentToRetire != job.deploymentId) {
                 DeploymentCleanupOptions cleanupOptions;
                 cleanupOptions.deleteDatabaseRow = false;
-                cleanupOptions.deleteImage = true;
-                cleanupOptions.deleteRemoteWorkspace = true;
+                cleanupOptions.deleteImage = false;
+                cleanupOptions.deleteRemoteWorkspace = false;
+                cleanupOptions.preserveWorkspace = true;
                 DeploymentCleanupService cleanupService;
                 const auto cleanup = cleanupService.cleanupDeployment(job.userId, deploymentToRetire, cleanupOptions);
                 try {
@@ -1889,7 +2060,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                     if (cleanup.success) {
                         cleanupTxn.exec_params(
                             "UPDATE deployments "
-                            "SET status = 'retired', logs = COALESCE(logs, '') || E'Environment superseded by a newer successful commit; runtime and image were cleaned up.\\n', updated_at = NOW() "
+                            "SET status = 'retired', logs = COALESCE(logs, '') || E'Environment superseded; stopped runtime, retained image and workspace for recovery.\\n', updated_at = NOW() "
                             "WHERE id = $1",
                             deploymentToRetire
                         );
@@ -1911,7 +2082,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             completeJob(job);
 
             // ── AI SRE: Mark healing session as healed on successful AI repair build ──
-            if (isAiRepair && !aiSessionId.empty()) {
+            if (isAiRepair && !aiSessionId.empty() && runtimeVerification.get("verified", false).asBool()) {
                 try {
                     auto healConn = Database::getInstance().getConnection();
                     pqxx::work healTxn(*healConn);
@@ -1938,332 +2109,46 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         } else {
             failJob(job, buildResult.error.empty() ? "Deployment build failed" : buildResult.error, false);
 
-            // ── AI SRE: Autonomous self-healing trigger on build failure ──
-            // Only trigger if: (1) not already an AI repair that's exhausted retries,
-            // (2) attempt count < 3, (3) AI is enabled for this user
-            if (!isAiRepair) {
-                try {
-                    // Check if AI is enabled for this user
-                    auto aiConn = Database::getInstance().getConnection();
-                    pqxx::work aiCheckTxn(*aiConn);
-                    auto aiPrefRows = aiCheckTxn.exec_params(
-                        "SELECT COALESCE(enabled, TRUE) AS enabled, "
-                        "COALESCE(provider, 'nvidia') AS provider, "
-                        "COALESCE(model, '') AS model "
-                        "FROM ai_preferences WHERE user_id = $1",
-                        job.userId);
-                    aiCheckTxn.commit();
-
-                    bool aiEnabled = true;
-                    std::string aiProvider = "nvidia";
-                    std::string aiModel = "";
-                    if (!aiPrefRows.empty()) {
-                        aiEnabled = aiPrefRows[0]["enabled"].as<bool>();
-                        aiProvider = aiPrefRows[0]["provider"].as<std::string>();
-                        aiModel = aiPrefRows[0]["model"].is_null() ? "" : aiPrefRows[0]["model"].as<std::string>();
-                    }
-
-                    if (aiEnabled && !projectId.empty()) {
-                        spdlog::info("AI SRE: Spawning autonomous background auto-healing thread for deployment {} (project {})",
-                                     job.deploymentId, projectName);
-
-                        std::thread([userId = job.userId,
-                                     deploymentId = job.deploymentId,
-                                     projectId,
-                                     projectName,
-                                     branch,
-                                     buildError = buildResult.error,
-                                     aiProvider,
-                                     aiModel]() {
-                            try {
-                                // 1. Create SRE incident session
-                                std::string sessionId;
-                                auto sessConn = Database::getInstance().getConnection();
-                                pqxx::work sessTxn(*sessConn);
-                                auto sessResult = sessTxn.exec_params(
-                                    "INSERT INTO ai_sessions (user_id, project_id, deployment_id, title, session_type, status) "
-                                    "VALUES ($1::uuid, $2::uuid, $3::uuid, $4, 'sre_incident', 'healing') RETURNING id",
-                                    userId,
-                                    projectId,
-                                    deploymentId,
-                                    "🤖 Auto-Healing: " + projectName + " (" + deploymentId.substr(0, std::min<size_t>(8, deploymentId.size())) + ")"
-                                );
-                                sessionId = sessResult[0][0].as<std::string>();
-
-                                // 2. Log initial user error message
-                                std::string logExcerpt = buildError;
-                                if (logExcerpt.size() > 2500) {
-                                    logExcerpt = "..." + logExcerpt.substr(logExcerpt.size() - 2500);
-                                }
-                                sessTxn.exec_params(
-                                    "INSERT INTO ai_messages (session_id, role, content, metadata) "
-                                    "VALUES ($1::uuid, 'user', $2, '{}'::jsonb)",
-                                    sessionId,
-                                    "**Build Failed**\n\n"
-                                    "**Project:** " + projectName + "\n"
-                                    "**Deployment:** `" + deploymentId.substr(0, std::min<size_t>(8, deploymentId.size())) + "...`\n\n"
-                                    "**Error:**\n```\n" + logExcerpt + "\n```\n\n"
-                                    "Please autonomously inspect the workspace files, fix the root cause with code and configuration edits, trigger rebuild with workspace_trigger_rebuild, and verify the deployment reaches running state."
-                                );
-
-                                // 3. Insert initial assistant message
-                                auto asstResult = sessTxn.exec_params(
-                                    "INSERT INTO ai_messages (session_id, role, content, metadata) "
-                                    "VALUES ($1::uuid, 'assistant', '🔍 Initializing Autonomous SRE Auto-Healing Engine...', "
-                                    "'{\"reasoning\": \"• 🤖 [AI SRE Engine] Initiating autonomous auto-healing loop...\\n\", \"tool_calls\": []}'::jsonb) "
-                                    "RETURNING id",
-                                    sessionId
-                                );
-                                std::string assistantMsgId = asstResult[0][0].as<std::string>();
-                                sessTxn.commit();
-
-                                // 4. Build streaming payload for agentic loop
-                                Json::Value payload(Json::objectValue);
-                                payload["provider"] = aiProvider;
-                                if (!aiModel.empty()) payload["model"] = aiModel;
-                                payload["model_mode"] = "thinking";
-                                payload["workflow_type"] = "sre_incident";
-                                payload["command"] = "/repair";
-                                payload["deployment_id"] = deploymentId;
-                                payload["project_id"] = projectId;
-                                payload["session_id"] = sessionId;
-                                payload["user_id"] = userId;
-
-                                Json::Value deploymentCtx(Json::objectValue);
-                                deploymentCtx["id"] = deploymentId;
-                                deploymentCtx["status"] = "failed";
-                                deploymentCtx["logs"] = buildError;
-                                deploymentCtx["branch"] = branch;
-                                payload["deployment"] = deploymentCtx;
-
-                                Json::Value projectCtx(Json::objectValue);
-                                projectCtx["id"] = projectId;
-                                projectCtx["name"] = projectName;
-                                payload["project"] = projectCtx;
-
-                                payload["message"] = "/repair The build for deployment " + deploymentId + " in project " + projectName + " failed with error:\n```\n" + logExcerpt + "\n```\nPlease autonomously inspect the workspace, apply surgical fixes using workspace tools, trigger rebuild, and verify until the service is live.";
-
-                                // 5. Stream from ai-service and record thoughts & tools
-                                std::string assembledReasoning = "• 🤖 [AI SRE Engine] Initiating autonomous auto-healing loop...\n";
-                                std::string assembledContent;
-                                Json::Value toolCalls(Json::arrayValue);
-                                auto lastDbUpdate = std::chrono::steady_clock::now();
-
-                                auto flushDb = [&](bool force) {
-                                    auto now = std::chrono::steady_clock::now();
-                                    if (!force && std::chrono::duration_cast<std::chrono::milliseconds>(now - lastDbUpdate).count() < 1500) {
-                                        return;
-                                    }
-                                    try {
-                                        auto dbConn = Database::getInstance().getConnection();
-                                        pqxx::work dbTxn(*dbConn);
-
-                                        Json::Value meta(Json::objectValue);
-                                        meta["reasoning"] = assembledReasoning;
-                                        meta["tool_calls"] = toolCalls;
-                                        meta["model"] = aiModel;
-                                        meta["provider"] = aiProvider;
-                                        Json::StreamWriterBuilder writer;
-                                        writer["indentation"] = "";
-                                        std::string metaStr = Json::writeString(writer, meta);
-
-                                        std::string displayContent = assembledContent.empty()
-                                            ? "🛠️ Auto-healing in progress..."
-                                            : assembledContent;
-
-                                        dbTxn.exec_params(
-                                            "UPDATE ai_messages SET content = $2, metadata = $3::jsonb WHERE id = $1::uuid",
-                                            assistantMsgId,
-                                            displayContent,
-                                            metaStr
-                                        );
-                                        dbTxn.commit();
-                                        lastDbUpdate = std::chrono::steady_clock::now();
-                                    } catch (const std::exception& dbEx) {
-                                        spdlog::warn("AI SRE: Failed to flush message to db: {}", dbEx.what());
-                                    }
-                                };
-
-                                auto onChunk = [&](const std::string& sseFrame) {
-                                    std::istringstream stream(sseFrame);
-                                    std::string line;
-                                    bool hasImportantEvent = false;
-                                    while (std::getline(stream, line)) {
-                                        if (!line.empty() && line.back() == '\r') line.pop_back();
-                                        if (line.rfind("data:", 0) == 0) {
-                                            std::string dataStr = line.substr(5);
-                                            size_t firstNonSpace = dataStr.find_first_not_of(" \t");
-                                            if (firstNonSpace != std::string::npos) {
-                                                dataStr = dataStr.substr(firstNonSpace);
-                                            } else {
-                                                dataStr.clear();
-                                            }
-                                            if (dataStr.empty() || dataStr == "[DONE]") continue;
-
-                                            Json::CharReaderBuilder reader;
-                                            Json::Value ev;
-                                            std::string parseErrs;
-                                            std::istringstream jsonStream(dataStr);
-                                            if (Json::parseFromStream(reader, jsonStream, &ev, &parseErrs) && ev.isObject()) {
-                                                std::string evType = ev.get("type", "").asString();
-                                                if (evType == "reasoning") {
-                                                    assembledReasoning += ev.get("delta", "").asString();
-                                                } else if (evType == "content") {
-                                                    assembledContent += ev.get("delta", "").asString();
-                                                } else if (evType == "tool_call") {
-                                                    Json::Value tc(Json::objectValue);
-                                                    tc["id"] = ev.get("id", "").asString();
-                                                    tc["name"] = ev.get("name", "").asString();
-                                                    tc["arguments"] = ev["arguments"];
-                                                    toolCalls.append(tc);
-                                                    hasImportantEvent = true;
-                                                } else if (evType == "tool_result") {
-                                                    std::string tcId = ev.get("id", "").asString();
-                                                    std::string tcName = ev.get("name", "").asString();
-                                                    for (Json::ArrayIndex i = 0; i < toolCalls.size(); ++i) {
-                                                        if ((!tcId.empty() && toolCalls[i].get("id", "").asString() == tcId) ||
-                                                            (toolCalls[i].get("name", "").asString() == tcName && !toolCalls[i].isMember("result"))) {
-                                                            toolCalls[i]["result"] = ev["result"];
-                                                            break;
-                                                        }
-                                                    }
-                                                    hasImportantEvent = true;
-                                                } else if (evType == "done") {
-                                                    if (ev.isMember("content") && !ev["content"].asString().empty()) {
-                                                        assembledContent = ev["content"].asString();
-                                                    }
-                                                    if (ev.isMember("reasoning") && !ev["reasoning"].asString().empty()) {
-                                                        assembledReasoning = ev["reasoning"].asString();
-                                                    }
-                                                    hasImportantEvent = true;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    flushDb(hasImportantEvent);
-                                };
-
-                                auto onFinish = [&](bool ok, const std::string& err) {
-                                    if (!ok && !err.empty()) {
-                                        assembledReasoning += "\n• Stream notice: " + err + "\n";
-                                    }
-                                    flushDb(true);
-
-                                    // Verify final status
-                                    bool isHealed = false;
-                                    std::string finalStatus = "failed";
-                                    try {
-                                        auto checkConn = Database::getInstance().getConnection();
-                                        pqxx::work checkTxn(*checkConn);
-                                        auto statusRows = checkTxn.exec_params(
-                                            "SELECT status FROM deployments "
-                                            "WHERE (id = $1::uuid OR project_id = $2::uuid) "
-                                            "ORDER BY created_at DESC LIMIT 1",
-                                            deploymentId, projectId
-                                        );
-                                        if (!statusRows.empty()) {
-                                            finalStatus = statusRows[0]["status"].as<std::string>();
-                                            if (finalStatus == "running" || finalStatus == "ready") {
-                                                isHealed = true;
-                                            }
-                                        }
-                                        checkTxn.commit();
-                                    } catch (const std::exception& stErr) {
-                                        spdlog::warn("AI SRE: Failed to query deployment status: {}", stErr.what());
-                                    }
-
-                                    if (isHealed) {
-                                        try {
-                                            auto healConn = Database::getInstance().getConnection();
-                                            pqxx::work healTxn(*healConn);
-                                            healTxn.exec_params(
-                                                "UPDATE ai_sessions SET status = 'healed', updated_at = NOW() WHERE id = $1::uuid",
-                                                sessionId
-                                            );
-                                            healTxn.commit();
-                                            spdlog::info("AI SRE: Auto-healing successfully healed deployment for project {}", projectName);
-                                        } catch (...) {}
-                                    } else {
-                                        // Intelligent fallback: If AI didn't execute tools/patches and error was missing Dockerfile / Archetype Pre-flight
-                                        bool fallbackApplied = false;
-                                        if (toolCalls.empty()) {
-                                            std::filesystem::path sourceDir = std::filesystem::path("uploads/builds") / deploymentId / "source";
-                                            if (!std::filesystem::exists(sourceDir)) {
-                                                sourceDir = std::filesystem::path("uploads/builds") / deploymentId;
-                                            }
-                                            bool isArchetypeOrDockerIssue = (buildError.find("Archetype Pre-Flight Check") != std::string::npos ||
-                                                                             buildError.find("embedded HTTP server") != std::string::npos ||
-                                                                             buildError.find("No Dockerfile found") != std::string::npos ||
-                                                                             buildError.find("Java Library") != std::string::npos ||
-                                                                             buildError.find("pure library") != std::string::npos);
-                                            if (isArchetypeOrDockerIssue && !std::filesystem::exists(sourceDir / "Dockerfile")) {
-                                                std::filesystem::path deploymentDir = std::filesystem::path("uploads/builds") / deploymentId;
-                                                BuildService fallbackBs;
-                                                std::string genReason;
-                                                if (fallbackBs.ensureDockerfile(sourceDir, deploymentDir / "build.log", genReason, nullptr)) {
-                                                    fallbackApplied = true;
-                                                    Json::Value meta(Json::objectValue);
-                                                    meta["ai_repair"] = true;
-                                                    meta["ai_session_id"] = sessionId;
-                                                    meta["ai_repair_attempt"] = 1;
-                                                    Json::StreamWriterBuilder writer;
-                                                    writer["indentation"] = "";
-                                                    JobQueueService::getInstance().enqueueDeploymentBuild(
-                                                        deploymentId, userId,
-                                                        "AI SRE fallback: Generated root Dockerfile and queued rebuild.",
-                                                        Json::writeString(writer, meta)
-                                                    );
-                                                }
-                                            }
-                                        }
-
-                                        if (!fallbackApplied) {
-                                            try {
-                                                auto failConn = Database::getInstance().getConnection();
-                                                pqxx::work failTxn(*failConn);
-                                                failTxn.exec_params(
-                                                    "UPDATE ai_sessions SET status = 'failed', updated_at = NOW() WHERE id = $1::uuid",
-                                                    sessionId
-                                                );
-                                                failTxn.commit();
-                                                spdlog::info("AI SRE: Auto-healing failed for deployment {} — session {}",
-                                                             deploymentId, sessionId);
-                                            } catch (...) {}
-                                        }
-                                    }
-                                };
-
-                                spdlog::info("AI SRE: Starting streaming auto-repair session {} for deployment {}",
-                                             sessionId, deploymentId);
-                                AiStreamProxy::stream("/chat/agent/stream", payload, onChunk, onFinish);
-
-                            } catch (const std::exception& threadErr) {
-                                spdlog::error("AI SRE: Background auto-healing thread exception: {}", threadErr.what());
-                            }
-                        }).detach();
-                    }
-                } catch (const std::exception& aiHealErr) {
-                    spdlog::warn("AI SRE: Auto-healing trigger failed for deployment {}: {}", job.deploymentId, aiHealErr.what());
-                }
+            // Persist an incident; the managed AI-service worker renews its lease
+            // and resumes bounded repairs after service restarts.
+            if(!isAiRepair) {
+                auto incidentConn=Database::getInstance().getConnection();pqxx::work incident(*incidentConn);
+                incident.exec_params(
+                    "INSERT INTO deployment_incidents(deployment_id,user_id,source_job_id,kind,last_error) "
+                    "SELECT $1::uuid,$2::uuid,$3,'build',$4 WHERE EXISTS "
+                    "(SELECT 1 FROM ai_preferences WHERE user_id=$2::uuid AND enabled=TRUE) "
+                    "ON CONFLICT DO NOTHING",job.deploymentId,job.userId,job.id,buildResult.error);
+                incident.commit();
             }
+
         }
     } catch (const std::exception& e) {
         spdlog::error("Deployment job {} failed for {}: {}", job.id, job.deploymentId, e.what());
+        if(pendingObservation && pendingDeadline>std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()) {
+            // A transient daemon/observer outage must not rerun a finite job.
+            // Keep its candidate and retry observation within the original deadline.
+            try {
+                auto connection=Database::getInstance().getConnection();pqxx::work wait(*connection);
+                wait.exec_params("UPDATE deployment_jobs SET status='retrying',locked_by='',locked_at=NULL,next_run_at=NOW()+INTERVAL '5 seconds',last_error=$2,updated_at=NOW() WHERE id=$1 AND status='running' AND locked_by=$3 AND attempts=$4",job.id,e.what(),workerId_,job.attempts);
+                wait.commit();return;
+            } catch(const std::exception& observerError) {spdlog::warn("Pending observation recovery unavailable: {}",observerError.what());}
+        }
         try {
             auto conn = Database::getInstance().getConnection();
             pqxx::work txn(*conn);
             txn.exec_params(
-                "UPDATE deployments SET status = 'failed', logs = $1, artifact_available = FALSE, updated_at = NOW() WHERE id = $2",
+                "UPDATE deployments SET status = 'failed', logs = $1, artifact_available = FALSE, updated_at = NOW() WHERE id = $2 AND job_id=$3 AND status NOT IN ('canceled','cancelled') AND EXISTS(SELECT 1 FROM deployment_jobs j WHERE j.id=$3 AND j.locked_by=$4 AND j.attempts=$5)",
                 std::string("Background worker error: ") + e.what(),
-                job.deploymentId
+                job.deploymentId,job.id,workerId_,job.attempts
             );
+            if(pendingObservation)txn.exec_params("UPDATE deployment_jobs SET metadata=metadata-'awaiting_runtime' WHERE id=$1 AND locked_by=$2 AND attempts=$3",job.id,workerId_,job.attempts);
             txn.commit();
             LogWebSocketController::broadcastStatus(job.deploymentId, "failed");
             DeploymentJournal::broadcastSummary(job.deploymentId);
         } catch (const std::exception& dbError) {
             spdlog::error("Failed to persist worker failure for {}: {}", job.deploymentId, dbError.what());
         }
-        failJob(job, e.what(), true);
+        failJob(job, e.what(), !pendingObservation);
     }
 }
 

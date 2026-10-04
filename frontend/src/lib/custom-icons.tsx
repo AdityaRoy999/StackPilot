@@ -1,7 +1,11 @@
 "use client";
 
-import React, { useSyncExternalStore } from "react";
+import React, { useEffect, useSyncExternalStore } from "react";
 import api from "@/lib/api";
+import { toast } from "sonner";
+import { sanitizeIconSvg } from "./svg-safety";
+import { PLATFORM_LUCIDE_ICONS } from "./platform-icon-map";
+import { getIconPack, loadIconPack, subscribeIconPacks } from "./icon-pack-loader";
 import {
   Activity,
   AlertCircle,
@@ -138,7 +142,7 @@ import {
 import { cn } from "@/lib/utils";
 
 export type IconMode = "default" | "custom";
-export type IconPack = "duotone" | "neon" | "minimal" | "badges";
+export type IconPack = "duotone" | "neon" | "minimal" | "carbon" | "iconoir" | "fluent" | "badges";
 
 export type IconCategory =
   | "navigation"
@@ -193,67 +197,26 @@ export const ICON_STORAGE_KEY = "stackpilot.icon-settings";
  * Overrides hardcoded hex colors (#000, #fff, black, white) with currentColor.
  */
 export function adaptSvgColors(rawSvg: string): string {
-  if (!rawSvg) return "";
-  let cleaned = rawSvg.trim();
-
-  // Strip XML prolog or doctype if present
-  const svgStart = cleaned.indexOf("<svg");
-  const svgEnd = cleaned.lastIndexOf("</svg>");
-  if (svgStart !== -1 && svgEnd !== -1) {
-    cleaned = cleaned.substring(svgStart, svgEnd + 6);
+  const safe = sanitizeIconSvg(rawSvg);
+  if (!safe) return "";
+  const document = new DOMParser().parseFromString(safe, "image/svg+xml");
+  const svg = document.documentElement;
+  if (!svg.hasAttribute("viewBox")) {
+    const width = parseFloat(svg.getAttribute("width") || "24");
+    const height = parseFloat(svg.getAttribute("height") || "24");
+    if (width > 0 && height > 0) svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   }
-
-  // Remove invisible canvas bounding boxes / artboard rectangles (e.g. from Figma, Material, SVGRepo)
-  // that cause unwanted outer square border lines when stroke="currentColor" is active
-  cleaned = cleaned.replace(
-    /<rect\b[^>]*(?:width=["'](?:100%|\d+)["'][^>]*height=["'](?:100%|\d+)["']|height=["'](?:100%|\d+)["'][^>]*width=["'](?:100%|\d+)["'])[^>]*(?:fill=["'](?:none|transparent)["']|stroke=["']none["'])[^>]*\/?>/gi,
-    ""
-  );
-  cleaned = cleaned.replace(
-    /<rect\b[^>]*fill=["'](?:none|transparent)["'][^>]*(?:width=["'](?:100%|\d+)["']|height=["'](?:100%|\d+)["'])[^>]*\/?>/gi,
-    ""
-  );
-  cleaned = cleaned.replace(
-    /<path\b[^>]*d=["']M\s*0\s*0h\d+v\d+H0[zZ]?["'][^>]*\/?>/gi,
-    ""
-  );
-
-  // Normalize root <svg> tag: infer viewBox if missing and enable responsive scaling
-  cleaned = cleaned.replace(/<svg\b([^>]*)>/i, (match, attrs) => {
-    const widthMatch = attrs.match(/width=["'](\d+(?:\.\d+)?)(?:px)?["']/i);
-    const heightMatch = attrs.match(/height=["'](\d+(?:\.\d+)?)(?:px)?["']/i);
-    const viewBoxMatch = attrs.match(/viewBox=["']([^"']+)["']/i);
-
-    let cleanAttrs = attrs
-      .replace(/\b(width|height)=["'][^"']*["']/gi, "")
-      .trim();
-
-    if (!viewBoxMatch && widthMatch && heightMatch) {
-      cleanAttrs += ` viewBox="0 0 ${widthMatch[1]} ${heightMatch[1]}"`;
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("height", "100%");
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  if (!svg.hasAttribute("fill")) svg.setAttribute("fill", "currentColor");
+  for (const node of [svg, ...Array.from(svg.querySelectorAll("*"))]) {
+    for (const name of ["fill", "stroke", "stop-color"]) {
+      const value = node.getAttribute(name);
+      if (value && /^(?:black|white|#(?:000|000000|111|111111|fff|ffffff))$/i.test(value.trim())) node.setAttribute(name, "currentColor");
     }
-
-    return `<svg ${cleanAttrs} width="100%" height="100%" preserveAspectRatio="xMidYMid meet">`;
-  });
-
-  // In <style> blocks, convert monochrome black/white hex/named colors to currentColor
-  const monoPattern = /(?:#(?:000000|000|111111|111|1a1a1a|222222|222|333333|333|ffffff|fff|fafafa|f8f8f8|f5f5f5|eeeeee|eee)\b|rgb\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*\)|rgba\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*,\s*1(?:\.0+)?\s*\)|\b(?:black|white)\b)/gi;
-  cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, (match) => {
-    return match.replace(monoPattern, "currentColor");
-  });
-
-  // In attributes: convert hardcoded black/white hex/named colors to currentColor
-  cleaned = cleaned.replace(
-    /(fill|stroke|color)=(["'])\s*(?:#(?:000000|000|111111|111|1a1a1a|222222|222|333333|333|ffffff|fff|fafafa|f8f8f8|f5f5f5|eeeeee|eee)|rgb\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*\)|rgba\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*,\s*1(?:\.0+)?\s*\)|black|white)\s*\2/gi,
-    '$1="currentColor"'
-  );
-
-  // In inline styles: convert hardcoded black/white hex/named colors to currentColor
-  cleaned = cleaned.replace(
-    /(fill|stroke|color)\s*:\s*(?:#(?:000000|000|111111|111|1a1a1a|222222|222|333333|333|ffffff|fff|fafafa|f8f8f8|f5f5f5|eeeeee|eee)|rgb\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*\)|rgba\(\s*(?:0\s*,\s*0\s*,\s*0|255\s*,\s*255\s*,\s*255)\s*,\s*1(?:\.0+)?\s*\)|black|white)/gi,
-    "$1: currentColor"
-  );
-
-  return cleaned;
+  }
+  return new XMLSerializer().serializeToString(svg);
 }
 
 // ---------------------------------------------------------------------------
@@ -2105,6 +2068,22 @@ export function resolveCanonicalIconId(name: string): string {
   return ICON_ALIASES[direct] || direct;
 }
 
+// Include every Lucide symbol used by the platform, not just the original curated set.
+export const PLATFORM_ICON_IDS: Record<string, string> = {};
+for (const [name, Icon] of Object.entries(PLATFORM_LUCIDE_ICONS)) {
+  const existing = ICON_DEFINITIONS.find((definition) => definition.defaultIcon === Icon);
+  const id = existing?.id || name.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
+  PLATFORM_ICON_IDS[name] = id;
+  if (!existing) ICON_DEFINITIONS.push({
+    id,
+    name: name.replace(/([a-z0-9])([A-Z])/g, "$1 $2"),
+    category: "actions",
+    description: "Platform interface icon",
+    defaultIcon: Icon,
+    customSvg: ({ pack, ...props }) => <Icon strokeWidth={pack === "minimal" ? 1.5 : 1.75} {...props} />,
+  });
+}
+
 export const ICON_MAP = new Map<string, IconDefinition>(
   ICON_DEFINITIONS.map((def) => [def.id, def])
 );
@@ -2128,10 +2107,15 @@ let hasSyncedWithDb = false;
 
 function syncWithDatabase() {
   if (typeof window === "undefined" || hasSyncedWithDb) return;
+  // Login icons mount before a session exists. Do not consume the one-time
+  // restore there; dashboard icons will restore after authentication.
+  if (/^\/(?:auth(?:\/|$)|remote(?:\/|$)|login$|register$|forgot-password$)/.test(window.location.pathname)) return;
   hasSyncedWithDb = true;
+  const initialSnapshot = rawCachedString;
   api
     .get("/auth/icon-settings")
     .then((res) => {
+      if (rawCachedString !== initialSnapshot) return;
       if (res.data && (res.data.mode || res.data.overrides || res.data.pack || res.data.icon_modes || res.data.iconModes)) {
         const current = readFromStorage();
         let fetchedIconModes: Record<string, "default" | "custom"> = {};
@@ -2151,8 +2135,8 @@ function syncWithDatabase() {
         const merged: IconSettings = {
           mode: res.data.mode === "custom" ? "custom" : "default",
           pack: res.data.pack || current.pack || "duotone",
-          overrides: { ...(current.overrides || {}), ...cleanOverrides },
-          iconModes: { ...(current.iconModes || {}), ...fetchedIconModes },
+          overrides: cleanOverrides,
+          iconModes: fetchedIconModes,
         };
         try {
           const str = JSON.stringify(merged);
@@ -2168,7 +2152,8 @@ function syncWithDatabase() {
       }
     })
     .catch(() => {
-      // Offline fallback
+      // Keep the local fallback, but allow a later authenticated mount to retry.
+      hasSyncedWithDb = false;
     });
 }
 
@@ -2199,7 +2184,7 @@ function readFromStorage(): IconSettings {
 
     cachedSettings = {
       mode: parsed.mode === "custom" ? "custom" : "default",
-      pack: ["duotone", "neon", "minimal", "badges"].includes(parsed.pack)
+      pack: ["duotone", "neon", "minimal", "carbon", "iconoir", "fluent", "badges"].includes(parsed.pack)
         ? parsed.pack
         : "duotone",
       overrides: cleanOverrides,
@@ -2241,6 +2226,9 @@ function getServerSnapshot(): IconSettings {
   return DEFAULT_ICON_SETTINGS;
 }
 
+let iconSaveTimer: ReturnType<typeof setTimeout> | undefined;
+let iconSaveQueue: Promise<unknown> = Promise.resolve();
+
 export function saveIconSettings(settings: IconSettings) {
   try {
     const str = JSON.stringify(settings);
@@ -2264,7 +2252,12 @@ export function saveIconSettings(settings: IconSettings) {
       ...(settings.iconModes ? { __icon_modes__: JSON.stringify(settings.iconModes) } : {}),
     },
   };
-  api.put("/auth/icon-settings", payload).catch(() => {});
+  clearTimeout(iconSaveTimer);
+  iconSaveTimer = setTimeout(() => {
+    iconSaveQueue = iconSaveQueue.catch(() => {}).then(() => api.put("/auth/icon-settings", payload)).catch(() => {
+      toast.error("Icons changed locally, but the server could not save them. Retry your change when connected.");
+    });
+  }, 200);
 }
 
 export function useIconSettings(): [
@@ -2288,22 +2281,22 @@ export function useIconSettings(): [
         nextModes[def.id] = mode;
       });
       saveIconSettings({
-        ...settings,
+        ...getSnapshot(),
         mode,
         iconModes: nextModes,
-        overrides: mode === "default" ? {} : settings.overrides,
+        overrides: getSnapshot().overrides,
       });
     },
-    setPack: (pack: IconPack) => saveIconSettings({ ...settings, pack }),
+    setPack: (pack: IconPack) => saveIconSettings({ ...getSnapshot(), pack }),
     setIconMode: (iconId: string, mode: "default" | "custom") => {
       const canonical = resolveCanonicalIconId(iconId);
-      const nextModes = { ...(settings.iconModes || {}) };
+      const nextModes = { ...(getSnapshot().iconModes || {}) };
       nextModes[iconId] = mode;
       if (canonical && canonical !== iconId) {
         nextModes[canonical] = mode;
       }
       saveIconSettings({
-        ...settings,
+        ...getSnapshot(),
         iconModes: nextModes,
       });
     },
@@ -2313,41 +2306,41 @@ export function useIconSettings(): [
         nextModes[def.id] = mode;
       });
       saveIconSettings({
-        ...settings,
+        ...getSnapshot(),
         mode,
         iconModes: nextModes,
-        overrides: mode === "default" ? {} : settings.overrides,
+        overrides: getSnapshot().overrides,
       });
     },
     setOverride: (iconId: string, svgContent: string) => {
       const canonical = resolveCanonicalIconId(iconId);
       const adapted = adaptSvgColors(svgContent);
-      const nextOverrides = { ...settings.overrides, [iconId]: adapted };
+      const nextOverrides = { ...getSnapshot().overrides, [iconId]: adapted };
       if (canonical && canonical !== iconId) {
         nextOverrides[canonical] = adapted;
       }
-      const nextModes = { ...(settings.iconModes || {}) };
+      const nextModes = { ...(getSnapshot().iconModes || {}) };
       nextModes[iconId] = "custom";
       if (canonical && canonical !== iconId) {
         nextModes[canonical] = "custom";
       }
       saveIconSettings({
-        ...settings,
+        ...getSnapshot(),
         overrides: nextOverrides,
         iconModes: nextModes,
       });
     },
     resetIcon: (iconId: string) => {
       const canonical = resolveCanonicalIconId(iconId);
-      const overrides = { ...settings.overrides };
+      const overrides = { ...getSnapshot().overrides };
       delete overrides[iconId];
       if (canonical) delete overrides[canonical];
 
-      const iconModes = { ...(settings.iconModes || {}) };
+      const iconModes = { ...(getSnapshot().iconModes || {}) };
       delete iconModes[iconId];
       if (canonical) delete iconModes[canonical];
 
-      saveIconSettings({ ...settings, overrides, iconModes });
+      saveIconSettings({ ...getSnapshot(), overrides, iconModes });
     },
     resetAll: () => saveIconSettings(DEFAULT_ICON_SETTINGS),
   };
@@ -2365,12 +2358,14 @@ export interface AppIconProps extends LucideProps {
   name: string; // Identifier matching ICON_DEFINITIONS or Lucide icon name
   fallback?: LucideIcon;
   forceMode?: IconMode;
+  packOverride?: IconPack;
 }
 
 export function AppIcon({
   name,
   fallback,
   forceMode,
+  packOverride,
   size = 18,
   className,
   ...props
@@ -2379,9 +2374,12 @@ export function AppIcon({
   const mounted = useSyncExternalStore(subscribeNever, () => true, () => false);
 
   const activeSettings = mounted ? settings : DEFAULT_ICON_SETTINGS;
+  const selectedPack = packOverride || activeSettings?.pack || "duotone";
+  const vectors = useSyncExternalStore(subscribeIconPacks, () => getIconPack(selectedPack), () => null);
   const canonicalId = resolveCanonicalIconId(name);
   const def = ICON_MAP.get(canonicalId) || ICON_MAP.get(name);
-  const FallbackIcon = fallback || def?.defaultIcon || Sparkles;
+  const rawFallback = (fallback as (LucideIcon & { __stackpilotRawIcon?: LucideIcon }) | undefined)?.__stackpilotRawIcon || fallback;
+  const FallbackIcon = rawFallback || def?.defaultIcon || Sparkles;
 
   // Determine whether this icon should be rendered custom or default
   // 1. If forceMode prop is explicitly supplied, respect it
@@ -2391,10 +2389,6 @@ export function AppIcon({
   if (forceMode) {
     isCustom = forceMode === "custom";
   } else {
-    const hasOverride = Boolean(
-      activeSettings?.overrides?.[name] ||
-      (canonicalId && activeSettings?.overrides?.[canonicalId])
-    );
     const individual =
       activeSettings?.iconModes?.[name] ??
       (canonicalId ? activeSettings?.iconModes?.[canonicalId] : undefined);
@@ -2409,6 +2403,10 @@ export function AppIcon({
     }
   }
 
+  useEffect(() => {
+    if (mounted && isCustom) loadIconPack(selectedPack);
+  }, [mounted, isCustom, selectedPack]);
+
   // 1. When custom is active, render custom SVG upload override OR custom vector pack
   if (isCustom) {
     const customSvgString =
@@ -2416,7 +2414,7 @@ export function AppIcon({
       (canonicalId ? activeSettings?.overrides?.[canonicalId] : undefined);
 
     if (customSvgString && customSvgString.trim().startsWith("<")) {
-      let rawSvg = adaptSvgColors(customSvgString);
+      const rawSvg = sanitizeIconSvg(adaptSvgColors(customSvgString));
       return (
         <span
           className={cn(
@@ -2424,7 +2422,7 @@ export function AppIcon({
             "[&_svg]:w-full [&_svg]:h-full [&_svg]:max-w-full [&_svg]:max-h-full",
             className
           )}
-          style={{ width: size, height: size }}
+          style={{ width: /(?:^|\s)(?:w-|size-)/.test(className || "") ? undefined : size, height: /(?:^|\s)(?:h-|size-)/.test(className || "") ? undefined : size }}
           dangerouslySetInnerHTML={{ __html: rawSvg }}
           suppressHydrationWarning
         />
@@ -2432,10 +2430,29 @@ export function AppIcon({
     }
 
     if (def) {
+      const vector = vectors?.[def.id];
+      if (vector) {
+        const svgProps = { ...props };
+        delete svgProps.children;
+        delete svgProps.dangerouslySetInnerHTML;
+        return (
+          <svg
+            {...svgProps}
+            aria-hidden="true"
+            width={size}
+            height={size}
+            viewBox={vector.viewBox}
+            fill="none"
+            className={cn("inline-block shrink-0", className)}
+            dangerouslySetInnerHTML={{ __html: vector.body }}
+            suppressHydrationWarning
+          />
+        );
+      }
       return def.customSvg({
         size,
         className: cn("stroke-current shrink-0", className),
-        pack: activeSettings?.pack || "duotone",
+        pack: packOverride || activeSettings?.pack || "duotone",
         ...props,
       });
     }

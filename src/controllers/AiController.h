@@ -17,6 +17,7 @@ public:
     ADD_METHOD_TO(AiController::stopAgentStream, "/api/v1/ai/chat/agent/stop", drogon::Post);
     ADD_METHOD_TO(AiController::executeToolCall, "/api/v1/ai/tools/execute", drogon::Post);
     ADD_METHOD_TO(AiController::listSessions, "/api/v1/ai/sessions", drogon::Get);
+    ADD_METHOD_TO(AiController::createSession, "/api/v1/ai/sessions", drogon::Post);
     ADD_METHOD_TO(AiController::getSession, "/api/v1/ai/sessions/{1}", drogon::Get);
     ADD_METHOD_TO(AiController::deleteSession, "/api/v1/ai/sessions/{1}", drogon::Delete);
     ADD_METHOD_TO(AiController::branchSession, "/api/v1/ai/sessions/{1}/branch", drogon::Post);
@@ -53,6 +54,8 @@ public:
                    std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void listSessions(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+    void createSession(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void getSession(const drogon::HttpRequestPtr& req,
                     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
                     const std::string& sessionId);

@@ -51,7 +51,7 @@ import {
   Terminal,
   Trash2,
   Zap,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { cn } from "@/lib/utils";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
@@ -616,38 +616,36 @@ export function CreateProjectDialog() {
 
   useEffect(() => {
     const q = applicationSearch.trim();
-    if (!q || q.length < 2) {
-      setDockerHubResults([]);
-      setIsSearchingDockerHub(false);
-      return;
-    }
+    if (q.length < 2) return;
 
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
         setIsSearchingDockerHub(true);
-        const res = await fetch(`/api/dockerhub?query=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/dockerhub?query=${encodeURIComponent(q)}`, { signal: controller.signal });
         if (res.ok) {
           const data = await res.json();
-          if (Array.isArray(data?.results)) {
+          if (!controller.signal.aborted && Array.isArray(data?.results)) {
             setDockerHubResults(data.results);
           }
         }
       } catch (err) {
-        console.error("Docker Hub search error:", err);
+        if (!controller.signal.aborted) console.error("Docker Hub search error:", err);
       } finally {
-        setIsSearchingDockerHub(false);
+        if (!controller.signal.aborted) setIsSearchingDockerHub(false);
       }
     }, 350);
 
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [applicationSearch]);
 
-  useEffect(() => {
-    if (open) {
-      const defaultOrg = activeWorkspaceId || organizations.find((o) => o.is_personal)?.id || organizations[0]?.id || "";
-      setOrganizationId(defaultOrg);
-    }
-  }, [open, activeWorkspaceId, organizations]);
+  const writableOrganizations = organizations.filter((organization) => organization.role !== "viewer");
+  const effectiveOrganizationId = writableOrganizations.some((organization) => organization.id === organizationId)
+    ? organizationId
+    : writableOrganizations.find((organization) => organization.id === activeWorkspaceId)?.id
+      || writableOrganizations.find((organization) => organization.is_personal)?.id
+      || writableOrganizations[0]?.id
+      || "";
 
   const queryClient = useQueryClient();
   const meQuery = useQuery({
@@ -953,7 +951,7 @@ export function CreateProjectDialog() {
             };
       const res = await api.post("/projects", {
         ...payload,
-        organization_id: organizationId || undefined,
+        organization_id: effectiveOrganizationId || undefined,
         environments: environmentPayload,
       });
       return res.data;
@@ -1007,6 +1005,7 @@ export function CreateProjectDialog() {
     setRemoteTerminalCwd("");
     setEnvironments(defaultProjectEnvironments());
     setApplicationTemplateId(APPLICATION_TEMPLATES[0].id);
+    setOrganizationId("");
     setApplicationSearch("");
     setDockerHubResults([]);
     setIsSearchingDockerHub(false);
@@ -1612,30 +1611,28 @@ export function CreateProjectDialog() {
           </Button>
         }
       />
-      <DialogContent className="!flex h-[min(90vh,940px)] !w-[min(96vw,1120px)] !max-w-[1120px] flex-col overflow-hidden rounded-2xl p-0">
-        <DialogHeader className="shrink-0 border-b border-border p-6">
+      <DialogContent className="!flex h-[min(calc(100dvh-2rem),980px)] !w-[min(calc(100vw-2rem),1360px)] !max-w-[1360px] gap-0 flex-col overflow-hidden rounded-2xl p-0">
+        <DialogHeader className="shrink-0 border-b border-border p-5 sm:p-6">
           <div className="flex items-start justify-between gap-4 pr-8">
-            <div className="space-y-2">
               <DialogTitle className="flex items-center gap-2">
                 <AppIcon name="plus" fallback={Plus} size={20} className="h-5 w-5 text-primary" />
                 Create New Project
               </DialogTitle>
-              <DialogDescription>
-                Choose GitHub, a saved SSH/VPS folder, an allowed local folder, or a ready-made application template.
-              </DialogDescription>
-            </div>
             <Button type="button" variant="outline" size="sm" onClick={() => setHelpOpen(true)} className="shrink-0">
               <AppIcon name="info" fallback={Info} className="mr-2 h-4 w-4"  />
               Guide
             </Button>
           </div>
+          <DialogDescription className="text-left">
+            Choose GitHub, a saved SSH/VPS folder, an allowed local folder, or a ready-made application template.
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin p-6 pb-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin px-6 py-4 sm:px-8">
           <form onSubmit={handleSubmit} className="space-y-5 pb-2">
             <div className="space-y-3">
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Project Source</Label>
-              <div className={cn(segmentedTabsListClass, "grid-cols-4")}>
+              <div className={cn(segmentedTabsListClass, "h-auto grid-cols-2 sm:grid-cols-4")}>
                   <Button
                     type="button"
                     variant="ghost"
@@ -2082,7 +2079,11 @@ export function CreateProjectDialog() {
                       </div>
                       <Input
                         value={applicationSearch}
-                        onChange={(event) => setApplicationSearch(event.target.value)}
+                        onChange={(event) => {
+                          setApplicationSearch(event.target.value);
+                          setDockerHubResults([]);
+                          setIsSearchingDockerHub(false);
+                        }}
                         placeholder="Search templates or any Docker Hub image (e.g. redis, nginx, meilisearch)..."
                         className="bg-muted/40"
                       />
@@ -2204,7 +2205,7 @@ export function CreateProjectDialog() {
 
                       {filteredApplicationTemplates.length === 0 && dockerHubResults.length === 0 && !isSearchingDockerHub && applicationSearch.trim().length > 0 && (
                         <div className="rounded-xl border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
-                          No matching curated templates found. You can click the "Pull image tag" button above to pull <code className="text-primary">{applicationSearch.trim()}</code> directly from Docker Hub!
+                          No matching curated templates found. You can click the &quot;Pull image tag&quot; button above to pull <code className="text-primary">{applicationSearch.trim()}</code> directly from Docker Hub!
                         </div>
                       )}
                     </div>
@@ -3047,8 +3048,8 @@ export function CreateProjectDialog() {
                   <Label htmlFor="project-org" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Workspace / Organization
                   </Label>
-                  <Select value={organizationId} onValueChange={(val) => setOrganizationId(val || "")}>
-                    <SelectTrigger id="project-org" className="bg-muted/40">
+                  <Select items={writableOrganizations.map((org) => ({ value: org.id, label: org.name }))} value={effectiveOrganizationId} onValueChange={(val) => setOrganizationId(val || "")}>
+                    <SelectTrigger id="project-org" className="w-full bg-muted/40">
                       <SelectValue placeholder="Select workspace" />
                     </SelectTrigger>
                     <SelectContent>
@@ -3120,8 +3121,8 @@ export function CreateProjectDialog() {
       </DialogContent>
     </Dialog>
     <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
-      <DialogContent className="!w-[min(90vw,620px)] !max-w-[620px] rounded-2xl">
-        <DialogHeader>
+      <DialogContent className="!flex !w-[min(90vw,620px)] !max-w-[620px] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-2xl p-0">
+        <DialogHeader className="shrink-0 px-5 pt-5 pb-4">
           <DialogTitle className="flex items-center gap-2">
             <AppIcon name="info" fallback={Info} className="h-5 w-5 text-primary"  />
             Project Creation Guide
@@ -3132,8 +3133,8 @@ export function CreateProjectDialog() {
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="github" className="max-h-[56vh] overflow-hidden">
-              <TabsList className={cn(segmentedTabsListClass, "grid-cols-4")}>
+        <Tabs defaultValue="github" className="min-h-0 overflow-hidden px-5 pb-4">
+          <TabsList className={cn(segmentedTabsListClass, "grid-cols-4")}>
             <TabsTrigger value="github" className={selectedTabClass}>
               GitHub
             </TabsTrigger>
@@ -3148,7 +3149,7 @@ export function CreateProjectDialog() {
             </TabsTrigger>
           </TabsList>
 
-          <div className="mt-4 max-h-[44vh] overflow-y-auto pr-1 scrollbar-thin">
+          <div className="mt-4 max-h-[min(46dvh,460px)] overflow-y-auto overscroll-contain pr-1 scrollbar-thin">
             <TabsContent value="github" className="space-y-3">
               <GuideSection
                 heading="GitHub source"
@@ -3223,7 +3224,7 @@ export function CreateProjectDialog() {
           </div>
         </Tabs>
 
-        <DialogFooter>
+        <DialogFooter className="!mx-0 !mb-0 shrink-0 px-5 py-3">
           <Button type="button" onClick={() => setHelpOpen(false)}>
             Got it
           </Button>

@@ -1,0 +1,36 @@
+{
+  "run": "6bdaa5ae99e4",
+  "scope": "authenticated mixed Linux broker release",
+  "cases": [
+    {
+      "case": "85 second job remains deploying with original execution ID",
+      "passed": true
+    },
+    {
+      "case": "pending candidate survives actual backend restart",
+      "passed": true
+    },
+    {
+      "case": "all components pass and same candidate/execution is promoted",
+      "passed": true,
+      "elapsed_seconds": 135.01
+    },
+    {
+      "case": "monitoring rechecks every component despite stale saved proof",
+      "passed": true
+    },
+    {
+      "case": "worker restart receives fresh component evidence",
+      "passed": true
+    },
+    {
+      "case": "actual component assertion failure retains previous healthy release",
+      "passed": true
+    },
+    {
+      "case": "safe project cleanup removes all fixture releases",
+      "passed": true
+    }
+  ],
+  "passed": true
+}

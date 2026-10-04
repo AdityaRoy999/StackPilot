@@ -1,0 +1,1 @@
+AI provider and model company marks from @lobehub/icons-static-svg 1.95.1 (Lobe Icons, MIT). Source: https://github.com/lobehub/lobe-icons . The upstream package in devDependencies tracks attribution and updates. Logos remain the property of their respective companies.

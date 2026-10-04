@@ -5,7 +5,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { XIcon } from "lucide-react"
+import { XIcon } from "@/lib/platform-icons"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -31,7 +31,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/60 backdrop-blur-md transition-[backdrop-filter,background-color,opacity] duration-300 ease-out data-open:animate-in data-open:fade-in-0 data-open:backdrop-blur-md data-closed:animate-out data-closed:fade-out-0 data-closed:backdrop-blur-none",
+        "fixed inset-0 isolate z-50 bg-black/60 sm:backdrop-blur-md transition-opacity duration-200 ease-out data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 motion-reduce:transition-none",
         className
       )}
       {...props}
@@ -47,13 +47,19 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
 }) {
+  // Share the content gutter with footers, including footers nested in a form.
+  // Full-bleed dialogs provide their own section spacing and use a zero gutter.
+  const fullBleed = typeof className === "string" && className.split(/\s+/).some((token) => token === "p-0" || token === "!p-0")
+
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        data-full-bleed={fullBleed || undefined}
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover [--dialog-padding:1rem] p-[var(--dialog-padding)] text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-lg data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          fullBleed && "gap-0 [--dialog-padding:0px]",
           className
         )}
         {...props}
@@ -101,7 +107,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "-mx-[var(--dialog-padding,1rem)] -mb-[var(--dialog-padding,1rem)] flex flex-col-reverse gap-2 rounded-b-[inherit] border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
         className
       )}
       {...props}

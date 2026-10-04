@@ -19,12 +19,13 @@ import {
   AlertCircle,
   ShieldAlert,
   X,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 export interface ToolCall {
+  id?: string;
   name: string;
   arguments: any;
   result?: any;
@@ -486,4 +487,3 @@ export function ToolsPanel({
     />
   );
 }
-

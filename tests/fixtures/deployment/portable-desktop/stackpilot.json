@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "workload": "desktop",
+  "tests_required": true,
+  "tests": [["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]],
+  "build_recipe": {
+    "image": "python:3.12-slim",
+    "commands": [["python3", "-c", "from pathlib import Path; import shutil; Path('output').mkdir(); shutil.copyfile('app.py', 'output/app.py')"]],
+    "outputs": ["output"],
+    "runtime_image": "python:3.12-slim",
+    "runtime_setup": [["apt-get", "update"], ["apt-get", "install", "-y", "--no-install-recommends", "python3-tk"]],
+    "runtime_command": ["/usr/bin/python3", "/app/output/app.py"]
+  }
+}

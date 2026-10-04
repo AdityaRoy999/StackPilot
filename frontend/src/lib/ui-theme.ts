@@ -27,6 +27,8 @@ export const UI_THEMES = [
   "ibm-carbon",
   "azure-fluent",
   "stackpilot-web",
+  "aurora-glass",
+  "tide",
 ] as const;
 export type UiTheme = (typeof UI_THEMES)[number] | (string & {});
 
@@ -155,6 +157,18 @@ export const UI_THEME_META: UiThemeMeta[] = [
     name: "StackPilot Web",
     description: "Official StackPilot Web Bento aesthetic — obsidian pitch-black canvas, dark glass cards (#0c0c0e / #141418), crisp zinc hairline borders, and emerald & cyan accents.",
     swatches: ["#000000", "#141418", "#10b981"],
+  },
+  {
+    id: "aurora-glass",
+    name: "Aurora Glass",
+    description: "Modern product workspace with an indigo-violet accent, cyan highlights, soft glass surfaces, and high-clarity light and dark modes.",
+    swatches: ["#f6f7fb", "#ffffff", "#635bff"],
+  },
+  {
+    id: "tide",
+    name: "Tide",
+    description: "Fresh coastal workspace with calm teal accents, crisp surfaces, and high-clarity light and dark modes.",
+    swatches: ["#f4faf8", "#ffffff", "#087f73"],
   },
 ];
 

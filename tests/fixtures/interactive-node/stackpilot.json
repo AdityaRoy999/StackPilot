@@ -1,0 +1,11 @@
+{
+  "tests_required": true,
+  "console_scenarios": [
+    {"name":"Original Node program computes a square", "steps":[
+      {"output_contains":"Enter a number:"},
+      {"input":"12\n", "output_contains":"Square: 144"}]},
+    {"name":"Invalid input has an application error", "steps":[
+      {"output_contains":"Enter a number:"},
+      {"input":"invalid\n", "output_contains":"Invalid number"}]}
+  ]
+}

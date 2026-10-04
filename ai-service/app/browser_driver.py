@@ -13,10 +13,14 @@ import random
 import socket
 import struct
 import time
+import uuid
+from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Set
 from urllib.parse import urlparse, urlunparse
 import httpx
 import websockets
+from websockets.exceptions import ConnectionClosed
+from .browser_page_state import PAGE_STATE_BINDING, PAGE_STATE_SCRIPT
 
 try:
     from .skg_models import SiteKnowledgeGraph, PageArchetype, ArchetypeClassifier
@@ -135,12 +139,20 @@ def is_transitioning_or_submit_action(element: Optional[Dict[str, Any]] = None, 
 class BrowserSession:
     """Manages an active CDP connection to a Chromium tab with real-time screencast."""
 
-    def __init__(self, session_id: str, target_url: str = "about:blank"):
+    def __init__(self, session_id: str, target_url: str = "about:blank", sandbox_mode: str = "local"):
+        from .browser_config import browser_config
+        self.config = browser_config(sandbox_mode)
         self.session_id = session_id
+        self.last_used = time.monotonic()
         display = to_frontend_display_url(target_url) if target_url != "about:blank" else "http://localhost:3000"
-        self.target_url = to_container_accessible_url(target_url or "http://localhost:3000")
+        self.target_url = self.config.resolve_url(target_url or "http://localhost:3000")
         self.current_url = "about:blank"
         self.page_title = ""
+        self._stream_id = uuid.uuid4().hex
+        self._page_state_seq = 0
+        self._navigation_generation = 0
+        self._main_frame_id = None
+        self._main_context_id = None
         self.target_id: Optional[str] = None
         self.ws_url: Optional[str] = None
         self.cdp_ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -154,6 +166,22 @@ class BrowserSession:
         self.console_logs: List[Dict[str, Any]] = []
         self.latest_frame: Optional[str] = None
         self.listeners: Set[Callable[[Dict[str, Any]], Any]] = set()
+        from .browser_streaming import ViewerFeedbackAggregator
+        self._viewer_feedback = ViewerFeedbackAggregator()
+        self.viewer_codecs: Dict[Callable, str] = {}
+        self._jpeg_streaming = False
+        self._capture_lock = asyncio.Lock()
+        self._tree_lock = asyncio.Lock()
+        self._tree_refresh_task = None
+        self._jpeg_started_at = 0.0
+        self._jpeg_demand_since = None
+        self._jpeg_restart_at = float('-inf')
+        self._last_jpeg_frame_at = None
+        self._jpeg_frame_times = deque(maxlen=240)
+        self._h264_frame_times = deque(maxlen=240)
+        self._next_element_id = 1
+        self.browser_context_id = None
+        self._context_owner = None
         self.is_connected = False
         self.cursor_x = 640
         self.cursor_y = 360
@@ -171,6 +199,12 @@ class BrowserSession:
         self._keepalive_task: Optional[asyncio.Task] = None
         self.h264_active: bool = False
         self._h264_task: Optional[asyncio.Task] = None
+        self._video_needs_keyframe = True
+        self._stream_writer = None
+        self._stream_reader = None
+        self._h264_connections = 0
+        self._h264_connection_errors = 0
+        self._last_activity = time.monotonic()
         # Phase 2: Site Knowledge Graph (SKG) & Pushdown Navigation Automaton (PNA)
         self.skg = SiteKnowledgeGraph(origin_url=self.target_url)
         self.pda = PushdownNavigationAutomaton(root_url=self.current_url)
@@ -181,6 +215,65 @@ class BrowserSession:
     def _next_id(self) -> int:
         self._msg_id += 1
         return self._msg_id
+
+    def stream_control(self, message):
+        writer = self._stream_writer
+        if writer and not writer.is_closing():
+            writer.write((json.dumps(message) + "\n").encode())
+
+    def forward_stream_feedback(self, viewer, message):
+        """Hidden or disconnected sockets cannot overwrite visible-viewer pacing."""
+        if viewer not in self.listeners:
+            return
+        self._viewer_feedback.put(viewer, message)
+        aggregate = self._viewer_feedback.aggregate(self.listeners)
+        if aggregate:
+            self.stream_control(aggregate)
+
+    def mark_activity(self):
+        self._last_activity = time.monotonic()
+        self.stream_control({"type": "activity"})
+
+    def needs_h264_capture(self):
+        """The shared desktop encoder is needed only by actual video consumers."""
+        return bool(self.config.stream_host and self.listeners
+                    and browser_manager.display_session_id == self.session_id
+                    and any(self.viewer_codecs.get(viewer, 'h264') == 'h264'
+                            for viewer in self.listeners))
+
+    def _record_media_frame(self, codec):
+        now = time.monotonic()
+        if codec == 'jpeg':
+            self._last_jpeg_frame_at = now
+            self._jpeg_frame_times.append(now)
+        else:
+            self._h264_frame_times.append(now)
+
+    def media_status(self):
+        """Actual capture arrivals, excluding screenshot snapshots and heartbeats."""
+        now = time.monotonic()
+        def source_fps(samples):
+            recent = [value for value in samples if now - value <= 2.0]
+            if len(recent) < 2:
+                return 0.0
+            # Include time since the last frame so a stalled source does not
+            # continue to report its previous healthy delivery rate.
+            return round((len(recent) - 1) / max(now - recent[0], 0.001), 2)
+        return {
+            'h264_active': self.h264_active,
+            'h264_capture_demand': self.needs_h264_capture(),
+            'jpeg_streaming': self._jpeg_streaming,
+            'h264_connections': self._h264_connections,
+            'h264_connection_errors': self._h264_connection_errors,
+            'h264_tcp_buffered_bytes': len(getattr(self._stream_reader, '_buffer', b'')),
+            'h264_source_fps': source_fps(self._h264_frame_times),
+            'jpeg_screencast_fps': source_fps(self._jpeg_frame_times),
+            'last_jpeg_age_ms': (round((now - self._last_jpeg_frame_at) * 1000)
+                                 if self._last_jpeg_frame_at is not None else None),
+            'viewer_codecs': {codec: sum(self.viewer_codecs.get(viewer, 'h264') == codec
+                                        for viewer in self.listeners)
+                              for codec in ('h264', 'jpeg')},
+        }
 
     def is_url_in_target_domain(self, url: str) -> bool:
         """Determines whether a candidate URL belongs to the target application's allowed domain."""
@@ -210,15 +303,26 @@ class BrowserSession:
     async def _h264_stream_loop(self):
         """Reads length-prefixed H.264 NALUs from the container video streamer on port 8099.
         Dispatches pre-packed binary packets to frontend WebCodecs VideoDecoder with zero JSON/Base64 overhead."""
-        stream_host = os.getenv("BROWSER_STREAM_HOST", BROWSER_STREAM_HOST)
-        stream_port = int(os.getenv("BROWSER_STREAM_PORT", str(BROWSER_STREAM_PORT)))
+        stream_host, stream_port = self.config.stream_host, self.config.stream_port
         logger.info(f"Starting H.264 video reader targeting {stream_host}:{stream_port}")
 
         while self.is_connected:
             writer = None
             try:
+                # Background tabs must not each consume and discard the
+                # shared 60 FPS desktop stream. Connect only while viewed.
+                if not self.needs_h264_capture():
+                    self.h264_active = False
+                    self._video_needs_keyframe = True
+                    await asyncio.sleep(0.1)
+                    continue
                 reader, writer = await asyncio.open_connection(stream_host, stream_port)
-                self.h264_active = True
+                self._stream_writer = writer
+                self._stream_reader = reader
+                self._h264_connections += 1
+                self.stream_control({'type':'protocol','source_timestamps':True})
+                self.mark_activity()
+                self._video_needs_keyframe = True
                 sock = writer.get_extra_info("socket")
                 if sock:
                     try:
@@ -226,13 +330,33 @@ class BrowserSession:
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 256 * 1024)
                     except Exception:
                         pass
-                logger.info(f"Connected to decoupled H.264 60 FPS video stream at {stream_host}:{stream_port}")
+                logger.info(f"Connected to adaptive H.264 video stream at {stream_host}:{stream_port}")
 
                 while self.is_connected:
+                    if not self.needs_h264_capture():
+                        self.h264_active = False
+                        self._video_needs_keyframe = True
+                        break
                     # Packet format from streamer.py: [4B length] [1B is_keyframe] [payload]
-                    header = await reader.readexactly(5)
-                    nal_len, is_kf = struct.unpack(">IB", header)
-                    nalu = await reader.readexactly(nal_len)
+                    header = await asyncio.wait_for(reader.readexactly(5), timeout=2.0)
+                    nal_len, flags = struct.unpack(">IB", header)
+                    is_kf = bool(flags & 1)
+                    if not 0 < nal_len <= 16 * 1024 * 1024:
+                        raise OSError("Invalid video packet length")
+                    source_timestamp_us = (struct.unpack('>Q',await asyncio.wait_for(reader.readexactly(8),timeout=2.0))[0]
+                                           if flags & 0x80 else None)
+                    nalu = await asyncio.wait_for(reader.readexactly(nal_len), timeout=2.0)
+
+                    # X11 capture belongs only to the tab explicitly selected for display.
+                    if not self.needs_h264_capture():
+                        self.h264_active = False
+                        self._video_needs_keyframe = True
+                        break
+                    if self._video_needs_keyframe and not is_kf:
+                        continue
+                    self._video_needs_keyframe = False
+                    self.h264_active = True
+                    self._record_media_frame('h264')
 
                     self._frame_seq += 1
                     now_ts = time.time()
@@ -241,7 +365,9 @@ class BrowserSession:
                     self._last_chromium_frame_time = now_ts
                     self._navigating = False
 
-                    metadata = {"codec": "h264", "isKeyFrame": bool(is_kf)}
+                    metadata = {"codec": "h264", "isKeyFrame": bool(is_kf), "page": self.page_metadata()}
+                    if source_timestamp_us is not None:
+                        metadata['source_timestamp_us'] = source_timestamp_us
                     meta_bytes = json.dumps(metadata).encode("utf-8")
                     sp_header = struct.pack(">2sIQH", b"SP", self._frame_seq, ts_ms, len(meta_bytes))
                     raw_bytes = sp_header + meta_bytes + nalu
@@ -255,9 +381,12 @@ class BrowserSession:
                         "seq": self._frame_seq,
                         "metadata": metadata,
                         "timestamp": now_ts,
+                        "_media_received_at": time.monotonic(),
                     })
-            except (asyncio.IncompleteReadError, ConnectionRefusedError, OSError):
+            except (asyncio.IncompleteReadError, ConnectionRefusedError, OSError, asyncio.TimeoutError):
                 self.h264_active = False
+                if self.needs_h264_capture():
+                    self._h264_connection_errors += 1
                 await asyncio.sleep(0.5)
             except asyncio.CancelledError:
                 break
@@ -266,6 +395,8 @@ class BrowserSession:
                 logger.debug(f"H.264 stream loop notice: {e}")
                 await asyncio.sleep(0.5)
             finally:
+                self._stream_writer = None
+                self._stream_reader = None
                 if writer:
                     try:
                         writer.close()
@@ -285,19 +416,10 @@ class BrowserSession:
                 if now - last_url_check >= 1.0:
                     last_url_check = now
                     try:
-                        loc = await self.evaluate("window.location.href")
-                        if loc and "chrome-error://" not in loc:
-                            clean_loc = to_frontend_display_url(loc)
-                            if clean_loc != self.current_url:
-                                logger.info(f"URL change detected via keepalive: {self.current_url} -> {clean_loc}")
-                                self.current_url = clean_loc
-                                self._notify_listeners({"type": "navigated", "url": self.current_url})
-                                self._notify_listeners({
-                                    "type": "page_state",
-                                    "url": self.current_url,
-                                    "title": self.page_title,
-                                    "elements": self.interactive_elements,
-                                })
+                        generation = self._navigation_generation
+                        identity = await self.evaluate("({url: location.href, title: document.title})", timeout=0.5)
+                        if generation == self._navigation_generation and isinstance(identity, dict):
+                            self.update_page_metadata(identity.get("url"), identity.get("title"))
                     except Exception:
                         pass
 
@@ -359,6 +481,8 @@ class BrowserSession:
             logger.error(f"Error in CDP send loop: {e}")
 
     def send_command_nowait(self, method: str, params: Optional[Dict[str, Any]] = None):
+        if method.startswith("Input.") or method == "Page.navigate":
+            self.mark_activity()
         """Fire-and-forget CDP command without waiting for or allocating an asyncio Future."""
         if not self.cdp_ws or not self.is_connected:
             return
@@ -372,6 +496,8 @@ class BrowserSession:
             pass
 
     async def send_command(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 3.5) -> Any:
+        if method.startswith("Input.") or method == "Page.navigate":
+            self.mark_activity()
         if not self.cdp_ws or not self.is_connected:
             raise RuntimeError("CDP WebSocket is not connected.")
         msg_id = self._next_id()
@@ -384,7 +510,14 @@ class BrowserSession:
         self._pending_requests[msg_id] = fut
 
         self._send_queue.put_nowait((10, msg_id, json.dumps(payload)))
-        return await asyncio.wait_for(fut, timeout=timeout)
+        started = time.monotonic()
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._pending_requests.pop(msg_id, None)
+            elapsed = time.monotonic()-started
+            if elapsed >= 1.0:
+                logger.warning('Slow browser command %s: %.2fs (mode=%s)',method,elapsed,self.config.mode)
 
     async def _listen_loop(self):
         try:
@@ -406,6 +539,28 @@ class BrowserSession:
                 method = data.get("method", "")
                 params = data.get("params", {})
 
+                if method == "Runtime.executionContextCreated":
+                    context = params.get("context", {})
+                    aux = context.get("auxData", {})
+                    if aux.get("isDefault") and aux.get("frameId") == self._main_frame_id:
+                        self._main_context_id = context.get("id")
+                elif method == "Runtime.executionContextDestroyed":
+                    if params.get("executionContextId") == self._main_context_id:
+                        self._main_context_id = None
+                elif method == "Runtime.executionContextsCleared":
+                    self._main_context_id = None
+                elif method == "Runtime.bindingCalled" and params.get("name") == PAGE_STATE_BINDING:
+                    if params.get("executionContextId") == self._main_context_id and self._main_context_id is not None:
+                        try:
+                            payload = params.get("payload", "")
+                            if len(payload) <= 16384:
+                                identity = json.loads(payload)
+                                if isinstance(identity, dict):
+                                    self.update_page_metadata(identity.get("url"), identity.get("title"))
+                        except (ValueError, TypeError):
+                            pass
+                    continue
+
                 # 1. Screencast Frame received from Chromium
                 if method == "Page.screencastFrame":
                     frame_data = params.get("data")
@@ -424,6 +579,8 @@ class BrowserSession:
                             pass
 
                     if frame_data:
+                        self._record_media_frame('jpeg')
+                        metadata = {**params.get("metadata", {}), "page": self.page_metadata()}
                         now_ts = time.time()
                         self.latest_frame = frame_data
                         self._last_frame_time = now_ts
@@ -434,7 +591,6 @@ class BrowserSession:
                         try:
                             raw_jpeg = base64.b64decode(frame_data)
                             self._last_raw_jpeg = raw_jpeg
-                            metadata = params.get("metadata", {})
                             meta_bytes = json.dumps(metadata).encode("utf-8")
                             ts_ms = int(now_ts * 1000)
                             # 16-byte header: 'SP' (2B) + seq (4B) + ts_ms (8B) + metaLen (2B)
@@ -448,8 +604,9 @@ class BrowserSession:
                             "data": frame_data,
                             "raw_bytes": raw_bytes,
                             "seq": self._frame_seq,
-                            "metadata": params.get("metadata", {}),
-                            "timestamp": now_ts
+                            "metadata": metadata,
+                            "timestamp": now_ts,
+                            "_media_received_at": self._last_jpeg_frame_at,
                         })
 
                 # 2. Console log event
@@ -457,7 +614,7 @@ class BrowserSession:
                     args = params.get("args", [])
                     text = " ".join(str(a.get("value", a.get("description", ""))) for a in args)
                     if "__STACKPILOT_DOM_SCROLLED__" in text:
-                        asyncio.create_task(self.extract_interactive_tree())
+                        self.schedule_tree_refresh()
                         continue
                     if "__sp_" in text or "__STACKPILOT_" in text:
                         continue
@@ -490,26 +647,25 @@ class BrowserSession:
                     if method == "Page.frameNavigated":
                         frame = params.get("frame", {})
                         if not frame.get("parentId"):
+                            self._main_frame_id = frame.get("id")
+                            self._main_context_id = None
+                            self._navigation_generation += 1
                             raw_nav_url = frame.get("url", "")
                     elif method == "Page.navigatedWithinDocument":
-                        raw_nav_url = params.get("url", "")
+                        if params.get("frameId") == self._main_frame_id:
+                            raw_nav_url = params.get("url", "")
 
                     if raw_nav_url and "chrome-error://" not in raw_nav_url:
-                        self.current_url = to_frontend_display_url(raw_nav_url)
                         self._last_navigation_time = time.time()
                         self._lifecycle_events.clear()
-                        self._notify_listeners({"type": "navigated", "url": self.current_url})
-                        self._notify_listeners({
-                            "type": "page_state",
-                            "url": self.current_url,
-                            "title": self.page_title,
-                            "elements": self.interactive_elements,
-                        })
+                        self.update_page_metadata(raw_nav_url, "" if method == "Page.frameNavigated" else None,
+                                                  reset_document=method == "Page.frameNavigated")
 
                 # 4b. Target lifecycle: close orphan background tabs and keep session on primary tab
                 elif method == "Target.targetCreated":
                     target_info = params.get("targetInfo", {})
-                    if target_info.get("type") == "page" and target_info.get("targetId") != self.target_id:
+                    if (target_info.get("type") == "page" and target_info.get("targetId") != self.target_id
+                            and target_info.get("openerId") == self.target_id):
                         extra_id = target_info.get("targetId")
                         extra_url = target_info.get("url", "")
                         logger.info(f"Closing extra popup tab: {extra_id} ({extra_url})")
@@ -534,18 +690,51 @@ class BrowserSession:
                     if ev_name:
                         self._lifecycle_events.add(str(ev_name))
 
-        except websockets.exceptions.ConnectionClosed:
+        except ConnectionClosed:
             logger.info(f"CDP connection closed for session {self.session_id}")
         except Exception as e:
             logger.error(f"Error in CDP listener loop: {e}", exc_info=True)
         finally:
             self.is_connected = False
 
+    def page_metadata(self):
+        return {"url": self.current_url, "title": self.page_title,
+                "session_id": self.session_id, "stream_id": self._stream_id,
+                "state_seq": self._page_state_seq}
+
+    def update_page_metadata(self, url, title=None, reset_document=False):
+        if not isinstance(url, str) or not url or url.startswith("chrome-error://"):
+            return
+        clean_url = to_frontend_display_url(url)
+        changed_url = clean_url != self.current_url
+        next_title = title if isinstance(title, str) else ("" if changed_url else self.page_title)
+        if not changed_url and next_title == self.page_title and not reset_document:
+            return
+        if changed_url or reset_document:
+            self._navigation_generation += 1
+            self.interactive_elements = []
+            self.discovered_subpages = []
+            self._last_raw_jpeg = None
+            self.latest_frame = None
+        self.current_url, self.page_title = clean_url, next_title
+        self._page_state_seq += 1
+        event = {"type": "page_state", **self.page_metadata()}
+        if changed_url or reset_document:
+            event["elements"] = []
+        self._notify_listeners(event)
+
     def add_listener(self, callback: Callable[[Dict[str, Any]], Any]):
+        self.last_used = time.monotonic()
         self.listeners.add(callback)
 
     def remove_listener(self, callback: Callable[[Dict[str, Any]], Any]):
+        self.last_used = time.monotonic()
         self.listeners.discard(callback)
+        self.viewer_codecs.pop(callback,None)
+        if self._viewer_feedback.remove(callback):
+            aggregate = self._viewer_feedback.aggregate(self.listeners)
+            if aggregate:
+                self.stream_control(aggregate)
 
     def _notify_listeners(self, event: Dict[str, Any]):
         for listener in list(self.listeners):
@@ -558,61 +747,52 @@ class BrowserSession:
         if not target_id:
             return
         try:
-            headers = {"Host": "localhost"}
-            async with httpx.AsyncClient(timeout=2.0, headers=headers) as client:
-                await client.put(f"{CHROME_HOST}/json/close/{target_id}")
+            headers = {"Host": "localhost", **self.config.headers}
+            async with httpx.AsyncClient(timeout=2.0, trust_env=False, headers=headers) as client:
+                await client.put(f"{self.config.endpoint}/json/close/{target_id}")
         except Exception:
             pass
 
     async def connect(self):
-        """Creates or reuses a browser tab via CDP HTTP endpoint and connects via WebSocket."""
-        headers = {"Host": "localhost"}
-        async with httpx.AsyncClient(timeout=6.0, headers=headers) as client:
-            target_data = None
-            try:
-                list_resp = await client.get(f"{CHROME_HOST}/json/list")
-                if list_resp.status_code == 200:
-                    page_tabs = [t for t in list_resp.json() if t.get("type") == "page"]
-                    if page_tabs:
-                        target_data = page_tabs[0]
-                        # Close orphan extra popup tabs in the background
-                        for tab in page_tabs[1:]:
-                            try:
-                                await client.put(f"{CHROME_HOST}/json/close/{tab.get('id')}")
-                            except Exception:
-                                pass
-            except Exception as e:
-                logger.debug(f"Tab list notice: {e}")
-
-            if not target_data:
-                resp = await client.put(f"{CHROME_HOST}/json/new")
-                target_data = resp.json()
-
-            self.target_id = target_data.get("id")
-            raw_ws = target_data.get("webSocketDebuggerUrl")
-            if not raw_ws:
-                raise RuntimeError(f"Could not get webSocketDebuggerUrl from Chromium: {target_data}")
-
-            # Correct hostname if running in docker
-            # Chromium may report ws://127.0.0.1:9222, rewrite to CHROME_HOST host/port
-            chrome_net_host = CHROME_HOST.replace("http://", "").replace("https://", "")
-            raw_ws_parts = raw_ws.split("/devtools/")
-            self.ws_url = f"ws://{chrome_net_host}/devtools/{raw_ws_parts[-1]}"
+        """Create a session-owned tab with isolated cookies and browser storage."""
+        from .browser_testing.isolation import create_isolated_target, open_context_owner, dispose_context
+        self._context_owner = await open_context_owner(self.config.endpoint, self.config.headers)
+        try:
+            self.browser_context_id,self.target_id = await create_isolated_target(self.config.endpoint, self._context_owner,
+                                                                                  fullscreen=bool(self.config.stream_host))
+        except BaseException:
+            await self._context_owner.close()
+            self._context_owner = None
+            raise
+        self.ws_url = 'ws://'+urlparse(self.config.endpoint).netloc+'/devtools/page/'+self.target_id
 
         logger.info(f"Connecting to CDP at {self.ws_url}")
-        self.cdp_ws = await websockets.connect(
-            self.ws_url,
-            max_size=10 * 1024 * 1024
-        )
+        try:
+            self.cdp_ws = await websockets.connect(self.ws_url,max_size=10 * 1024 * 1024,
+                                                   additional_headers=self.config.headers,
+                                                   compression=None)
+        except BaseException:
+            await dispose_context(self.config.endpoint,self.browser_context_id,self.config.headers)
+            self.browser_context_id = None
+            await self._context_owner.close()
+            self._context_owner = None
+            raise
         self.is_connected = True
         self._read_task = asyncio.create_task(self._listen_loop())
         self._send_task = asyncio.create_task(self._send_loop())
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
 
         # Enable core domains
-        await self.send_command("Page.enable")
-        await self.send_command("DOM.enable")
-        await self.send_command("Runtime.enable")
+        await asyncio.gather(self.send_command("Page.enable"),
+                             self.send_command("Runtime.enable"))
+        tree = await self.send_command("Page.getFrameTree")
+        self._main_frame_id = tree.get("frameTree", {}).get("frame", {}).get("id")
+        await self.send_command("Runtime.addBinding", {"name": PAGE_STATE_BINDING})
+        await self.send_command("Page.addScriptToEvaluateOnNewDocument", {"source": PAGE_STATE_SCRIPT})
+        await self.evaluate(PAGE_STATE_SCRIPT)
+        # Tab-specific JPEG capture remains available if the video encoder stalls
+        # or the client's browser does not support H.264 WebCodecs.
+        await self.start_jpeg_stream()
         try:
             await self.send_command("Network.enable")
             await self.send_command("Page.setLifecycleEventsEnabled", {"enabled": True})
@@ -683,30 +863,10 @@ class BrowserSession:
         except Exception as e:
             logger.debug(f"Target/navigation policy notice: {e}")
 
-        # Check if decoupled H.264 video streamer is reachable on port 8099
-        try:
-            stream_host = os.getenv("BROWSER_STREAM_HOST", BROWSER_STREAM_HOST)
-            stream_port = int(os.getenv("BROWSER_STREAM_PORT", str(BROWSER_STREAM_PORT)))
-            _, test_writer = await asyncio.wait_for(asyncio.open_connection(stream_host, stream_port), timeout=0.6)
-            test_writer.close()
-            await test_writer.wait_closed()
-            self.h264_active = True
-            logger.info(f"Decoupled H.264 video plane detected at {stream_host}:{stream_port}. Enabling 60 FPS WebCodecs streaming.")
-        except Exception:
-            self.h264_active = False
-            logger.info("Decoupled H.264 stream not yet reachable, initializing optimized CDP screencast fallback.")
-
-        if self.h264_active:
+        # The demand-aware reader retries a restarting media worker. A failed
+        # one-time startup probe must not permanently pin this tab to JPEG.
+        if self.config.stream_host:
             self._h264_task = asyncio.create_task(self._h264_stream_loop())
-        else:
-            # Start native screencast with optimized parameters for maximum streaming FPS
-            await self.send_command("Page.startScreencast", {
-                "format": "jpeg",
-                "quality": 50,
-                "maxWidth": 1280,
-                "maxHeight": 720,
-                "everyNthFrame": 1,
-            })
 
         # Inject in-page scroll event listener, stealth normalization, click ripple styles, and compositor pulse
         injection_js = """
@@ -933,39 +1093,6 @@ class BrowserSession:
               }
             } catch(e) {}
 
-
-            // Continuous High-Performance Compositor Pulse (15-20 FPS)
-            // Ensures smooth live screencast frames flow continuously without Python CDP polling overhead
-            function installTicker() {
-              if (document.getElementById('__sp_live_ticker')) return;
-              const target = document.body || document.documentElement;
-              if (!target) {
-                if (document.readyState === 'loading') {
-                  document.addEventListener('DOMContentLoaded', installTicker, { once: true });
-                }
-                return;
-              }
-              const c = document.createElement('canvas');
-              c.id = '__sp_live_ticker';
-              c.width = 1;
-              c.height = 1;
-              c.style.cssText = 'position:fixed;bottom:0;right:0;width:1px;height:1px;pointer-events:none;z-index:2147483647;';
-              target.appendChild(c);
-              const ctx = c.getContext('2d');
-              let color = 0;
-              let last = 0;
-              function tick(now) {
-                if (now - last >= 66) { // ~15 FPS solid floor
-                  last = now;
-                  color = color === 0 ? 1 : 0;
-                  ctx.fillStyle = color === 0 ? '#000000' : '#111111';
-                  ctx.fillRect(0, 0, 1, 1);
-                }
-                requestAnimationFrame(tick);
-              }
-              requestAnimationFrame(tick);
-            }
-            installTicker();
 
             // WebGL Resilience Guard: prevents 3D framework crashes if context fails
             try {
@@ -1555,6 +1682,11 @@ class BrowserSession:
         """Forces Chromium to render and capture an immediate fresh frame, broadcasting it to live stream listeners."""
         if not self.cdp_ws or not self.is_connected:
             return None
+        # Action feedback is demand-driven. Explicit vision observations use
+        # capture_screenshot; do not render duplicate JPEGs for unviewed tabs
+        # or viewers already receiving the desktop video stream.
+        if not self.listeners or (self.h264_active and all(self.viewer_codecs.get(v) == 'h264' for v in self.listeners)):
+            return self.latest_frame
         # Fast path: If a fresh screencast frame arrived recently (< 200ms ago) from the live screencast stream,
         # return it immediately without blocking on Page.captureScreenshot (saves 250-300ms per action).
         now_ts = time.time()
@@ -1944,15 +2076,14 @@ class BrowserSession:
 
     async def navigate(self, url: str, force: bool = False) -> Dict[str, Any]:
         """Navigate to URL and wait for tri-phase quiescence (network idle, DOM mutations quiet, double RAF)."""
-        internal_url = to_container_accessible_url(url)
+        internal_url = self.config.resolve_url(url)
         display_url = to_frontend_display_url(url)
-        norm_target = display_url.rstrip("/").lower()
-        norm_curr = (self.current_url or "").rstrip("/").lower()
+        norm_target = display_url
+        norm_curr = self.current_url or ""
         if not force and norm_curr and norm_target == norm_curr and norm_target not in {"about:blank", ""}:
             # Already on this exact URL, skip redundant reload
             return {"url": self.current_url}
 
-        self.current_url = display_url
         # Suppress stale keepalive re-broadcast during navigation
         self._navigating = True
         self._last_raw_jpeg = None  # Clear raw screenshot cache
@@ -2009,10 +2140,8 @@ class BrowserSession:
                 break
 
 
-        try:
-            await self.auto_dismiss_startup_modals()
-        except Exception:
-            pass
+        # Present dialogs to the planner. Their choices can carry consent or
+        # submit a transaction; navigation must not accept them implicitly.
 
         try:
             await self.extract_interactive_tree()
@@ -2036,8 +2165,32 @@ class BrowserSession:
                 pass
         return res
 
+    def schedule_tree_refresh(self):
+        """Coalesce passive scroll notifications; agent tools obtain fresh state themselves."""
+        if self._tree_refresh_task is not None and not self._tree_refresh_task.done():
+            return
+        async def refresh():
+            try:
+                await asyncio.sleep(.12)
+                if self.is_connected and self.session_id not in browser_manager.busy_sessions:
+                    await self.extract_interactive_tree()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("Passive browser observation failed: %s", type(exc).__name__)
+            finally:
+                self._tree_refresh_task = None
+        self._tree_refresh_task = asyncio.create_task(refresh())
+
     async def extract_interactive_tree(self) -> Dict[str, Any]:
+        # Keep explicit observations fresh, but never run overlapping full DOM scans.
+        async with self._tree_lock:
+            return await self._extract_interactive_tree()
+
+    async def _extract_interactive_tree(self) -> Dict[str, Any]:
         """Traverses light DOM + open shadow roots to return interactive elements (buttons, links, inputs, tabs, toggles) with viewport and page coordinates."""
+        generation = self._navigation_generation
+        state_seq = self._page_state_seq
         js_code = r"""
         (() => {
             const elements = [];
@@ -2047,7 +2200,7 @@ class BrowserSession:
             const cache = window.__spFast = window.__spFast || {
                 ids: new WeakMap(),
                 nodes: new Map(),
-                nextId: 1
+                nextId: __SP_INITIAL_ID__
             };
             // Clean up disconnected nodes to prevent memory leaks
             for (const [id, e] of cache.nodes) {
@@ -2059,18 +2212,17 @@ class BrowserSession:
                 if (!node) return null;
                 let id = cache.ids.get(node);
                 if (id === undefined) {
-                    const attr = node.getAttribute('data-sp-id');
-                    const parsed = attr ? parseInt(attr, 10) : null;
-                    if (parsed && !cache.nodes.has(parsed)) {
-                        id = parsed;
-                        if (id >= cache.nextId) cache.nextId = id + 1;
-                    } else {
-                        id = cache.nextId++;
-                    }
+                    // Cloned/replaced controls may copy data attributes.
+                    // Only node identity can preserve an existing reference.
+                    id = cache.nextId++;
                     cache.ids.set(node, id);
                 }
                 cache.nodes.set(id, node);
-                try { node.setAttribute('data-sp-id', String(id)); } catch(e) {}
+                // Rewriting an unchanged ID triggers page mutation observers on
+                // every action. Preserve node identity without that extra work.
+                try {
+                    if (node.getAttribute('data-sp-id') !== String(id)) node.setAttribute('data-sp-id', String(id));
+                } catch(e) {}
                 return id;
             };
 
@@ -2093,9 +2245,16 @@ class BrowserSession:
                     for (let i = 0; i < matched.length && list.length < 350; i++) {
                         list.push(matched[i]);
                     }
+                    // Framework event delegation can make a div clickable
+                    // without role/button semantics or an onclick attribute.
+                    const custom = root.querySelectorAll('div,span');
+                    for (let i=0;i<custom.length && list.length<350;i++) {
+                        const node=custom[i];
+                        if (typeof node.onclick==='function' && !node.closest('a,button,[role="button"]') && !list.includes(node)) list.push(node);
+                    }
                     // For shadow DOM, inspect custom elements with shadow roots (limit sample to 60)
-                    const shadowHosts = root.querySelectorAll(':not(:defined)');
-                    for (let i = 0; i < Math.min(shadowHosts.length, 60); i++) {
+                    const shadowHosts = Array.from(root.querySelectorAll('*')).filter(n=>n.shadowRoot).slice(0,60);
+                    for (let i = 0; i < shadowHosts.length; i++) {
                         if (shadowHosts[i].shadowRoot) {
                             list.push(...collectNodes(shadowHosts[i].shadowRoot, depth + 1));
                         }
@@ -2195,7 +2354,11 @@ class BrowserSession:
                     name: el.name || '',
                     input_id: el.id || '',
                     placeholder: el.placeholder || '',
-                    value: (el.value || '').slice(0, 80),
+                    value: el.type === 'password' ? '[redacted]' : (el.value || '').slice(0, 80),
+                    required: Boolean(el.required || el.getAttribute('aria-required') === 'true'),
+                    invalid: Boolean(el.willValidate && !el.validity.valid || el.getAttribute('aria-invalid') === 'true'),
+                    expanded: el.getAttribute('aria-expanded'),
+                    options: tagL === 'select' ? [...el.options].slice(0,60).map(o=>({text:o.text,value:o.value,disabled:o.disabled || !!o.parentElement?.disabled,selected:o.selected})) : undefined,
                     checked: Boolean(el.checked || el.getAttribute('aria-checked') === 'true'),
                     disabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
                     is_in_viewport: isInViewport,
@@ -2403,20 +2566,27 @@ class BrowserSession:
                 viewport_height: winH,
                 viewport_width: winW,
                 elements: elements,
+                next_element_id: cache.nextId,
                 subpages: subpages
             };
         })()
         """
         try:
             res = await self.send_command("Runtime.evaluate", {
-                "expression": js_code,
+                "expression": js_code.replace('__SP_INITIAL_ID__', str(self._next_element_id)),
                 "returnByValue": True,
             }, timeout=6.0)
             val = res.get("result", {}).get("value", {})
         except Exception as e:
             logger.debug(f"extract_interactive_tree evaluation notice: {e}")
             val = {}
-        self.page_title = val.get("title", "")
+        if not val or generation != self._navigation_generation or (
+                state_seq != self._page_state_seq and val.get("title") != self.page_title):
+            return {**self.page_metadata(), "elements": self.interactive_elements,
+                    "subpages": self.discovered_subpages}
+        self.update_page_metadata(val.get("url"), val.get("title"))
+        if type(val.get('next_element_id')) is int:
+            self._next_element_id = max(self._next_element_id,val['next_element_id'])
         self.scroll_y = val.get("scroll_y", 0)
         self.scroll_height = val.get("scroll_height", 720)
         self.viewport_height = val.get("viewport_height", 720)
@@ -2462,8 +2632,7 @@ class BrowserSession:
 
         state_payload = {
             "type": "page_state",
-            "url": self.current_url,
-            "title": self.page_title,
+            **self.page_metadata(),
             "scroll_y": self.scroll_y,
             "scroll_height": self.scroll_height,
             "elements": self.interactive_elements,
@@ -2538,6 +2707,39 @@ class BrowserSession:
             path.append((int(round(bx)), int(round(by))))
         return path
 
+    async def _move_pointer(self, x: int, y: int, label: str = "", fast_mode: bool = False, buttons: int = 0):
+        """Bound native movement and announce one compositor animation, not every sample."""
+        path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y, fast_mode=fast_mode)
+        duration = 0 if fast_mode or len(path) == 1 else min(.12, max(.05, len(path) * .008))
+        self._notify_listeners({"type": "cursor_action", "action": "move", "phase": "moving",
+                                "x": x, "y": y, "duration_ms": round(duration * 1000), "label": label})
+        started = time.monotonic()
+        for index, (cx, cy) in enumerate(path):
+            due = started + duration * ((index + 1) / len(path))
+            remaining = due - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            params = {"type": "mouseMoved", "x": cx, "y": cy, "buttons": buttons}
+            # The event may reach Chromium even if its acknowledgement times out.
+            # A drag release must use the latest dispatched position, not jump back.
+            self.cursor_x, self.cursor_y = cx, cy
+            if index == len(path) - 1:
+                # A click/drag must never overtake an unacknowledged final move.
+                await self.send_command("Input.dispatchMouseEvent", params)
+            else:
+                self.send_command_nowait("Input.dispatchMouseEvent", params)
+        self.cursor_x, self.cursor_y = x, y
+
+    async def _pointer_click_cycle(self, x: int, y: int, button: str = "left", count: int = 1, dwell: float = 0):
+        """Release even if cancellation arrives while the press acknowledgement is unknown."""
+        params = {"x": x, "y": y, "button": button, "clickCount": count}
+        try:
+            await self.send_command("Input.dispatchMouseEvent", {"type": "mousePressed", **params})
+            if dwell:
+                await asyncio.sleep(dwell)
+        finally:
+            await asyncio.shield(self.send_command("Input.dispatchMouseEvent", {"type": "mouseReleased", **params}))
+
     async def click(self, x: int, y: int, label: str = "", fast_mode: bool = False, exact_coords: bool = False):
         """Simulate fast organic cursor glide and realistic click with in-DOM visual ripple."""
         # 8px Euclidean Radius Snapping to eliminate vision downscaling discretization drift (bypassed if exact_coords or fast_mode)
@@ -2558,52 +2760,12 @@ class BrowserSession:
                 if not label:
                     label = f"Clicking {best_el.get('text') or best_el.get('tag') or ''}"
 
-        path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y, fast_mode=fast_mode)
-
-        # 1. Smooth kinematic Bézier glide (8ms intervals, ~50-100ms total)
-        for curr_x, curr_y in path:
-            self._notify_listeners({
-                "type": "cursor_action",
-                "action": "move",
-                "x": curr_x,
-                "y": curr_y,
-                "label": label or f"Moving to ({x}, {y})",
-            })
-            self.send_command_nowait("Input.dispatchMouseEvent", {
-                "type": "mouseMoved",
-                "x": curr_x,
-                "y": curr_y,
-            })
-            if not fast_mode and len(path) > 1:
-                await asyncio.sleep(0.008)
-
-        self.cursor_x = x
-        self.cursor_y = y
-
-        # 2. Notify click ripple and action to frontend
-        self._notify_listeners({
-            "type": "cursor_action",
-            "action": "click",
-            "x": x,
-            "y": y,
-            "label": label or f"Clicking ({x}, {y})",
-        })
+        await self._move_pointer(x, y, label or f"Moving to ({x}, {y})", fast_mode=fast_mode)
 
         # 4. Dispatch mousePressed, pause briefly for visual active state rendering, then mouseReleased
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mousePressed",
-            "x": x,
-            "y": y,
-            "button": "left",
-            "clickCount": 1,
-        })
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mouseReleased",
-            "x": x,
-            "y": y,
-            "button": "left",
-            "clickCount": 1,
-        })
+        await self._pointer_click_cycle(x, y)
+        self._notify_listeners({"type": "cursor_action", "action": "click", "phase": "applied",
+                                "x": x, "y": y, "duration_ms": 0, "label": label or f"Clicking ({x}, {y})"})
 
         # Settle click action (only if not in fast_mode/APV which manages its own quiescence)
         if not fast_mode:
@@ -2639,29 +2801,12 @@ class BrowserSession:
                         label = f"Hovering over {el.get('text') or el.get('tag') or ''}"
                     break
 
-        path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y)
-        for curr_x, curr_y in path:
-            self._notify_listeners({
-                "type": "cursor_action",
-                "action": "move",
-                "x": curr_x,
-                "y": curr_y,
-                "label": label or f"Hovering ({x}, {y})",
-            })
-            self.send_command_nowait("Input.dispatchMouseEvent", {
-                "type": "mouseMoved",
-                "x": curr_x,
-                "y": curr_y,
-            })
-            await asyncio.sleep(0.008)
-
-        self.cursor_x = x
-        self.cursor_y = y
-
-
+        await self._move_pointer(x, y, label or f"Hovering ({x}, {y})")
         self._notify_listeners({
             "type": "cursor_action",
             "action": "hover",
+            "phase": "applied",
+            "duration_ms": 0,
             "x": x,
             "y": y,
             "label": label or f"Hovering at ({x}, {y})",
@@ -2730,29 +2875,13 @@ class BrowserSession:
                     x, y = el["x"], el["y"]
                     break
 
-        path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y)
-        for curr_x, curr_y in path:
-            self.send_command_nowait("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": curr_x, "y": curr_y})
-            await asyncio.sleep(0.008)
+        await self._move_pointer(x, y, label or f"Double-clicking ({x}, {y})")
 
-        self.cursor_x = x
-        self.cursor_y = y
-
-        self._notify_listeners({
-            "type": "cursor_action",
-            "action": "double_click",
-            "x": x,
-            "y": y,
-            "label": label or f"Double-clicking ({x}, {y})",
-        })
-
-        await self.send_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1})
-        await asyncio.sleep(0.02)
-        await self.send_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1})
+        await self._pointer_click_cycle(x, y, count=1, dwell=.02)
         await asyncio.sleep(0.06)
-        await self.send_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 2})
-        await asyncio.sleep(0.02)
-        await self.send_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 2})
+        await self._pointer_click_cycle(x, y, count=2, dwell=.02)
+        self._notify_listeners({"type": "cursor_action", "action": "double_click", "phase": "applied",
+                                "x": x, "y": y, "duration_ms": 0, "label": label or f"Double-clicking ({x}, {y})"})
 
     async def right_click(self, x: int, y: int, label: str = ""):
         """Dispatches right-click context menu event with visual indicator."""
@@ -2762,136 +2891,77 @@ class BrowserSession:
                     x, y = el["x"], el["y"]
                     break
 
-        path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y)
-        for curr_x, curr_y in path:
-            self.send_command_nowait("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": curr_x, "y": curr_y})
-            await asyncio.sleep(0.008)
+        await self._move_pointer(x, y, label or f"Right-clicking ({x}, {y})")
 
-        self.cursor_x = x
-        self.cursor_y = y
-
-
-        self._notify_listeners({
-            "type": "cursor_action",
-            "action": "right_click",
-            "x": x,
-            "y": y,
-            "label": label or f"Right-clicking ({x}, {y})",
-        })
-
-        await self.send_command("Input.dispatchMouseEvent", {"type": "mousePressed", "x": x, "y": y, "button": "right", "clickCount": 1})
-        await asyncio.sleep(0.03)
-        await self.send_command("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": x, "y": y, "button": "right", "clickCount": 1})
+        await self._pointer_click_cycle(x, y, button="right", dwell=.03)
+        self._notify_listeners({"type": "cursor_action", "action": "right_click", "phase": "applied",
+                                "x": x, "y": y, "duration_ms": 0, "label": label or f"Right-clicking ({x}, {y})"})
 
     async def drag_and_drop(self, start_x: int, start_y: int, end_x: int, end_y: int, label: str = ""):
         """Simulates native drag and drop from start coordinate to end coordinate."""
-        init_path = self._generate_bezier_path(self.cursor_x, self.cursor_y, start_x, start_y)
-        for cx, cy in init_path:
-            self.send_command_nowait("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
-            await asyncio.sleep(0.008)
+        await self._move_pointer(start_x, start_y, label or "Moving to drag source")
 
-        self.cursor_x = start_x
-        self.cursor_y = start_y
-
-        self._notify_listeners({
-            "type": "cursor_action",
-            "action": "drag_start",
-            "x": start_x,
-            "y": start_y,
-            "label": label or f"Dragging from ({start_x}, {start_y}) to ({end_x}, {end_y})",
-        })
-
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mousePressed",
-            "x": start_x,
-            "y": start_y,
-            "button": "left",
-            "clickCount": 1,
-        })
-        await asyncio.sleep(0.05)
-
-        drag_path = self._generate_bezier_path(start_x, start_y, end_x, end_y)
-        for cx, cy in drag_path:
-            self.send_command_nowait("Input.dispatchMouseEvent", {
-                "type": "mouseMoved",
-                "x": cx,
-                "y": cy,
-                "buttons": 1,
+        try:
+            await self.send_command("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "x": start_x, "y": start_y, "button": "left", "clickCount": 1,
             })
-            await asyncio.sleep(0.012)
-
-        self.cursor_x = end_x
-        self.cursor_y = end_y
-
-        await self.send_command("Input.dispatchMouseEvent", {
-            "type": "mouseReleased",
-            "x": end_x,
-            "y": end_y,
-            "button": "left",
-            "clickCount": 1,
-        })
+            self._notify_listeners({"type": "cursor_action", "action": "drag_start", "phase": "applied",
+                                    "x": start_x, "y": start_y, "duration_ms": 0,
+                                    "label": label or f"Dragging to ({end_x}, {end_y})"})
+            await asyncio.sleep(0.05)
+            await self._move_pointer(end_x, end_y, label or "Dragging", buttons=1)
+        finally:
+            # Cancellation or a failed drag must not leave the native button held.
+            await asyncio.shield(self.send_command("Input.dispatchMouseEvent", {
+                "type": "mouseReleased",
+                "x": self.cursor_x,
+                "y": self.cursor_y,
+                "button": "left",
+                "clickCount": 1,
+            }))
+        self._notify_listeners({"type": "cursor_action", "action": "drag_end", "phase": "applied",
+                                "x": end_x, "y": end_y, "duration_ms": 0, "label": label or "Dropped"})
         await asyncio.sleep(0.04)
 
     async def toggle_checkbox(self, element_id: int) -> bool:
-        """Toggles a checkbox or switch element reliably without double-reversion."""
-        el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
-        if el and el.get("x") is not None and el.get("y") is not None:
-            await self.scroll_to_element(element_id)
-            await self.click(el["x"], el["y"], label=f"Toggle {el.get('text') or 'checkbox'}", fast_mode=True)
-            return True
+        """Toggle through a current hit-tested native click; never force DOM state."""
+        return await self.click_element(element_id, label='Toggle checked state', fast_mode=True)
 
-        toggle_js = f"""
-        (() => {{
-            try {{
-                const target = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-                if (target) {{
-                    target.checked = !target.checked;
-                    target.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    target.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                }}
-            }} catch(e) {{}}
-        }})()
-        """
-        try:
-            await self.send_command("Runtime.evaluate", {"expression": toggle_js})
-        except Exception:
-            pass
-        return True
+    async def set_checked(self, element_id: int, desired: bool) -> bool:
+        """Idempotent native selection with explicit postcondition, including ARIA controls."""
+        probe = await self.evaluate(f"""(() => {{
+            const el=window.__spFast?.nodes.get({int(element_id)});
+            if (!el?.isConnected) return null;
+            const native=['checkbox','radio'].includes(el.type);
+            if (!native && !['checkbox','switch','radio'].includes(el.getAttribute('role'))) return null;
+            return native ? el.checked : ({{true:true,false:false}}[el.getAttribute('aria-checked')] ?? null);
+        }})()""")
+        if type(probe) is not bool:
+            return False
+        if probe == desired:
+            return True
+        await self.scroll_to_element(element_id)
+        return await ActionPerceptionVerification.dispatch_two_tier_click(self, element_id, label='Set checked state', fast_mode=True)
 
     async def select_option(self, element_id: int, value: str = "") -> bool:
         """Selects an option in a <select> element."""
-        el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
         select_js = f"""
         (() => {{
-            try {{
-                const target = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-                if (target && target.options && target.options.length > 0) {{
-                    let chosen = -1;
-                    const valLow = "{value}".toLowerCase();
-                    if (valLow) {{
-                        for (let i = 0; i < target.options.length; i++) {{
-                            if (target.options[i].value.toLowerCase().includes(valLow) || target.options[i].text.toLowerCase().includes(valLow)) {{
-                                chosen = i;
-                                break;
-                            }}
-                        }}
-                    }}
-                    if (chosen === -1) {{
-                        chosen = Math.min(1, target.options.length - 1);
-                    }}
-                    target.selectedIndex = chosen;
-                    target.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    target.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    return target.options[chosen].text;
-                }}
-            }} catch(e) {{}}
-            return null;
+            const target = window.__spFast?.nodes.get({int(element_id)});
+            if (!target?.isConnected || target.tagName !== 'SELECT' || target.matches(':disabled')) return false;
+            const requested = {json.dumps(value)}, options = [...target.options];
+            const matches = options.filter(o => o.value === requested || o.text.trim() === requested);
+            if (matches.length !== 1 || matches[0].disabled || matches[0].parentElement?.disabled) return false;
+            const chosen = matches[0];
+            if (target.value === chosen.value && chosen.selected) return true;
+            target.value = chosen.value;
+            target.dispatchEvent(new Event('input', {{ bubbles:true }}));
+            target.dispatchEvent(new Event('change', {{ bubbles:true }}));
+            return target.value === chosen.value && chosen.selected;
         }})()
         """
-        try:
-            await self.send_command("Runtime.evaluate", {"expression": select_js})
-        except Exception:
-            pass
+        if await self.evaluate(select_js) is not True:
+            raise RuntimeError("Select target or exact option is missing, disabled, or ambiguous. Observe current options; no choice was changed.")
         return True
 
     async def scroll_to(self, y: int, extract_tree: bool = True):
@@ -2926,13 +2996,16 @@ class BrowserSession:
         """Scrolls a specific element into viewport center using DOM scrollIntoView or coordinates and waits for standstill."""
         scrolled = await self.evaluate(f"""
         (() => {{
-            const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-            if (el) {{
+            const el = window.__spFast?.nodes.get({element_id});
+            if (el?.isConnected) {{
                 const r = el.getBoundingClientRect();
-                const inView = (r.top >= 20 && r.bottom <= (window.innerHeight || 720) - 20);
+                const cx = r.left+r.width/2, cy = r.top+r.height/2;
+                const hit = document.elementFromPoint(cx,cy);
+                const inView = r.top >= 20 && r.bottom <= innerHeight-20 && r.left >= 0 && r.right <= innerWidth &&
+                    (hit === el || el.contains(hit));
                 if (inView) return 'in_view';
                 try {{
-                    el.scrollIntoView({{ behavior: 'smooth', block: 'center', inline: 'nearest' }});
+                    el.scrollIntoView({{ behavior: 'instant', block: 'center', inline: 'nearest' }});
                 }} catch(e) {{
                     el.scrollIntoView();
                 }}
@@ -2942,8 +3015,8 @@ class BrowserSession:
         }})()
         """, timeout=1.5)
         if scrolled == 'scrolled':
-            await self.wait_for_scroll_settled(min_quiet_ms=50, max_timeout_s=0.35)
-            await self.force_fresh_frame()
+            # scrollIntoView also scrolls nested containers. Measure their live
+            # bounds at dispatch instead of guessing from window.scrollY.
             try:
                 curr_scroll = await self.evaluate("[window.scrollX || 0, window.scrollY || 0]", timeout=0.5)
                 if isinstance(curr_scroll, list) and len(curr_scroll) >= 2:
@@ -2954,14 +3027,7 @@ class BrowserSession:
         elif scrolled == 'in_view':
             return True
 
-        el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
-        if not el:
-            return False
-        curr_y = await self.evaluate("window.scrollY || 0", timeout=1.0) or 0
-        page_y = el.get("page_y", el.get("y", 0) + curr_y)
-        target_scroll = max(0, page_y - 280)
-        await self.scroll_to(target_scroll, extract_tree=False)
-        return True
+        return False
 
     async def click_element(self, element_id: int, label: str = "", fast_mode: bool = True) -> bool:
         """Scrolls element into view if needed, performs APV two-tier click, awaits action completion, and verifies outcome."""
@@ -2978,7 +3044,32 @@ class BrowserSession:
         pre_snap = await ActionPerceptionVerification.capture_snapshot(self)
 
         # 2. Dispatch Two-Tier Click (CDP synthetic input events + Native Blink DOM synthetic sequence)
-        await ActionPerceptionVerification.dispatch_two_tier_click(self, element_id, label=target_name, fast_mode=fast_mode and not is_transition)
+        dispatched = await ActionPerceptionVerification.dispatch_two_tier_click(
+            self, element_id, label=target_name, fast_mode=fast_mode)
+        if not dispatched:
+            # Some sites intentionally place a transparent/fixed layer over
+            # their navigation while the pointer animation settles. A native
+            # keyboard activation is the accessible equivalent of a click and
+            # avoids guessing coordinates or forcing an occluded hit target.
+            href = (el or {}).get("href") or ""
+            tag = str((el or {}).get("tag") or "").lower()
+            if href and tag == "a" and not (el or {}).get("is_external"):
+                focused = await self.evaluate(f"(() => {{ const e=window.__spFast?.nodes.get({int(element_id)}); if(!e?.isConnected) return false; e.focus(); return document.activeElement===e; }})()")
+                if focused is True and await self.press_key("Enter"):
+                    await self.wait_for_action_quiescence(pre_url=pre_snap.url,is_transition=True,
+                        min_grace_ms=60,max_timeout_s=1.2,fast_mode=True)
+                    try:
+                        await self.extract_interactive_tree()
+                    except Exception:
+                        pass
+                    post_snap = await ActionPerceptionVerification.capture_snapshot(self)
+                    verification = ActionPerceptionVerification.verify_action_outcome(pre_snap, post_snap, action="click", target=target_name)
+                    self.last_action_verification = verification.to_dict()
+                    return bool(verification.verified)
+            self.last_action_verification = ActionVerificationResult(
+                "click", target_name, False, "dispatch_failed",
+                f"Target is not actionable: {getattr(self, 'last_actionability', {}).get('reason', 'unknown')}. Inspect recovery evidence before retrying.").to_dict()
+            return False
 
         # 3. Action Completion Quiescence (awaits network idle, loading spinners cleared, route changes settled)
         await self.wait_for_action_quiescence(
@@ -3015,7 +3106,7 @@ class BrowserSession:
         if is_breach:
             snap_back_url = pre_snap.url if (pre_snap.url and pre_snap.url != "about:blank") else (self.target_url or "about:blank")
             logger.warning(f"🚫 [Domain Boundary Breach] Action navigated outside target domain to {target_breach_url}. Snapping back to {snap_back_url}.")
-            if self._event_listener:
+            if getattr(self, "_event_listener", None):
                 try:
                     await self._event_listener({
                         "type": "external_link_blocked",
@@ -3026,7 +3117,9 @@ class BrowserSession:
                 except Exception:
                     pass
             await self.navigate(snap_back_url)
-            verification.effect_type = "external_link_verified"
+            verification.effect_type = "external_navigation"
+            verification.verified = False
+            verification.description = f"Navigation outside target domain blocked: {target_breach_url}"
             self.last_action_verification = verification.to_dict()
             return True
 
@@ -3070,162 +3163,103 @@ class BrowserSession:
         """Types text into an input or textarea with universal framework binding (Angular Reactive Forms, React 18, Vue, Svelte) and native CDP event propagation.
 
         Args:
-            auto_select_suggestion: If set, after typing, automatically click the best-matching
-                autocomplete suggestion whose text contains this value (case-insensitive).
-                Used by System 1 engine to skip LLM round-trip for autocomplete selection.
+            auto_select_suggestion: An explicitly requested option label. Commit only
+                a unique visible match; otherwise leave the choice to the planner.
         """
-        if element_id:
+        # Focus the requested control and use Chromium's native text insertion.
+        # Do not set its value, append trigger characters, then rewrite it: that
+        # sends several contradictory input events and breaks controlled forms.
+        if element_id is not None:
             await self.scroll_to_element(element_id)
-            coords = await self.evaluate(f"""
-            (() => {{
-                const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-                if (!el) return null;
-                try {{ el.focus(); }} catch(e) {{}}
-                const r = el.getBoundingClientRect();
-                return {{
-                    x: Math.round(r.left + r.width / 2),
-                    y: Math.round(r.top + r.height / 2),
-                    text: (el.placeholder || el.name || el.id || '').trim()
-                }};
-            }})()
-            """)
-            if coords and coords.get("x") is not None:
-                await self.click(coords["x"], coords["y"], label=f"Focusing {coords.get('text') or f'input #{element_id}'}", fast_mode=True)
-            else:
-                el = next((e for e in self.interactive_elements if e["id"] == element_id), None)
-                if el:
-                    await self.click(el["x"], el["y"], label=f"Focusing {el.get('text') or el.get('placeholder') or el.get('tag')}", fast_mode=True)
-
-        # Universal clear_first via CDP keystroke stream
-        if clear_first:
-            try:
-                await self.send_command("Input.dispatchKeyEvent", {"type": "rawKeyDown", "windowsVirtualKeyCode": 65, "modifiers": 2, "key": "a", "code": "KeyA"})
-                await self.send_command("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 65, "modifiers": 2, "key": "a", "code": "KeyA"})
-                await asyncio.sleep(0.02)
-                await self.send_command("Input.dispatchKeyEvent", {"type": "rawKeyDown", "windowsVirtualKeyCode": 8, "key": "Backspace", "code": "Backspace"})
-                await self.send_command("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 8, "key": "Backspace", "code": "Backspace"})
-            except Exception:
-                pass
-
-        self._notify_listeners({
-            "type": "cursor_action",
-            "action": "type",
-            "text": text,
-            "label": f"Typing '{text[:25]}...'",
-        })
-
-        el_target_js = f"(window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id=\"{element_id}\"]') || " if element_id else ""
-        escaped_text = json.dumps(text)
-
-        # 1. Framework-Universal Prototype Setter & Event Sequence (Angular Reactive Forms, React 18+, Vue 3)
-        framework_type_js = f"""
-        (() => {{
-            const el = ({el_target_js}document.activeElement);
-            if (!el) return false;
-            try {{ el.focus(); }} catch(e) {{}}
-            const val = {escaped_text};
-
-            if (el.isContentEditable) {{
-                return 'contenteditable';
-            }}
-
-            // Universal bypass for readonly inputs (e.g. calendar/date pickers)
-            if (el.readOnly) {{
-                try {{
-                    el.readOnly = false;
-                    el.removeAttribute('readonly');
-                }} catch(e) {{}}
-            }}
-
-            // Prototype value setter for HTMLInputElement / HTMLTextAreaElement
-            const proto = (el instanceof HTMLTextAreaElement) ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-            const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-            if (nativeSetter) {{
-                nativeSetter.call(el, val);
-            }} else {{
-                el.value = val;
-            }}
-
-            // React 18 controlled component tracker bypass
-            const tracker = el._valueTracker;
-            if (tracker) {{
-                try {{ tracker.setValue(""); }} catch(e) {{}}
-            }}
-
-            // Full event lifecycle for Angular DefaultValueAccessor & HTML5 standards
-            el.dispatchEvent(new InputEvent('input', {{ bubbles: true, cancelable: true, inputType: 'insertText', data: val }}));
-            el.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
-            el.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
-            // NOTE: Do NOT dispatch 'blur' here as it prematurely closes autocomplete overlays like PrimeNG p-autoComplete
-            return el.value === val;
-        }})()
-        """
-        eval_res = None
-        try:
-            res = await self.send_command("Runtime.evaluate", {"expression": framework_type_js, "returnByValue": True})
-            eval_res = res.get("result", {}).get("value")
-        except Exception:
-            pass
-
-        # 2. CDP character-by-character keystroke dispatch (CRITICAL for Angular/PrimeNG reactive forms)
-        # The prototype setter above sets the value instantly, but Angular's ControlValueAccessor
-        # and PrimeNG's p-autoComplete listen for real keyboard events to trigger their debounced
-        # HTTP search. We dispatch CDP keystrokes for the characters to trigger the framework's
-        # input event listeners.
-        if eval_res != 'contenteditable':
-            trigger_chars = text[-4:] if len(text) > 4 else text
-            try:
-                for char in trigger_chars:
-                    await self.send_command("Input.dispatchKeyEvent", {
-                        "type": "keyDown", "text": char, "key": char,
-                        "windowsVirtualKeyCode": ord(char.upper()) if char.isalpha() else 0
-                    })
-                    await asyncio.sleep(0.015)
-                    await self.send_command("Input.dispatchKeyEvent", {
-                        "type": "keyUp", "key": char,
-                        "windowsVirtualKeyCode": ord(char.upper()) if char.isalpha() else 0
-                    })
-            except Exception:
-                pass
-
-        # 2b. If contenteditable or fallback required, insert text via CDP
-        if eval_res == 'contenteditable' or not eval_res:
-            try:
-                await self.send_command("Input.insertText", {"text": text})
-            except Exception:
-                for char in text:
+        target_js = f"window.__spFast?.nodes.get({int(element_id)})" if element_id is not None else "document.activeElement"
+        focus_js = f"""(() => {{
+            const el = {target_js};
+            if (!el?.isConnected) return {{error:'Requested input is missing or was replaced; observe fresh controls.'}};
+            if (el.matches(':disabled') || el.closest('[inert]')) return {{error:'Requested input is disabled or inert.'}};
+            if (el.readOnly) return {{error:'Requested input is readonly.'}};
+            if (!(el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return {{error:'Requested control is not an editable input.'}};
+            el.focus();
+            let active = document.activeElement;
+            while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
+            if (active !== el) return {{error:'Requested input could not be focused.'}};
+            return {{value: el.isContentEditable ? el.textContent : el.value,
+                type: el.type || '',
+                autocomplete: el.getAttribute('role') === 'combobox' || Boolean(el.getAttribute('aria-autocomplete')) || Boolean(el.getAttribute('list')) ||
+                    Boolean(el.closest('p-autocomplete, [class*="autocomplete"], [class*="combobox"]'))}};
+        }})()"""
+        probe = await self.evaluate(focus_js)
+        if probe is None:
+            # A lost CDP observation is not evidence of a disabled input.
+            # Only repeat the focus probe: no text/key input has been sent.
+            probe = await self.evaluate(focus_js)
+        if not isinstance(probe,dict):
+            raise RuntimeError('Input focus could not be observed because the browser did not respond. No text input was dispatched.')
+        if probe.get('error'):
+            raise RuntimeError(probe['error']+' No text input was dispatched.')
+        display_text = "[redacted]" if probe.get("type") == "password" else text
+        self._notify_listeners({"type": "cursor_action", "action": "type", "text": display_text,
+                                "label": f"Typing '{display_text[:25]}...'"})
+        # Native segmented controls do not accept Input.insertText. Use a typed
+        # control fill (as browser testing libraries do), never the ordinary
+        # text-input fallback. Validate before mutation; send input/change once.
+        if probe.get("type") in {"date", "time", "datetime-local", "month", "week", "color"}:
+            requested = text.strip()
+            if probe.get("type") == "date":
+                from datetime import datetime
+                parsed = None
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
                     try:
-                        await self.send_command("Input.dispatchKeyEvent", {"type": "char", "text": char})
-                    except Exception:
+                        parsed = datetime.strptime(requested, fmt)
+                        break
+                    except ValueError:
                         pass
-
-        # 3. Final seal & re-verification
-        verify_js = f"""
-        (() => {{
-            const el = ({el_target_js}document.activeElement);
-            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {{
-                if (el.value !== {escaped_text}) {{
-                    const proto = (el instanceof HTMLTextAreaElement) ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-                    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                    if (nativeSetter) nativeSetter.call(el, {escaped_text});
-                    else el.value = {escaped_text};
-                }}
-                el.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
-                el.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
-            }}
-        }})()
-        """
-        try:
-            await self.send_command("Runtime.evaluate", {"expression": verify_js, "returnByValue": True})
-        except Exception:
-            pass
+                if parsed is None:
+                    raise RuntimeError("Date input requires a valid YYYY-MM-DD or DD/MM/YYYY date.")
+                requested = parsed.strftime("%Y-%m-%d")
+            filled = await self.evaluate(f"""(() => {{
+                const el = {target_js};
+                if (!el || el.disabled || el.readOnly) return false;
+                const requested = {json.dumps(requested)};
+                const candidate = document.createElement('input');
+                candidate.type = el.type;
+                candidate.value = requested;
+                if (candidate.value !== requested) return false;
+                Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, requested);
+                el.dispatchEvent(new Event('input', {{bubbles:true, composed:true}}));
+                el.dispatchEvent(new Event('change', {{bubbles:true}}));
+                return el.value === requested;
+            }})()""")
+            if not filled:
+                raise RuntimeError("Typed control rejected the requested value.")
+            return True
+        if clear_first:
+            for event_type in ("rawKeyDown", "keyUp"):
+                await self.send_command("Input.dispatchKeyEvent", {"type": event_type, "windowsVirtualKeyCode": 65,
+                                        "modifiers": 2, "key": "a", "code": "KeyA"})
+            for event_type in ("rawKeyDown", "keyUp"):
+                await self.send_command("Input.dispatchKeyEvent", {"type": event_type, "windowsVirtualKeyCode": 8,
+                                        "key": "Backspace", "code": "Backspace"})
+        await self.send_command("Input.insertText", {"text": text})
+        expected = text if clear_first else str(probe.get("value") or "") + text
+        actual = await self.evaluate(f"""(() => {{
+            const el = {target_js};
+            return el ? (el.isContentEditable ? el.textContent : el.value) : null;
+        }})()""")
+        if actual != expected:
+            raise RuntimeError("Input value did not match the requested text after native insertion.")
 
         # 4. Autocomplete harvest with progressive retry loop
         # Angular/PrimeNG autocompletes have debounce timers (typically 200-500ms) before
         # firing HTTP requests for suggestions. We retry harvesting with increasing delays.
         harvest_js = """
         (() => {
+            const control = __CONTROL__;
+            const ids = control ? ((control.getAttribute('aria-controls') || '') + ' ' + (control.getAttribute('aria-owns') || '')).trim().split(/\\s+/).filter(Boolean) : [];
+            const roots = ids.map(id => document.getElementById(id) || (control.getRootNode().getElementById ? control.getRootNode().getElementById(id) : null)).filter(Boolean);
+            // An explicitly associated popup takes priority over unrelated lists.
+            const searchRoots = roots.length ? roots : [control ? control.getRootNode() : document];
             const selectors = [
+                ...(roots.length ? ['[role="option"]'] : []),
                 'ul.ui-autocomplete-items li',
                 'ul.p-autocomplete-items li',
                 '.ui-autocomplete-panel li',
@@ -3248,9 +3282,9 @@ class BrowserSession:
                 '.select2-results__option'
             ];
             for (const sel of selectors) {
-                const items = Array.from(document.querySelectorAll(sel)).filter(el => {
+                const items = [...new Set(searchRoots.flatMap(root => Array.from(root.querySelectorAll(sel))))].filter(el => {
                     const s = window.getComputedStyle(el);
-                    return s.display !== 'none' && s.visibility !== 'hidden' && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
+                    return el.getAttribute('aria-disabled') !== 'true' && s.display !== 'none' && s.visibility !== 'hidden' && (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0);
                 });
                 if (items.length > 0) {
                     return items.slice(0, 15).map((el, idx) => {
@@ -3275,10 +3309,13 @@ class BrowserSession:
             }
             return [];
         })()
-        """
+        """.replace('__CONTROL__', target_js)
 
         self.last_autocomplete_suggestions = []
-        harvest_delays = [0.2, 0.35, 0.6, 0.8]  # Progressive retry delays for async suggestions
+        # Some sites do not expose ARIA autocomplete metadata even though they
+        # render a real suggestion popup. Probe ordinary fields immediately;
+        # known comboboxes get a bounded debounce window.
+        harvest_delays = [0, 0.15, 0.25, 0.4, 0.6, 0.6] if probe.get("autocomplete") or auto_select_suggestion else [0]
 
         for delay in harvest_delays:
             await asyncio.sleep(delay)
@@ -3292,64 +3329,35 @@ class BrowserSession:
             except Exception:
                 pass
 
-        # 5. Auto-select matching suggestion if requested (System 1 fast path)
-        if auto_select_suggestion and self.last_autocomplete_suggestions:
-            query_lower = auto_select_suggestion.strip().lower()
-            best_match = None
-            best_score = -1
+        # Autocomplete controls commonly require committing a suggestion before
+        # their parent form enables its submit button. Typing alone does not
+        # authorize choosing the first or a fuzzy matching option.
+        suggestion_query = auto_select_suggestion
+        if suggestion_query and not self.last_autocomplete_suggestions:
+            raise RuntimeError("Requested autocomplete option was not observed. Observe the current control and its options before retrying.")
+        if suggestion_query and self.last_autocomplete_suggestions:
+            query_lower = suggestion_query.strip().lower()
+            exact = [s for s in self.last_autocomplete_suggestions if (s.get('text') or '').strip().lower() == query_lower]
+            matches = exact or [s for s in self.last_autocomplete_suggestions if query_lower in (s.get('text') or '').lower()]
+            best_match = matches[0] if len(matches) == 1 else None
+            if not best_match:
+                raise RuntimeError("Autocomplete choice is ambiguous or missing. Observe the options and choose an explicit current element ID.")
 
-            for sugg in self.last_autocomplete_suggestions:
-                sugg_text = (sugg.get("text") or "").strip().lower()
-                if not sugg_text:
-                    continue
-                # Exact substring match gets highest priority
-                if query_lower in sugg_text:
-                    score = 100 + (1.0 / max(len(sugg_text), 1))  # Prefer shorter matches
-                    if score > best_score:
-                        best_score = score
-                        best_match = sugg
-                else:
-                    # Word overlap scoring
-                    q_words = set(query_lower.split())
-                    s_words = set(sugg_text.split())
-                    overlap = len(q_words & s_words)
-                    if overlap > best_score:
-                        best_score = overlap
-                        best_match = sugg
-
-            if not best_match and self.last_autocomplete_suggestions:
-                best_match = self.last_autocomplete_suggestions[0]
+            # An unrelated first suggestion must not silently satisfy the user goal.
 
             if best_match:
                 match_text = best_match.get("text", "")
-                logger.info(f"Auto-selecting suggestion: '{match_text}' for query '{auto_select_suggestion}'")
+                logger.info(f"Auto-selecting suggestion: '{match_text}' for query '{suggestion_query}'")
 
-                # Click the suggestion element using its coordinates or element_id
-                sugg_x = best_match.get("x")
-                sugg_y = best_match.get("y")
+                # Dispatch exactly once; never replay a successful hardware click.
                 sugg_id = best_match.get("id")
-
-                if sugg_x and sugg_y:
-                    await self.click(sugg_x, sugg_y, label=f"Selecting '{match_text[:40]}'", fast_mode=True, exact_coords=True)
-                
-                # Also dispatch direct DOM event sequence to guarantee Angular/PrimeNG (onClick)/(select) binding
-                if sugg_id:
-                    click_js = f"""
-                    (() => {{
-                        const el = (window.__spFast && window.__spFast.nodes.get({sugg_id})) || document.querySelector('[data-sp-id="{sugg_id}"]');
-                        if (el) {{
-                            el.dispatchEvent(new MouseEvent('mousedown', {{bubbles: true, cancelable: true, view: window}}));
-                            el.dispatchEvent(new MouseEvent('mouseup', {{bubbles: true, cancelable: true, view: window}}));
-                            el.click();
-                            return true;
-                        }}
-                        return false;
-                    }})()
-                    """
-                    try:
-                        await self.send_command("Runtime.evaluate", {"expression": click_js, "returnByValue": True})
-                    except Exception:
-                        pass
+                if sugg_id is not None:
+                    if not await ActionPerceptionVerification.dispatch_two_tier_click(self, sugg_id, label=match_text, fast_mode=True):
+                        raise RuntimeError("Autocomplete suggestion is no longer actionable.")
+                elif best_match.get("x") is not None and best_match.get("y") is not None:
+                    await self.click(best_match["x"], best_match["y"], label=match_text, fast_mode=True, exact_coords=True)
+                else:
+                    raise RuntimeError("Autocomplete suggestion has no current target.")
 
                 # Only dispatch Escape to close dropdown if still open (avoid Enter which submits forms prematurely)
                 try:
@@ -3365,8 +3373,6 @@ class BrowserSession:
                         await self.send_command("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 27, "key": "Escape", "code": "Escape"})
                 except Exception:
                     pass
-
-                await asyncio.sleep(0.25)
 
                 self._notify_listeners({
                     "type": "cursor_action",
@@ -3681,6 +3687,70 @@ class BrowserSession:
                 "suggested_queries": [fallback_query, "overview", "details"],
             }
 
+    async def start_jpeg_stream(self, *, force_restart=False):
+        if force_restart:
+            # Repeated recovery messages must not continuously restart Chrome's
+            # capture session. Preserve the current tab and browser actions.
+            now = time.monotonic()
+            if now - self._jpeg_restart_at < 5.0:
+                return
+            self._jpeg_restart_at = now
+            if self._jpeg_streaming:
+                try:
+                    await self.send_command('Page.stopScreencast')
+                finally:
+                    # If the command failed, do not leave a stale local flag
+                    # preventing the next bounded recovery from starting capture.
+                    self._jpeg_streaming = False
+        if self._jpeg_streaming:
+            return
+        try:
+            await self.send_command("Page.startScreencast", {
+                "format": "jpeg", "quality": 60, "maxWidth": 1280,
+                "maxHeight": 720, "everyNthFrame": 1,
+            })
+        except Exception as exc:
+            message = str(exc).lower()
+            if not ('screencast' in message and 'already' in message):
+                raise
+        self._jpeg_streaming = True
+        self._jpeg_started_at = time.monotonic()
+
+    async def restart_jpeg_stream(self):
+        async with self._capture_lock:
+            await self.start_jpeg_stream(force_restart=True)
+
+    async def sync_capture_mode(self):
+        """Capture images only for viewers who need them or video recovery."""
+        async with self._capture_lock:
+            if not self.needs_h264_capture():
+                self.h264_active = False
+                self._video_needs_keyframe = True
+                writer = self._stream_writer
+                if writer and not writer.is_closing():
+                    writer.close()
+            needs_jpeg = bool(self.listeners) and (
+                not self.h264_active or browser_manager.display_session_id != self.session_id
+                or any(self.viewer_codecs.get(viewer) == 'jpeg' for viewer in self.listeners))
+            if needs_jpeg:
+                now = time.monotonic()
+                if self._jpeg_demand_since is None:
+                    self._jpeg_demand_since = now
+                expected_frame_at = max(self._jpeg_demand_since, self._last_activity)
+                last_frame_at = self._last_jpeg_frame_at
+                # Static tabs legitimately stop producing CDP frames. Restart
+                # only when fresh viewer/input demand has received no new frame,
+                # after a startup grace period and with a bounded cooldown.
+                stalled = (self._jpeg_streaming and now - expected_frame_at <= 4.0
+                           and (last_frame_at is None or expected_frame_at > last_frame_at)
+                           and now - max(self._jpeg_started_at, last_frame_at or 0.0) >= 2.0)
+                await self.start_jpeg_stream(force_restart=stalled)
+            else:
+                self._jpeg_demand_since = None
+                if self._jpeg_streaming:
+                    await self.send_command('Page.stopScreencast')
+                    self._jpeg_streaming = False
+
     async def cancel_actions(self):
         """Immediately aborts any ongoing user interaction / animations in Chromium."""
         try:
@@ -3705,15 +3775,28 @@ class BrowserSession:
             self._keepalive_task.cancel()
         if self._h264_task:
             self._h264_task.cancel()
+        if self._tree_refresh_task:
+            self._tree_refresh_task.cancel()
         if self.cdp_ws:
             await self.cdp_ws.close()
         if self.target_id:
             try:
-                headers = {"Host": "localhost"}
-                async with httpx.AsyncClient(timeout=2.0, headers=headers) as client:
-                    await client.put(f"{CHROME_HOST}/json/close/{self.target_id}")
+                headers = {"Host": "localhost", **self.config.headers}
+                async with httpx.AsyncClient(timeout=2.0, trust_env=False, headers=headers) as client:
+                    await client.put(f"{self.config.endpoint}/json/close/{self.target_id}")
             except Exception:
                 pass
+        if self.browser_context_id:
+            from .browser_testing.isolation import dispose_context
+            try:
+                await dispose_context(self.config.endpoint,self.browser_context_id,self.config.headers)
+            except Exception as exc:
+                logger.warning(f'Owned browser context cleanup failed for {self.session_id}: {exc}')
+            finally:
+                self.browser_context_id = None
+        if self._context_owner:
+            await self._context_owner.close()
+            self._context_owner = None
 
 
 class BrowserManager:
@@ -3721,6 +3804,88 @@ class BrowserManager:
 
     def __init__(self):
         self.sessions: Dict[str, BrowserSession] = {}
+        self.display_session_id: Optional[str] = None
+        self._display_lock = asyncio.Lock()
+        from weakref import WeakValueDictionary
+        self.operation_locks = WeakValueDictionary()
+        self.busy_sessions = set()
+        self.session_modes = {}
+        self.switching_sessions = set()
+
+    def configure_session(self, session_id, mode):
+        from .browser_config import browser_config
+        browser_config(mode)  # Validate before storing anything or touching a tab.
+        session = self.sessions.get(session_id)
+        if session and session.is_connected and getattr(getattr(session, "config", None), "mode", "local") != mode:
+            raise ValueError("The selected sandbox differs from this chat's browser. Apply the sandbox change in Agent Settings before testing.")
+        self.session_modes[session_id] = mode
+
+    async def switch_session(self, session_id, mode, url="about:blank"):
+        """Prepare an owned tab, then commit the worker change without losing the chat.
+
+        Failed/unreachable workers leave the existing tab and routing untouched.
+        Browser operations share this lock so no action crosses the transition.
+        """
+        from .browser_config import browser_config
+        browser_config(mode)
+        await self.reap_idle(protected=self.busy_sessions)
+        lock = self.operation_locks.setdefault(session_id, asyncio.Lock())
+        async with lock:
+            existing = self.sessions.get(session_id)
+            if existing and existing.is_connected and existing.config.mode == mode:
+                self.session_modes[session_id] = mode
+                return existing
+            target = (getattr(existing, "current_url", None) or url or "about:blank")
+            candidate = BrowserSession(session_id, target, sandbox_mode=mode)
+            self.switching_sessions.add(session_id)
+            try:
+                async with self._display_lock:
+                    if existing is None and len(self.sessions) >= max(1, int(os.getenv('BROWSER_MAX_SESSIONS', '4'))):
+                        raise RuntimeError("Browser session capacity reached. Close an idle browser first.")
+                    displayed = self.display_session_id
+                    try:
+                        await asyncio.wait_for(candidate.connect(), timeout=12)
+                        if target != "about:blank":
+                            await candidate.navigate(target)
+                    except BaseException:
+                        await candidate.close()
+                        raise
+                    finally:
+                        previous = self.sessions.get(displayed) if displayed else None
+                        if previous and previous.is_connected:
+                            await previous.send_command("Page.bringToFront")
+                    self.sessions[session_id] = candidate
+                    self.session_modes[session_id] = mode
+                    if self.display_session_id == session_id:
+                        self.display_session_id = None
+                if existing:
+                    try:
+                        await existing.close()
+                    except Exception as exc:
+                        logger.warning("Previous browser cleanup failed: %s", type(exc).__name__)
+                return candidate
+            finally:
+                self.switching_sessions.discard(session_id)
+
+    async def reap_idle(self, protected=()):
+        ttl = max(60, float(os.getenv('BROWSER_SESSION_IDLE_SECONDS', '900')))
+        for session_id, session in list(self.sessions.items()):
+            if session_id not in protected and session_id not in self.busy_sessions and not session.listeners and (not session.is_connected or time.monotonic() - session.last_used > ttl):
+                await self.close_session(session_id)
+
+    async def activate_display(self, session_id: str):
+        """Select the exact tab shown by the single local X11 video surface."""
+        async with self._display_lock:
+            session = self.sessions.get(session_id)
+            if not session or not session.is_connected:
+                raise RuntimeError("No connected tab to display")
+            self.display_session_id = None
+            for existing in self.sessions.values():
+                existing.h264_active = False
+                existing._video_needs_keyframe = True
+                existing._last_keyframe_packet = None
+            await session.send_command("Page.bringToFront")
+            self.display_session_id = session_id
 
     def get_active_session(self) -> Optional[BrowserSession]:
         for s in self.sessions.values():
@@ -3730,9 +3895,15 @@ class BrowserManager:
 
     async def get_or_create_session(self, session_id: str = "default", url: str = "about:blank") -> BrowserSession:
         norm_url = url.rstrip("/").strip() if url else ""
-        container_url = to_container_accessible_url(url) if url else ""
+        from .browser_config import browser_config
+        config = browser_config(self.session_modes.get(session_id, "local"))
+        container_url = config.resolve_url(url) if url else ""
+        # A closed CDP target must not occupy a worker slot until the idle TTL.
+        # Preserve viewed tabs and all sessions currently running operations.
+        await self.reap_idle(protected=self.busy_sessions)
         if session_id in self.sessions and self.sessions[session_id].is_connected:
             session = self.sessions[session_id]
+            session.last_used = time.monotonic()
             if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
                 session.target_url = container_url or url
                 if hasattr(session, "skg") and session.skg:
@@ -3755,33 +3926,30 @@ class BrowserManager:
                 await session.navigate(url)
             return session
 
-        # Reuse existing connected session to avoid creating redundant tabs
-        active = self.get_active_session()
-        if active:
-            self.sessions[session_id] = active
-            if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
-                active.target_url = container_url or url
-                if hasattr(active, "skg") and active.skg:
-                    active.skg.origin_url = active.target_url
-            curr = (active.current_url or "").rstrip("/").strip()
-            curr_parsed = urlparse(curr) if curr else None
-            norm_parsed = urlparse(norm_url) if norm_url else None
-            same_origin = bool(
-                curr_parsed and norm_parsed and
-                curr_parsed.netloc and norm_parsed.netloc and
-                curr_parsed.netloc == norm_parsed.netloc
-            )
-            should_navigate = (
-                bool(norm_url) and
-                norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"} and
-                (curr in {"about:blank", ""} or not same_origin)
-            )
-            if should_navigate:
-                await active.navigate(url)
-            return active
-
-        session = BrowserSession(session_id=session_id, target_url=url)
-        await session.connect()
+        session = BrowserSession(session_id=session_id, target_url=url, sandbox_mode=config.mode)
+        # Creating another tab must not change the surface sent to an existing viewer.
+        async with self._display_lock:
+            if session_id in self.sessions and self.sessions[session_id].is_connected:
+                return self.sessions[session_id]
+            if session_id not in self.sessions and len(self.sessions) >= max(1, int(os.getenv('BROWSER_MAX_SESSIONS', '4'))):
+                raise RuntimeError('Browser session capacity reached. Close an idle session or allocate another browser worker; no additional tab was created.')
+            stale = self.sessions.pop(session_id,None)
+            if stale:
+                await stale.close()
+            displayed = self.display_session_id
+            self.display_session_id = None
+            try:
+                await session.connect()
+            except BaseException:
+                await session.close()
+                raise
+            finally:
+                previous = self.sessions.get(displayed) if displayed else None
+                if previous and previous.is_connected:
+                    previous.h264_active = False
+                    previous._video_needs_keyframe = True
+                    await previous.send_command("Page.bringToFront")
+                    self.display_session_id = displayed
         self.sessions[session_id] = session
         if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
             await session.navigate(url)
@@ -3789,12 +3957,14 @@ class BrowserManager:
 
     async def stop_session(self, session_id: str):
         """Immediately stops running actions on the session."""
-        session = self.sessions.get(session_id) or self.get_active_session()
+        session = self.sessions.get(session_id)
         if session:
             await session.cancel_actions()
 
     async def close_session(self, session_id: str):
         if session_id in self.sessions:
+            if self.display_session_id == session_id:
+                self.display_session_id = None
             await self.sessions[session_id].close()
             del self.sessions[session_id]
 

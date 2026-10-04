@@ -1,0 +1,13 @@
+# Uses the already-built AI dependency image and the real Node executable.
+# Copies only test/application helpers, never project credentials or uploads.
+FROM node:22-bookworm-slim AS node
+FROM stackpilot-ai-service AS qualification
+USER root
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY tests/deployment /qualification/tests/deployment
+COPY tests/fixtures /qualification/tests/fixtures
+COPY deployment-runtime /qualification/deployment-runtime
+COPY ai-service/app /qualification/ai-service/app
+ENV PYTHONPATH=/qualification/ai-service
+WORKDIR /qualification
+CMD ["python", "-m", "unittest", "discover", "-s", "tests/deployment", "-p", "test_*.py"]

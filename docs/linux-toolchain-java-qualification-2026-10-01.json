@@ -1,0 +1,62 @@
+{
+  "scope": "real Docker build, repository tests and interactive CLI execution; no autonomous-model or universal-compatibility claim",
+  "passed": true,
+  "cases": [
+    {
+      "language": "java",
+      "passed": true,
+      "toolchain": {
+        "kind": "java",
+        "version": "21",
+        "image": "eclipse-temurin:21-jdk",
+        "runtime_version": null,
+        "assumed": false,
+        "evidence": [
+          {
+            "source": ".java-version",
+            "requirement": "21",
+            "mode": "pin"
+          },
+          {
+            "source": "pom.xml#maven.compiler.release",
+            "requirement": "21",
+            "mode": "minimum"
+          }
+        ],
+        "issues": [],
+        "status": "selected",
+        "execution_verified": false
+      },
+      "image_id": "sha256:34cdaf6c436dddd18fa049244bd8f205c9ba2b08c70ba36ca22b807383120c2f",
+      "tests": {
+        "status": "passed",
+        "results": [
+          {
+            "command": [
+              "java",
+              "-cp",
+              "target/classes",
+              "Main",
+              "--test"
+            ],
+            "exit_code": 0,
+            "passed": true
+          }
+        ],
+        "scope": "repository_tests"
+      },
+      "console": {
+        "output": "Numbers:\r\nRESULT=5\r\n",
+        "offset": 20,
+        "truncated": false,
+        "exit_code": 0,
+        "timed_out": false
+      },
+      "health": {
+        "workload": "cli",
+        "ready": true
+      },
+      "duration_seconds": 7.67
+    }
+  ]
+}

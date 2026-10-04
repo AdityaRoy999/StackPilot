@@ -20,7 +20,8 @@ import {
   Boxes,
   Gauge,
   KeyRound,
-} from "lucide-react";
+  Smartphone,
+} from "@/lib/platform-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -33,9 +34,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
 import api from "@/lib/api";
+import { isRemotePlatform, forgetRemoteDevice } from "@/lib/remote-platform";
+import { remoteRequest } from "@/lib/remote";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { AppIcon } from "@/lib/custom-icons";
-import { setUiTheme, UI_THEME_STORAGE_KEY } from "@/lib/ui-theme";
+import { setUiTheme, UI_THEME_STORAGE_KEY, type UiTheme } from "@/lib/ui-theme";
 
 const navigation = [
   { name: "Projects", href: "/dashboard", icon: LayoutDashboard, iconName: "layout-dashboard" },
@@ -47,6 +50,7 @@ const navigation = [
   { name: "AI Agent", href: "/dashboard/ai", icon: Star, iconName: "star", filled: true },
   { name: "Secrets", href: "/dashboard/secrets", icon: KeyRound, iconName: "key-round" },
   { name: "Organization", href: "/dashboard/organization", icon: Building2, iconName: "building-2" },
+  { name: "Remote", href: "/dashboard/remote", icon: Smartphone, iconName: "smartphone" },
   { name: "Settings", href: "/dashboard/settings", icon: Settings, iconName: "settings" },
 ];
 
@@ -62,6 +66,17 @@ const themeOptions = [
 const SIDEBAR_STORAGE_KEY = "sidebar-collapsed";
 
 const subscribeNever = () => () => {};
+const mobileSidebarQuery = "(max-width: 639px)";
+
+function subscribeMobileSidebar(listener: () => void) {
+  const media = window.matchMedia(mobileSidebarQuery);
+  media.addEventListener("change", listener);
+  return () => media.removeEventListener("change", listener);
+}
+
+function getMobileSidebarSnapshot() {
+  return window.matchMedia(mobileSidebarQuery).matches;
+}
 
 // localStorage is external state, so it is read through useSyncExternalStore
 // rather than mirrored into an effect. This keeps server and client markup in
@@ -92,12 +107,15 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const asideRef = useRef<HTMLElement | null>(null);
   const [themeDialogOpen, setThemeDialogOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isCollapsed = useSyncExternalStore(
     sidebarStore.subscribe,
     sidebarStore.getSnapshot,
     sidebarStore.getServerSnapshot
   );
   const mounted = useSyncExternalStore(subscribeNever, () => true, () => false);
+  const isMobileSidebar = useSyncExternalStore(subscribeMobileSidebar, getMobileSidebarSnapshot, () => false);
+  const sidebarCollapsed = isCollapsed && !isMobileSidebar;
   const { theme, setTheme } = useTheme();
   const activeThemeValue = mounted && (theme === "light" || theme === "dark" || theme === "system") ? theme : "system";
   const activeTheme = themeOptions.find((option) => option.value === activeThemeValue) ?? themeOptions[2];
@@ -130,7 +148,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           if (prefs.ui_theme) {
             const currentTheme = window.localStorage.getItem(UI_THEME_STORAGE_KEY);
             if (currentTheme !== prefs.ui_theme) {
-              setUiTheme(prefs.ui_theme as any);
+              setUiTheme(prefs.ui_theme as UiTheme);
             }
           }
           if (prefs.color_mode && ["light", "dark", "system"].includes(prefs.color_mode)) {
@@ -139,9 +157,10 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             }
           }
         }
-      } catch (error: any) {
-        if (!cancelled && error.response?.status === 401) {
-          window.location.href = "/auth/login";
+      } catch (error: unknown) {
+        const status = (error as { response?: { status?: number } }).response?.status;
+        if (!cancelled && status === 401) {
+          window.location.href = isRemotePlatform() ? "/remote" : "/auth/login";
         }
       }
     };
@@ -159,6 +178,11 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   };
 
   const handleLogout = async () => {
+    if (isRemotePlatform()) {
+      try { await remoteRequest("/device", undefined, "DELETE"); }
+      finally { forgetRemoteDevice(); window.location.href = "/remote"; }
+      return;
+    }
     try {
       await api.post("/auth/logout");
     } finally {
@@ -166,70 +190,68 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     }
   };
 
+  useEffect(() => {
+    if (isRemotePlatform() && "serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/remote-sw.js", { scope: "/" }).catch(() => {});
+    }
+  }, []);
+
   // The label lives in a collapsing grid column so it slides away instead of
   // popping out of the DOM. Keeping it mounted is what makes the toggle smooth.
   const labelClass = cn(
-    "min-w-0 overflow-hidden truncate whitespace-nowrap text-left text-[13px] font-medium transition-opacity duration-150",
-    isCollapsed ? "opacity-0" : "opacity-100"
+    "min-w-0 overflow-hidden truncate whitespace-nowrap text-left text-sm font-medium transition-opacity duration-150",
+    sidebarCollapsed ? "opacity-0" : "opacity-100"
   );
 
   // Collapsed drops the gap and centers the tracks; otherwise the 8px gap sits
   // entirely to the right of the icon and shifts it off-center in the rail.
   const rowClass = (isCollapsed: boolean) =>
     cn(
-      "grid h-9 items-center overflow-hidden rounded-lg transition-[grid-template-columns] duration-200 ease-out",
-      isCollapsed ? "grid-cols-[36px_0fr] justify-center gap-0" : "grid-cols-[36px_1fr] gap-2"
+      "grid h-11 items-center rounded-xl transition-[grid-template-columns] duration-200 ease-out",
+      isCollapsed ? "grid-cols-[40px_0fr] justify-center gap-0" : "grid-cols-[40px_1fr] gap-2"
     );
 
   const renderSidebarLink = (item: (typeof navigation)[number], isActive: boolean) => (
     <Link
       key={item.name}
       href={item.href}
+      onClick={() => setMobileMenuOpen(false)}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        rowClass(isCollapsed),
+        rowClass(sidebarCollapsed),
         "relative w-full",
-        !isCollapsed && item.nested && "pl-3",
         isActive
           ? "bg-accent font-semibold text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
       )}
     >
-      <span className="flex h-9 w-9 items-center justify-center">
+      <span className="flex h-10 w-10 items-center justify-center">
         <AppIcon
           name={item.iconName}
           fallback={item.icon}
-          size={18}
-          className={cn("h-[18px] w-[18px]", isActive ? "text-primary" : "text-current")}
+          size={20}
+          className={cn("h-5 w-5", isActive ? "text-primary" : "text-current")}
         />
       </span>
       <span className={labelClass}>{item.name}</span>
     </Link>
   );
 
-  return (
-    <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <aside
-        ref={asideRef}
-        className={cn(
-          "z-20 flex h-full shrink-0 flex-col border-r border-border bg-card",
-          isCollapsed ? "w-[60px]" : "w-[208px]"
-        )}
-      >
+  const sidebarContent = (
         <TooltipProvider>
           {/* Brand + toggle share a row, so the control never floats over content. */}
           <div
             className={cn(
               "flex h-14 shrink-0 items-center border-b border-border",
-              isCollapsed ? "justify-center px-2" : "justify-between pl-3 pr-2"
+              sidebarCollapsed ? "justify-center px-2" : "justify-between pl-3 pr-2"
             )}
           >
-            {!isCollapsed && (
+            {!sidebarCollapsed && (
               <span className="flex min-w-0 items-center gap-2">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground shadow-sm">
-                  <AppIcon name="star" size={16} />
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+                  <AppIcon name="star" size={19} />
                 </span>
-                <span className="truncate text-sm font-semibold tracking-tight">StackPilot</span>
+                <span className="truncate text-base font-semibold tracking-tight">StackPilot</span>
               </span>
             )}
             <Tooltip>
@@ -238,10 +260,10 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={toggleSidebar}
-                    aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                    aria-expanded={!isCollapsed}
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => isMobileSidebar ? setMobileMenuOpen(false) : toggleSidebar()}
+                    aria-label={isMobileSidebar ? "Close navigation" : isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                    aria-expanded={isMobileSidebar ? mobileMenuOpen : !isCollapsed}
+                    className="h-11 w-11 shrink-0 text-muted-foreground hover:text-foreground"
                   >
                     {isCollapsed ? (
                       <AppIcon name="panel-left-open" fallback={PanelLeftOpen} size={18} className="h-[18px] w-[18px]" />
@@ -255,22 +277,32 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             </Tooltip>
           </div>
 
-          <div className={cn("shrink-0 py-1.5", isCollapsed ? "flex justify-center px-1" : "px-2")}>
-            <WorkspaceSwitcher isCollapsed={isCollapsed} />
+          <div className={cn("shrink-0 py-2.5", sidebarCollapsed ? "flex justify-center px-1" : "px-3")}>
+            <WorkspaceSwitcher isCollapsed={sidebarCollapsed} />
           </div>
 
           <nav
             className={cn(
-              "flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden py-3 scrollbar-thin",
-              isCollapsed ? "items-center px-2" : "px-2"
+              "no-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-3",
+              sidebarCollapsed ? "items-center px-2" : "px-3"
             )}
           >
             {navigation.map((item) => {
+              if (item.nested && !sidebarCollapsed) {
+                if (item.name !== "Visualization") return null;
+                return (
+                  <div key="monitoring-sections" className="ml-5 flex flex-col gap-1 border-l border-border pl-4">
+                    {navigation.filter((entry) => entry.nested).map((entry) =>
+                      renderSidebarLink(entry, pathname === entry.href)
+                    )}
+                  </div>
+                );
+              }
               const isActive =
                 item.name === "Projects"
                   ? pathname === "/dashboard" || pathname.startsWith("/dashboard/projects")
                   : pathname === item.href;
-              if (!isCollapsed) {
+              if (!sidebarCollapsed) {
                 return renderSidebarLink(item, isActive);
               }
               return (
@@ -284,8 +316,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
           <div
             className={cn(
-              "flex shrink-0 flex-col gap-0.5 border-t border-border py-3",
-              isCollapsed ? "items-center px-2" : "px-2"
+              "flex shrink-0 flex-col gap-0.5 border-t border-border py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+              sidebarCollapsed ? "items-center px-2" : "px-3"
             )}
           >
             <Tooltip>
@@ -293,14 +325,14 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                 render={
                   <Button
                     variant="ghost"
-                    onClick={() => setThemeDialogOpen(true)}
+                    onClick={() => { setMobileMenuOpen(false); setThemeDialogOpen(true); }}
                     aria-label="Theme"
                     className={cn(
-                      rowClass(isCollapsed),
+                      rowClass(sidebarCollapsed),
                       "w-full justify-start p-0 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                     )}
                   >
-                    <span className="flex h-9 w-9 items-center justify-center">
+                    <span className="flex h-10 w-10 items-center justify-center">
                       <AppIcon name={activeTheme.iconName} fallback={ActiveThemeIcon} size={18} className="h-[18px] w-[18px]" />
                     </span>
                     <span className={labelClass}>{activeTheme.label}</span>
@@ -318,11 +350,11 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                     onClick={handleLogout}
                     aria-label="Logout"
                     className={cn(
-                      rowClass(isCollapsed),
+                      rowClass(sidebarCollapsed),
                       "w-full justify-start p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     )}
                   >
-                    <span className="flex h-9 w-9 items-center justify-center">
+                    <span className="flex h-10 w-10 items-center justify-center">
                       <AppIcon name="log-out" fallback={LogOut} size={18} className="h-[18px] w-[18px]" />
                     </span>
                     <span className={labelClass}>Logout</span>
@@ -332,6 +364,34 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               <TooltipContent side="right">Logout</TooltipContent>
             </Tooltip>
           </div>
+
+
+        </TooltipProvider>
+  );
+
+  return (
+    <div data-slot="dashboard-shell" className="flex h-dvh overflow-hidden bg-background text-foreground">
+      <aside
+        ref={asideRef}
+        className={cn(
+          "z-20 hidden h-full shrink-0 flex-col border-r border-border bg-card sm:flex",
+          sidebarCollapsed ? "w-[60px]" : "w-[288px]"
+        )}
+      >
+        {sidebarContent}
+      </aside>
+
+      <Dialog open={mobileMenuOpen && isMobileSidebar} onOpenChange={setMobileMenuOpen}>
+        <DialogContent
+          data-mobile-navigation="true"
+          showCloseButton={false}
+          className="!left-0 !top-0 !flex !h-dvh !max-h-dvh !w-[min(20rem,calc(100vw-2rem))] !max-w-none !translate-x-0 !translate-y-0 !flex-col !rounded-none bg-card p-0 pt-[env(safe-area-inset-top)]"
+        >
+          <DialogTitle className="sr-only">Navigation</DialogTitle>
+          <DialogDescription className="sr-only">Switch workspaces and navigate StackPilot.</DialogDescription>
+          {sidebarContent}
+        </DialogContent>
+      </Dialog>
 
           <Dialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen}>
             <DialogContent className="sm:max-w-sm">
@@ -364,14 +424,18 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               </div>
             </DialogContent>
           </Dialog>
-        </TooltipProvider>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-3 pt-[env(safe-area-inset-top)] sm:hidden">
+          <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0" aria-label="Open navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(true)}>
+            <PanelLeftOpen className="h-5 w-5" />
+          </Button>
+          <Link href="/dashboard" className="min-w-0 truncate font-semibold">StackPilot</Link>
+          <span className="ml-auto truncate text-xs text-muted-foreground">{navigation.find(item => item.href === pathname)?.name || "Dashboard"}</span>
+        </header>
         <main
           className={cn(
-            "flex-1 bg-background/50 scrollbar-thin",
-            isFullBleed ? "overflow-hidden p-0" : "overflow-y-auto p-5 md:p-8"
+            "min-h-0 min-w-0 flex-1 bg-background/50 scrollbar-thin",
+            isFullBleed ? "overflow-hidden p-0" : "overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5 md:p-8"
           )}
         >
           {children}

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { Sparkles } from "@/lib/platform-icons";
 import { cn } from "@/lib/utils";
 
 /* ─────────────────────────────────────────────────────────

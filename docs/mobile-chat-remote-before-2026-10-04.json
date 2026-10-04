@@ -1,0 +1,534 @@
+[
+  {
+    "width": 320,
+    "root": 320,
+    "body": 320,
+    "main": 488,
+    "mainWidth": 320,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "light",
+    "configuredWidth": 320,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 320,
+    "root": 320,
+    "body": 320,
+    "main": 320,
+    "mainWidth": 320,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "light",
+    "configuredWidth": 320,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 375,
+    "root": 375,
+    "body": 375,
+    "main": 488,
+    "mainWidth": 375,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "light",
+    "configuredWidth": 375,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 375,
+    "root": 375,
+    "body": 375,
+    "main": 375,
+    "mainWidth": 375,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "light",
+    "configuredWidth": 375,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 390,
+    "root": 390,
+    "body": 390,
+    "main": 488,
+    "mainWidth": 390,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "light",
+    "configuredWidth": 390,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 390,
+    "root": 390,
+    "body": 390,
+    "main": 390,
+    "mainWidth": 390,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "light",
+    "configuredWidth": 390,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 430,
+    "root": 430,
+    "body": 430,
+    "main": 488,
+    "mainWidth": 430,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "light",
+    "configuredWidth": 430,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 430,
+    "root": 430,
+    "body": 430,
+    "main": 430,
+    "mainWidth": 430,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "light",
+    "configuredWidth": 430,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 768,
+    "root": 768,
+    "body": 768,
+    "main": 500,
+    "mainWidth": 470,
+    "clipped": [],
+    "title": "StackPilot Remote",
+    "theme": "light",
+    "configuredWidth": 768,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 787.734375
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 787.734375
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 787.734375
+      }
+    ]
+  },
+  {
+    "width": 768,
+    "root": 768,
+    "body": 768,
+    "main": 480,
+    "mainWidth": 480,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "light",
+    "configuredWidth": 768,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 1280,
+    "root": 1280,
+    "body": 1280,
+    "main": 992,
+    "mainWidth": 992,
+    "clipped": [],
+    "title": "StackPilot Remote",
+    "theme": "light",
+    "configuredWidth": 1280,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 436.25,
+        "content": 434,
+        "right": 756.25
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 1247.984375
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 1247.984375
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "root": 1280,
+    "body": 1280,
+    "main": 992,
+    "mainWidth": 992,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "light",
+    "configuredWidth": 1280,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 320,
+    "root": 320,
+    "body": 320,
+    "main": 488,
+    "mainWidth": 320,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "dark",
+    "configuredWidth": 320,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 320,
+    "root": 320,
+    "body": 320,
+    "main": 320,
+    "mainWidth": 320,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "dark",
+    "configuredWidth": 320,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 375,
+    "root": 375,
+    "body": 375,
+    "main": 488,
+    "mainWidth": 375,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "dark",
+    "configuredWidth": 375,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 375,
+    "root": 375,
+    "body": 375,
+    "main": 375,
+    "mainWidth": 375,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "dark",
+    "configuredWidth": 375,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 390,
+    "root": 390,
+    "body": 390,
+    "main": 488,
+    "mainWidth": 390,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "dark",
+    "configuredWidth": 390,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 390,
+    "root": 390,
+    "body": 390,
+    "main": 390,
+    "mainWidth": 390,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "dark",
+    "configuredWidth": 390,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 430,
+    "root": 430,
+    "body": 430,
+    "main": 488,
+    "mainWidth": 430,
+    "clipped": [
+      ""
+    ],
+    "title": "StackPilot Remote",
+    "theme": "dark",
+    "configuredWidth": 430,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      },
+      {
+        "width": 471.734375,
+        "content": 470,
+        "right": 487.734375
+      }
+    ]
+  },
+  {
+    "width": 430,
+    "root": 430,
+    "body": 430,
+    "main": 430,
+    "mainWidth": 430,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "dark",
+    "configuredWidth": 430,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 768,
+    "root": 768,
+    "body": 768,
+    "main": 500,
+    "mainWidth": 470,
+    "clipped": [],
+    "title": "StackPilot Remote",
+    "theme": "dark",
+    "configuredWidth": 768,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 787.734375
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 787.734375
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 787.734375
+      }
+    ]
+  },
+  {
+    "width": 768,
+    "root": 768,
+    "body": 768,
+    "main": 480,
+    "mainWidth": 480,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "dark",
+    "configuredWidth": 768,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  },
+  {
+    "width": 1280,
+    "root": 1280,
+    "body": 1280,
+    "main": 992,
+    "mainWidth": 992,
+    "clipped": [],
+    "title": "StackPilot Remote",
+    "theme": "dark",
+    "configuredWidth": 1280,
+    "route": "/dashboard/remote",
+    "errors": [],
+    "cards": [
+      {
+        "width": 436.25,
+        "content": 434,
+        "right": 756.25
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 1247.984375
+      },
+      {
+        "width": 467.734375,
+        "content": 466,
+        "right": 1247.984375
+      }
+    ]
+  },
+  {
+    "width": 1280,
+    "root": 1280,
+    "body": 1280,
+    "main": 992,
+    "mainWidth": 992,
+    "clipped": [],
+    "title": "Dashboard | StackPilot Platform",
+    "theme": "dark",
+    "configuredWidth": 1280,
+    "route": "/dashboard/ai?session_id=a5ec02c3-ec55-4b50-925a-1e1eab5c01ae",
+    "errors": []
+  }
+]

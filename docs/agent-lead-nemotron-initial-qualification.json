@@ -1,0 +1,87 @@
+{
+  "scope": "local_single_prompt_delivery",
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "prompt": "Deploy this repository.",
+  "cases": [],
+  "trace": [
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_list_files"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_list_files",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "discover_agent_tools"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "discover_agent_tools",
+      "status": "available",
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "terminal_run_command"
+    }
+  ],
+  "run_id": "6e178f15-556c-41c9-81ce-8dd766afba01",
+  "tasks": [],
+  "passed": false,
+  "error": "AssertionError: Lead did not verify the exact deployed job: None",
+  "elapsed_seconds": 43.3,
+  "events": 23,
+  "lead_model_turns": 6,
+  "worker_model_latency_ms": [
+    9022,
+    4757,
+    3728,
+    8138,
+    6402,
+    9901
+  ]
+}

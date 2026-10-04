@@ -8,7 +8,7 @@ import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { EditProjectDialog } from "@/components/EditProjectDialog";
 import { DeleteProjectDialog } from "@/components/DeleteProjectDialog";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Building2, ExternalLink, Code2, Loader2, Play, CheckCircle, Clock, Server, Search, Boxes } from "lucide-react";
+import { Building2, ExternalLink, Code2, Loader2, Play, CheckCircle, Clock, Server, Search, Boxes } from "@/lib/platform-icons";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -77,16 +77,15 @@ function displayProjectName(project: Project) {
 export default function DashboardPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeWorkspaceId, activeWorkspace } = useWorkspace();
+  const { activeWorkspaceId, activeWorkspace, setActiveWorkspaceId, isLoading: workspaceLoading } = useWorkspace();
   const [deployingId, setDeployingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["projects", activeWorkspaceId],
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ["projects", "dashboard-list"],
     queryFn: async () => {
-      const res = await api.get("/projects", {
-        params: activeWorkspaceId ? { organization_id: activeWorkspaceId } : undefined,
-      });
+      const res = await api.get<{ projects: Project[] }>("/projects");
+      if (!Array.isArray(res.data.projects)) throw new Error("Invalid projects response");
       return res.data;
     },
     refetchInterval: 5000, // Poll every 5 seconds
@@ -162,13 +161,16 @@ export default function DashboardPage() {
     }
   });
 
-  const projects: Project[] = data?.projects || [];
+  const allProjects = data?.projects || [];
+  const projects = activeWorkspaceId
+    ? allProjects.filter(project => project.organization_id === activeWorkspaceId)
+    : allProjects;
   const filteredProjects = projects.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.description?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  if (isLoading) {
+  if (isLoading || workspaceLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
         <AppIcon name="loader2" fallback={Loader2} className="h-8 w-8 animate-spin text-primary"  />
@@ -177,19 +179,26 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="min-w-0 max-w-6xl mx-auto space-y-6 sm:space-y-8">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">Projects</h1>
           <p className="text-muted-foreground mt-1">
             Build and manage your autonomous application deployments.
           </p>
+          {activeWorkspace && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span>Workspace: {activeWorkspace.name}</span>
+              <Button variant="ghost" size="sm" onClick={() => setActiveWorkspaceId(null)}>View all projects</Button>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative w-64">
+        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center lg:w-auto">
+          <div className="relative min-w-0 flex-1 lg:w-64">
             <AppIcon name="search" fallback={Search} size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input 
               placeholder="Search projects..." 
+              aria-label="Search projects"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10 bg-card"
@@ -199,23 +208,38 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {projects.length === 0 ? (
-        <Card className="border-dashed border-border/80 ring-0 flex flex-col items-center justify-center py-20 bg-card">
+      {isError && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-destructive/40 bg-card p-5">
+          <div>
+            <p className="font-medium">Could not refresh your projects</p>
+            <p className="text-sm text-muted-foreground">The project request failed. Try loading it again.</p>
+          </div>
+          <Button variant="outline" onClick={() => void refetch()}>Retry</Button>
+        </div>
+      )}
+      {!data && isError ? null : projects.length === 0 ? (
+        <Card className="border-dashed border-border/80 ring-0 flex flex-col items-center justify-center px-4 py-12 text-center sm:py-20 bg-card">
           <div className="w-12 h-12 bg-muted rounded-full flex items-center justify-center mb-4">
             <AppIcon name="server" fallback={Server} size={24} className="w-6 h-6 text-muted-foreground" />
           </div>
-          <CardTitle className="text-foreground">No projects yet</CardTitle>
-          <CardDescription className="mb-6">Create your first project to start deploying.</CardDescription>
-          <CreateProjectDialog />
+          <CardTitle className="text-foreground">{activeWorkspace ? `No projects in ${activeWorkspace.name}` : "No projects yet"}</CardTitle>
+          <CardDescription className="mb-6">
+            {allProjects.length > 0
+              ? `${allProjects.length} project${allProjects.length === 1 ? " is" : "s are"} available in your other workspaces.`
+              : "Create your first project to start deploying."}
+          </CardDescription>
+          {allProjects.length > 0
+            ? <Button onClick={() => setActiveWorkspaceId(null)}>View all projects</Button>
+            : <CreateProjectDialog />}
         </Card>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {filteredProjects.map((project) => (
-            <Card key={project.id} className="group flex flex-col border-border/70 hover:ring-1 hover:ring-primary/30 transition-all bg-card overflow-hidden">
+            <Card key={project.id} className="group min-w-0 flex flex-col border-border/70 hover:ring-1 hover:ring-primary/30 transition-colors bg-card overflow-hidden">
               <CardHeader className="pb-4">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1.5">
-                    <CardTitle className="text-lg font-bold text-foreground group-hover:text-primary transition-colors">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 basis-32 space-y-1.5">
+                    <CardTitle className="break-words [overflow-wrap:anywhere] text-lg font-bold text-foreground group-hover:text-primary transition-colors">
                       {displayProjectName(project)}
                     </CardTitle>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -225,7 +249,7 @@ export default function DashboardPage() {
                       </span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <div className="flex items-center gap-1">
                     <EditProjectDialog project={project} />
                     <DeleteProjectDialog projectId={project.id} projectName={project.name} />
@@ -258,7 +282,7 @@ export default function DashboardPage() {
                   </div>
                 )}
               </CardContent>
-              <CardFooter className="bg-muted/40 p-4 border-t border-border/60 flex items-center justify-between">
+              <CardFooter className="bg-muted/40 p-4 border-t border-border/60 flex flex-wrap items-center justify-between gap-2">
                 <Link 
                   href={`/dashboard/projects/${project.id}`}
                   className={cn(

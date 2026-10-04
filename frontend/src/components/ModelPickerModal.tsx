@@ -12,6 +12,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Search,
   Check,
   Eye,
@@ -23,15 +29,14 @@ import {
   Layers,
   ArrowRight,
   RefreshCw,
-} from "lucide-react";
+  ChevronDown,
+} from "@/lib/platform-icons";
 import {
   ModelCategory,
   getModelMetadata,
-  isVisionModel,
-  isReasoningModel,
-  isCodingModel,
 } from "@/lib/model-capabilities";
 import { cn } from "@/lib/utils";
+import { ProviderLogo } from "./ProviderLogo";
 
 interface ModelPickerModalProps {
   open: boolean;
@@ -57,13 +62,18 @@ export function ModelPickerModal({
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState<ModelCategory>("all");
   const [customModel, setCustomModel] = useState("");
+  const [company, setCompany] = useState("all");
 
-  const modelList = availableModels || models || [];
+  const modelList = useMemo(() => availableModels || models || [], [availableModels, models]);
 
   // Process and memoize metadata for all models
   const enrichedModels = useMemo(() => {
     return modelList.map((m) => getModelMetadata(m.id));
   }, [modelList]);
+
+  const companies = useMemo(() => Array.from(new Set(enrichedModels.map((model) => model.org))).sort(), [enrichedModels]);
+
+  const effectiveCompany = companies.includes(company) ? company : "all";
 
   // Counts per category
   const counts = useMemo(() => {
@@ -80,6 +90,7 @@ export function ModelPickerModal({
   const filteredModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return enrichedModels.filter((m) => {
+      if (effectiveCompany !== "all" && m.org !== effectiveCompany) return false;
       // Category filter
       if (activeCategory === "vision" && !m.supportsVision) return false;
       if (activeCategory === "reasoning" && !m.supportsReasoning) return false;
@@ -95,7 +106,7 @@ export function ModelPickerModal({
         m.badges.some((b) => b.toLowerCase().includes(q))
       );
     });
-  }, [enrichedModels, activeCategory, searchQuery]);
+  }, [enrichedModels, activeCategory, searchQuery, effectiveCompany]);
 
   const handleSelect = (id: string) => {
     const meta = getModelMetadata(id);
@@ -120,32 +131,51 @@ export function ModelPickerModal({
       <DialogContent className="max-w-5xl sm:max-w-5xl lg:max-w-6xl !max-w-5xl sm:!max-w-5xl lg:!max-w-6xl w-[95vw] md:w-[92vw] lg:w-[88vw] max-h-[88vh] flex flex-col p-0 overflow-hidden border border-border/70 shadow-2xl bg-background">
         {/* Modal Header */}
         <DialogHeader className="p-5 pb-3 border-b border-border/50 shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-2.5">
               <div className="p-2 rounded-lg bg-primary/10 text-primary">
                 <Sparkles className="h-5 w-5" />
               </div>
               <div>
                 <DialogTitle className="text-lg font-semibold tracking-tight">Select AI Model</DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground mt-0.5">
-                  Choose a model fine-tuned for Vision & Images, Deep Reasoning, Code, or Fast Responses.
+                  Choose a model from your active connection. Filter by company or capability.
                 </DialogDescription>
               </div>
             </div>
-            {onRefresh && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={onRefresh}
-                disabled={isRefreshing}
-                className="h-8 gap-1.5 px-3 text-xs text-muted-foreground hover:text-foreground mr-6"
-                title="Fetch latest models from provider"
-              >
-                <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
-                <span>Refresh Models</span>
-              </Button>
-            )}
+            <div className="flex shrink-0 items-center gap-2 pr-6">
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  aria-label="Filter models by company"
+                  className="flex h-9 w-52 min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="truncate">{effectiveCompany === "all" ? `All companies (${companies.length})` : effectiveCompany}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52 max-h-72 overflow-y-auto border border-border">
+                  {["all", ...companies].map((name) => (
+                    <DropdownMenuItem key={name} onClick={() => setCompany(name)} className="justify-between gap-2">
+                      <span className="truncate">{name === "all" ? `All companies (${companies.length})` : name}</span>
+                      {effectiveCompany === name && <Check className="h-4 w-4 shrink-0" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {onRefresh && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRefresh}
+                  disabled={isRefreshing}
+                  className="h-9 shrink-0 gap-1.5 px-3 text-xs text-muted-foreground hover:text-foreground"
+                  title="Fetch latest models from provider"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+                  <span className="hidden md:inline">Refresh Models</span>
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Search Input Bar */}
@@ -154,7 +184,7 @@ export function ModelPickerModal({
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search 48+ models by name, vendor (Meta, DeepSeek), or capability..."
+              aria-label="Search models" placeholder={`Search ${enrichedModels.length} models by name, company, or capability…`}
               className="pl-9 pr-9 h-9 text-xs bg-muted/30 focus-visible:bg-background transition-colors"
             />
             {searchQuery && (
@@ -184,7 +214,6 @@ export function ModelPickerModal({
               <span>All Models</span>
               <span className="opacity-70 text-[10px]">({counts.all})</span>
             </button>
-
             <button
               type="button"
               onClick={() => setActiveCategory("vision")}
@@ -206,11 +235,11 @@ export function ModelPickerModal({
               className={cn(
                 "flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 cursor-pointer",
                 activeCategory === "reasoning"
-                  ? "bg-purple-600 text-white shadow-sm"
+                  ? "bg-teal-600 text-white shadow-sm"
                   : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
-              <BrainCircuit className="h-3.5 w-3.5 text-purple-400" />
+              <BrainCircuit className="h-3.5 w-3.5 text-teal-400" />
               <span>Deep Reasoning</span>
               <span className="opacity-70 text-[10px]">({counts.reasoning})</span>
             </button>
@@ -244,6 +273,9 @@ export function ModelPickerModal({
               <span>Fast Chat</span>
               <span className="opacity-70 text-[10px]">({counts.fast})</span>
             </button>
+            <span className="ml-auto shrink-0 px-1 text-xs text-muted-foreground" aria-live="polite">
+              {filteredModels.length} matching models
+            </span>
           </div>
         </DialogHeader>
 
@@ -260,6 +292,8 @@ export function ModelPickerModal({
                 const isSelected = m.id === selectedModelId;
                 return (
                   <div
+                    role="button" tabIndex={0} aria-pressed={isSelected} aria-label={`Use ${m.name}`}
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); handleSelect(m.id); } }}
                     key={m.id}
                     onClick={() => handleSelect(m.id)}
                     className={cn(
@@ -270,27 +304,8 @@ export function ModelPickerModal({
                     )}
                   >
                     <div className="flex items-start gap-3 min-w-0">
-                      <div
-                        className={cn(
-                          "p-2 rounded-lg shrink-0 mt-0.5 transition-colors",
-                          m.supportsVision
-                            ? "bg-sky-500/15 text-sky-400"
-                            : m.supportsReasoning
-                            ? "bg-purple-500/15 text-purple-400"
-                            : m.supportsCoding
-                            ? "bg-emerald-500/15 text-emerald-400"
-                            : "bg-amber-500/15 text-amber-400"
-                        )}
-                      >
-                        {m.supportsVision ? (
-                          <Eye className="h-4 w-4" />
-                        ) : m.supportsReasoning ? (
-                          <BrainCircuit className="h-4 w-4" />
-                        ) : m.supportsCoding ? (
-                          <Code2 className="h-4 w-4" />
-                        ) : (
-                          <Zap className="h-4 w-4" />
-                        )}
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border bg-background text-foreground">
+                        <ProviderLogo provider={m.org} size={24} />
                       </div>
 
                       <div className="min-w-0">
@@ -301,17 +316,17 @@ export function ModelPickerModal({
                           </Badge>
                           {m.supportsVision && (
                             <Badge className="text-[10px] px-1.5 py-0 h-4 bg-sky-500/20 text-sky-300 border-sky-500/40 hover:bg-sky-500/30">
-                              👁️ Vision & Docs
+                              <Eye className="mr-1 h-3 w-3" /> Vision & Docs
                             </Badge>
                           )}
                           {m.supportsReasoning && (
-                            <Badge className="text-[10px] px-1.5 py-0 h-4 bg-purple-500/20 text-purple-300 border-purple-500/40 hover:bg-purple-500/30">
-                              🧠 Reasoning
+                            <Badge className="text-[10px] px-1.5 py-0 h-4 bg-teal-500/20 text-teal-300 border-teal-500/40 hover:bg-teal-500/30">
+                              <BrainCircuit className="mr-1 h-3 w-3" /> Reasoning
                             </Badge>
                           )}
                           {m.supportsCoding && (
                             <Badge className="text-[10px] px-1.5 py-0 h-4 bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30">
-                              💻 Code
+                              <Code2 className="mr-1 h-3 w-3" /> Code
                             </Badge>
                           )}
                         </div>
@@ -327,14 +342,13 @@ export function ModelPickerModal({
                           <span>Active</span>
                         </div>
                       ) : (
-                        <Button
-                          size="sm"
-                          variant="ghost"
+                        <span
+                          aria-hidden="true"
                           className="h-7 px-2 text-xs opacity-0 group-hover:opacity-100 transition-opacity gap-1"
                         >
                           <span>Select</span>
                           <ArrowRight className="h-3 w-3" />
-                        </Button>
+                        </span>
                       )}
                     </div>
                   </div>
@@ -345,8 +359,8 @@ export function ModelPickerModal({
         </div>
 
         {/* Custom Model ID Footer Bar */}
-        <div className="p-3 px-5 border-t border-border/50 bg-muted/20 flex items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2 flex-1">
+        <div className="p-3 px-5 border-t border-border/50 bg-muted/20 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
             <Input
               value={customModel}
               onChange={(e) => setCustomModel(e.target.value)}

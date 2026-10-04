@@ -1,0 +1,16 @@
+{
+  "scope": "live_sdk_broker_and_real_docker_lease",
+  "model_calls": 0,
+  "cases": [
+    "Real task lease authorized source-only SDK build and observed immutable owned digest"
+  ],
+  "passed": false,
+  "image_id": "sha256:747b51e9aa98d760d64a32e1a21e2214897c061ebd093a79e5c43927550b71ee",
+  "run_id": "2a056848-6380-43de-9b08-fb28a713eac9",
+  "labels": {
+    "stackpilot.agent-run": "2a056848-6380-43de-9b08-fb28a713eac9",
+    "stackpilot.agent-sdk": "true",
+    "stackpilot.agent-task": "8a44b15d-d38f-4725-8ef8-16691b2fb207"
+  },
+  "error": "AssertionError: {'argv': ['sdk-only'], 'exit_code': 255, 'image_id': 'sha256:747b51e9aa98d760d64a32e1a21e2214897c061ebd093a79e5c43927550b71ee', 'output': 'exec /usr/local/bin/sdk-only: no such file or directory\\n', 'scope': 'command_execution', 'status': 'failed', 'timed_out': False, 'verified': False, 'changed_paths': []}"
+}

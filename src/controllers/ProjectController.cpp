@@ -2424,6 +2424,7 @@ void ProjectController::deleteProject(
             options.deleteDatabaseRow = false;
             options.deleteImage = true;
             options.deleteRemoteWorkspace = true;
+            options.deleteRecordedRuntimes = true;
             const DeploymentCleanupResult cleanup = cleanupService.cleanupDeployment(userId, deploymentId, options);
             cleanupResults.append(cleanup.toJson());
             if (!cleanup.success) {

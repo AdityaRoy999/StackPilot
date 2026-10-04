@@ -1,0 +1,1 @@
+{"scope": "hosted_nim_low_effort_protocol_probe", "model": "z-ai/glm-5.3-flash", "reasoning_effort": "low", "passed": false, "error": "ReadTimeout", "elapsed_seconds": 40.25}

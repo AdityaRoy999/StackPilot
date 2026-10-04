@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Loader2, Key, KeyRound, TerminalSquare, Copy, Trash2, ExternalLink } from "lucide-react";
+import { Loader2, Key, KeyRound, TerminalSquare, Copy, Trash2, ExternalLink } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 

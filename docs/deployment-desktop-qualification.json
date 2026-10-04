@@ -1,0 +1,14 @@
+{
+  "qualified_on": "2026-09-28",
+  "scope": "one_real_linux_desktop_fixture",
+  "fixture": "tests/fixtures/deployment/portable-desktop",
+  "image_id": "sha256:946e5b82b40c39b5e4ef0aa93587fd39bea3c4b0574f18f386555369d4ea0696",
+  "runtime_user": "65534:65534",
+  "limits": {"memory_bytes": 268435456, "cpus": 1, "pids": 128},
+  "repository_tests": "passed",
+  "startup": "mapped_native_window_required_before_noVNC",
+  "browser_input": {"action": "click_Increment", "before": "Clicks: 0", "after": "Clicks: 1", "passed": true},
+  "proof": "screenshots/desktop-preview-qualified.png",
+  "preview_url_at_qualification": "http://localhost:51483",
+  "limitations": ["fixture_specific", "not_full_business_workflow_coverage", "not_a_Windows_or_macOS_worker", "loopback_preview_not_phone_reachable", "production_authenticated_routing_and_worker_isolation_pending"]
+}

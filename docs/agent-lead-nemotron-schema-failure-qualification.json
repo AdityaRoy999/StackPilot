@@ -1,0 +1,58 @@
+{
+  "scope": "local_single_prompt_delivery",
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "prompt": "Deploy this repository.",
+  "cases": [],
+  "trace": [
+    {
+      "agent_id": "lead",
+      "tool": "workspace_trigger_rebuild"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_trigger_rebuild",
+      "status": "failed",
+      "error": "Cross-project tool target denied",
+      "verified": false,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_trigger_rebuild"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_trigger_rebuild",
+      "status": "failed",
+      "error": "Cross-project tool target denied",
+      "verified": false,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "discover_agent_tools"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "discover_agent_tools",
+      "status": "available",
+      "error": "",
+      "verified": null,
+      "job_status": null
+    }
+  ],
+  "run_id": "07e9011c-9243-4e04-b659-09644315592a",
+  "tasks": [],
+  "passed": false,
+  "error": "AssertionError: Lead did not verify the exact deployed job: None",
+  "elapsed_seconds": 37.53,
+  "events": 14,
+  "lead_model_turns": 4,
+  "lead_model_latency_ms": [
+    20609,
+    6112,
+    6352,
+    372
+  ],
+  "worker_model_latency_ms": []
+}

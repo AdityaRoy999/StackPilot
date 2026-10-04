@@ -39,7 +39,7 @@ import {
   Wrench,
   X,
   Upload,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
@@ -352,6 +352,7 @@ export default function SettingsPage() {
     },
     onSuccess: ({ id, data: responseData }) => {
       setProbesByConnection((current) => ({ ...current, [id]: responseData }));
+      queryClient.invalidateQueries({ queryKey: ["ssh-connections"] });
       toast.success(responseData.message || "Remote host probed");
     },
     onError: (error: unknown) => {
@@ -386,6 +387,7 @@ export default function SettingsPage() {
       } else {
         toast.success(responseData.message || "Docker host prepared");
       }
+      queryClient.invalidateQueries({ queryKey: ["ssh-connections"] });
       probeSshConnectionMutation.mutate(id);
     },
     onError: (error: unknown) => {
@@ -421,6 +423,7 @@ export default function SettingsPage() {
       toast.success(responseData.message || "Lightweight Kubernetes prepared", {
         description: responseData.cluster?.name ? `Registered as cluster: ${responseData.cluster.name}` : undefined,
       });
+      queryClient.invalidateQueries({ queryKey: ["ssh-connections"] });
       probeSshConnectionMutation.mutate(id);
       queryClient.invalidateQueries({ queryKey: ["kubernetes-clusters"] });
     },

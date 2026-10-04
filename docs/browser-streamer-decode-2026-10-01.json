@@ -1,0 +1,32 @@
+{
+  "phases": [
+    {
+      "phase": "visible_without_input",
+      "packets_per_second": 16.5,
+      "p95_delivery_gap_ms": 121.49,
+      "max_delivery_gap_ms": 266.61,
+      "keyframes": 4
+    },
+    {
+      "phase": "active_healthy",
+      "packets_per_second": 26.75,
+      "p95_delivery_gap_ms": 83.36,
+      "max_delivery_gap_ms": 174.69,
+      "keyframes": 3
+    },
+    {
+      "phase": "hidden",
+      "packets_per_second": 8.25,
+      "p95_delivery_gap_ms": 164.19,
+      "max_delivery_gap_ms": 200.09,
+      "keyframes": 9
+    }
+  ],
+  "delivered_access_units": 683,
+  "decoded_frames": 683,
+  "decoder_returncode": 0,
+  "decoder_errors": "",
+  "source": "owned Xvfb synthetic animated screen",
+  "visible_presentation_verified": false,
+  "existing_user_contexts_mutated": false
+}

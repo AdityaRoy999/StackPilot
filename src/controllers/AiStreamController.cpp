@@ -9,6 +9,10 @@
 // is already large and this is a self-contained concern.
 
 #include "AiController.h"
+#include "../services/AiProviderConnections.h"
+#include "../services/AiConversationMemory.h"
+#include "../services/RemoteAccess.h"
+#include "../utils/TokenCrypto.h"
 
 #include "../db/Database.h"
 #include "../services/AiStreamProxy.h"
@@ -34,9 +38,30 @@ namespace {
 struct SseWriter {
     drogon::ResponseStreamPtr stream;
     std::atomic<bool> closed{false};
+    std::atomic<bool> finished{false};
+    bool detached=false;
+    std::string remoteId;
+    std::string remoteState="interrupted";
+    bool pendingApproval=false;
+    bool pendingQuestion=false;
+    bool progressFailed=false;
 
     void send(const std::string& frame) {
-        if (closed.load()) return;
+        if (finished.load()) return;
+        if (!remoteId.empty()) {
+            try {
+                remote::appendEvent(remoteId,frame);
+                if(frame.rfind("data: ",0)==0){Json::Value event;Json::Reader reader;if(reader.parse(frame.substr(6),event)){
+                    const auto type=event.get("type","").asString();
+                    if(type=="permission_request"||type=="approval_required"||type=="permission_required"||event.get("requires_approval",false).asBool()||(event["result"].isObject()&&event["result"].get("approval_required",false).asBool()))pendingApproval=true;
+                    if(type=="agent_question")pendingQuestion=true;
+                    if(type=="error")remoteState="error";
+                    if(type=="done")remoteState=event.get("stopped",false).asBool()?"cancelled":event.get("status","ok").asString()=="error"?"error":pendingApproval?"awaiting_approval":pendingQuestion?"awaiting_input":"completed";
+                }}
+            } catch (...) {progressFailed=true;remoteState="error";spdlog::error("Remote progress could not be persisted");}
+            if(detached)return;
+        }
+        if(closed.load())return;
         if (!stream || !stream->send(frame)) {
             // send() returning false means the client hung up. Stop writing;
             // continuing would pump an entire model response into a socket
@@ -46,8 +71,9 @@ struct SseWriter {
     }
 
     void finish() {
-        if (closed.exchange(true)) return;
-        if (stream) stream->close();
+        if(finished.exchange(true))return;
+        if(!remoteId.empty()){try{remote::finishRun(remoteId,progressFailed?"error":remoteState);}catch(...){remote::deactivateRun(remoteId);spdlog::error("Remote run completion could not be saved");}}
+        if(!closed.exchange(true) && stream)stream->close();
     }
 };
 
@@ -91,6 +117,12 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
     }
 
     const std::string userMessage = (*body)["message"].asString();
+    const bool background=body->get("background",false).asBool();
+    std::string remoteId=background?body->get("request_id","").asString():drogon::utils::getUuid();
+    if(background && (!std::regex_match(remoteId,std::regex("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")) || userMessage.size()>32000)){
+        Json::Value error;error["error"]="A valid request_id and a message below 32KB are required";auto response=drogon::HttpResponse::newHttpJsonResponse(error);response->setStatusCode(drogon::k400BadRequest);callback(response);return;
+    }
+    const auto requestHash=remote::hash(strings::compactJson(*body));
     std::string sessionId = body->isMember("session_id") ? (*body)["session_id"].asString() : "";
     std::string projectId = body->isMember("project_id") ? (*body)["project_id"].asString() : "";
     std::string deploymentId = body->isMember("deployment_id") ? (*body)["deployment_id"].asString() : "";
@@ -121,14 +153,30 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
     if (body->isMember("logs")) payload["logs"] = (*body)["logs"];
     if (body->isMember("runtime")) payload["runtime"] = (*body)["runtime"];
     if (body->isMember("agent_access_mode")) payload["agent_access_mode"] = (*body)["agent_access_mode"];
+    if (body->isMember("approval_token")) payload["approval_token"] = (*body)["approval_token"];
     if (body->isMember("remote_terminal")) payload["remote_terminal"] = (*body)["remote_terminal"];
     if (body->isMember("images")) payload["images"] = (*body)["images"];
     if (body->isMember("custom_url")) payload["custom_url"] = (*body)["custom_url"];
+    if (body->isMember("sandbox_mode")) payload["sandbox_mode"] = (*body)["sandbox_mode"];
 
     // Persist session and user message in database
     try {
         auto conn = Database::getInstance().getConnection();
         pqxx::work txn(*conn);
+        if(background){
+            txn.exec("SELECT pg_advisory_xact_lock(hashtext('stackpilot_remote_admission'))");
+            const auto existing=txn.exec_params("SELECT id,user_id,session_id,request_hash,state FROM remote_runs WHERE id=$1",remoteId);
+            if(!existing.empty()){
+                Json::Value result;const bool conflict=existing[0]["user_id"].as<std::string>()!=userId || existing[0]["request_hash"].as<std::string>()!=requestHash;
+                if(conflict){result["error"]="This request ID already belongs to another command";}
+                else{result["run_id"]=remoteId;result["session_id"]=existing[0]["session_id"].as<std::string>();result["state"]=existing[0]["state"].as<std::string>();}
+                auto response=drogon::HttpResponse::newHttpJsonResponse(result);if(conflict)response->setStatusCode(drogon::k409Conflict);response->addHeader("Cache-Control","no-store");txn.commit();callback(response);return;
+            }
+            const auto working=txn.exec("SELECT id FROM remote_runs WHERE state='working'");
+            int active=0;for(const auto& row:working){const auto id=row[0].as<std::string>();if(remote::activeRun(id))++active;else txn.exec_params("UPDATE remote_runs SET state='interrupted' WHERE id=$1",id);}
+            if(active>=2)throw std::runtime_error("Two background requests are already running. Wait for one to finish.");
+            if(!sessionId.empty() && txn.exec_params("SELECT id FROM ai_sessions WHERE id=$1 AND user_id=$2",sessionId,userId).empty())throw std::runtime_error("The selected chat is not owned by this account");
+        }
 
         // Session Context Resolution:
         // When body contains session_id:
@@ -193,7 +241,7 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
             try {
                 auto depInSession = txn.exec_params(
                     "SELECT (tc->'arguments'->>'deployment_id') as dep_id "
-                    "FROM ai_messages m, jsonb_array_elements(COALESCE(m.metadata->'tool_calls', '[]'::jsonb)) tc "
+                    "FROM ai_messages m, jsonb_array_elements(CASE WHEN jsonb_typeof(m.metadata->'tool_calls')='array' THEN m.metadata->'tool_calls' ELSE '[]'::jsonb END) tc "
                     "WHERE m.session_id = $1 AND tc->'arguments'->>'deployment_id' IS NOT NULL "
                     "ORDER BY m.created_at DESC LIMIT 1",
                     sessionId);
@@ -281,7 +329,7 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
 
         if (!sessionId.empty()) {
             const auto sessions = txn.exec_params(
-                "SELECT id, title, project_id, deployment_id, session_type FROM ai_sessions WHERE id = $1 AND (user_id = $2 OR has_project_access(project_id, $2))",
+                "SELECT id, title, project_id, deployment_id, session_type, memory_summary, memory_graph::text FROM ai_sessions WHERE id = $1 AND (user_id = $2 OR has_project_access(project_id, $2))",
                 sessionId,
                 userId);
             if (sessions.empty()) {
@@ -329,10 +377,28 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
             sessionId = rows[0][0].as<std::string>();
         }
 
+        // A chat opened for Live App starts empty. Give it the first prompt's
+        // title without renaming a conversation that already has messages.
         txn.exec_params(
-            "INSERT INTO ai_messages (session_id, role, content) VALUES ($1, 'user', $2)",
-            sessionId,
-            userMessage);
+            "UPDATE ai_sessions SET title = $2, "
+            "project_id = COALESCE(project_id, (SELECT p.id FROM projects p WHERE p.id = NULLIF($3, '')::uuid AND has_project_access(p.id, $5))), "
+            "deployment_id = COALESCE(deployment_id, (SELECT d.id FROM deployments d JOIN projects p ON p.id = d.project_id WHERE d.id = NULLIF($4, '')::uuid AND has_project_access(p.id, $5))) "
+            "WHERE id = $1 AND title = 'New AI chat' "
+            "AND NOT EXISTS (SELECT 1 FROM ai_messages WHERE session_id = $1 AND role = 'user')",
+            sessionId, streamChatTitle(userMessage), projectId, deploymentId, userId);
+        if(!background)txn.exec_params("UPDATE remote_runs SET state='superseded',updated_at=NOW() WHERE session_id=$1 AND state='working'",sessionId);
+        Json::Value remoteContext(Json::objectValue);
+        for(const auto* field:{"project_id","deployment_id","custom_url","sandbox_mode","model_mode","model","command","workflow_type"})if(payload.isMember(field))remoteContext[field]=payload[field];
+        txn.exec_params("INSERT INTO remote_runs(id,user_id,device_id,session_id,request_hash,context) VALUES($1,$2,NULLIF($3,'')::uuid,$4,$5,$6::jsonb)",remoteId,userId,auth.get("remote_device_id","").asString(),sessionId,requestHash,strings::compactJson(remoteContext));
+        const bool continuation=body->get("continuation",false).asBool() &&
+            (!body->get("approval_token", "").asString().empty() || userMessage.rfind("[System] User answered",0)==0);
+        if(continuation) {
+            const auto prior=txn.exec_params("SELECT id FROM ai_messages WHERE session_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",sessionId);
+            if(!prior.empty())payload["continuation_message_id"]=prior[0][0].as<std::string>();
+        }
+        txn.exec_params(
+            "INSERT INTO ai_messages (session_id, role, content, metadata) VALUES ($1, 'user', $2, $3::jsonb)",
+            sessionId, userMessage, continuation ? "{\"continuation\":true}" : "{}");
 
         const auto historyRows = txn.exec_params(
             "SELECT role, content, metadata FROM ("
@@ -358,17 +424,26 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
             }
             history.append(item);
         }
+        const auto memories = txn.exec_params("SELECT memory_summary,memory_graph::text FROM ai_sessions WHERE id=$1",sessionId);
+        if (!memories.empty()) payload["memory"] = aiMemory::sessionMemory(memories[0][0].is_null()?"":memories[0][0].as<std::string>(), memories[0][1].is_null()?"{}":memories[0][1].as<std::string>());
+        // The current request is sent separately by the model adapter.
+        if (!history.empty() && history[history.size()-1]["role"]=="user" && history[history.size()-1]["content"].asString()==userMessage) history.resize(history.size()-1);
         payload["history"] = history;
         payload["session_id"] = sessionId;
+        remote::activateRun(remoteId);
         txn.commit();
     } catch (const std::exception& e) {
         spdlog::warn("AI stream session persistence error: {}", e.what());
+        remote::deactivateRun(remoteId);
+        if(background){Json::Value result;result["error"]="Background request could not start. The chat may be busy or unavailable.";auto response=drogon::HttpResponse::newHttpJsonResponse(result);response->setStatusCode(drogon::k409Conflict);callback(response);return;}
+        remoteId.clear();
     }
 
-    auto response = drogon::HttpResponse::newAsyncStreamResponse(
-        [payload, userId, sessionId](drogon::ResponseStreamPtr stream) {
+    auto produce = [payload, userId, sessionId, remoteId, background](drogon::ResponseStreamPtr stream) {
             auto writer = std::make_shared<SseWriter>();
             writer->stream = std::move(stream);
+            writer->remoteId = remoteId;
+            writer->detached = background;
 
             BlockingTaskRunner::run([payload, userId, sessionId, writer]() {
                 Json::Value requestPayload = payload;
@@ -376,27 +451,45 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                     auto conn = Database::getInstance().getConnection();
                     pqxx::work txn(*conn);
                     const auto rows = txn.exec_params(
-                        "SELECT provider, openai_compatible_base_url, openai_compatible_api_key, nvidia_api_key "
+                        "SELECT provider, openai_compatible_base_url, openai_compatible_api_key, nvidia_api_key,model "
                         "FROM ai_preferences WHERE user_id = $1",
                         userId);
+                    Json::Value prefs(Json::objectValue);
+                    prefs["provider"]=requestPayload.get("provider", "nvidia_nim");
                     if (!rows.empty()) {
-                        Json::Value overrides(Json::objectValue);
-                        std::string prefProvider = rows[0]["provider"].is_null() ? "" : rows[0]["provider"].c_str();
-                        if (prefProvider == "openai_compatible") {
-                            if (!rows[0]["openai_compatible_base_url"].is_null()) overrides["base_url"] = rows[0]["openai_compatible_base_url"].c_str();
-                            if (!rows[0]["openai_compatible_api_key"].is_null()) overrides["api_key"] = rows[0]["openai_compatible_api_key"].c_str();
-                        } else if (prefProvider == "nvidia_nim") {
-                            if (!rows[0]["nvidia_api_key"].is_null()) overrides["api_key"] = rows[0]["nvidia_api_key"].c_str();
-                        }
-                        if (!overrides.empty()) requestPayload["provider_overrides"] = overrides;
+                        const auto& row=rows[0];
+                        if (!requestPayload.isMember("provider")) prefs["provider"]=row["provider"].is_null()?"nvidia_nim":row["provider"].as<std::string>();
+                        prefs["openai_compatible_base_url"]=row["openai_compatible_base_url"].is_null()?"":row["openai_compatible_base_url"].as<std::string>();
+                        const auto modelField="model";
+                        if(!requestPayload.isMember("model") && !row[modelField].is_null() && !row[modelField].as<std::string>().empty())requestPayload["model"]=row[modelField].as<std::string>();
+                        for (const auto* field : {"nvidia_api_key","openai_compatible_api_key"}) prefs[field]=row[field].is_null()?"":TokenCrypto::decrypt(row[field].as<std::string>());
                     }
-                } catch (...) {}
+                    aiProviders::apply(txn,userId,prefs);
+                    requestPayload["provider"]=prefs["provider"];
+                    requestPayload["provider_connection_name"]=prefs.get("provider_connection_name", "");
+                    Json::Value overrides(Json::objectValue);
+                    const bool compatible=prefs["provider"].asString()=="openai_compatible";
+                    const auto key=prefs.get(compatible?"openai_compatible_api_key":"nvidia_api_key", "").asString();
+                    if (!key.empty()) overrides["api_key"]=key;
+                    if (compatible && !prefs.get("openai_compatible_base_url", "").asString().empty()) overrides["base_url"]=prefs["openai_compatible_base_url"];
+                    if (!overrides.empty()) requestPayload["provider_overrides"]=overrides;
+                    txn.commit();
+                } catch (const std::exception& e) {
+                    spdlog::error("AI stream credentials unavailable: {}", e.what());
+                    Json::Value failure; failure["type"]="error"; failure["error"]="Provider credentials unavailable; check provider settings";
+                    writer->send(sseFrame(failure)); writer->finish(); return;
+                }
 
                 auto assembledContent = std::make_shared<std::string>();
                 auto assembledReasoning = std::make_shared<std::string>();
                 auto assembledToolCalls = std::make_shared<Json::Value>(Json::arrayValue);
+                auto assembledPermissions = std::make_shared<Json::Value>(Json::arrayValue);
+                auto assembledTeamEvents = std::make_shared<Json::Value>(Json::arrayValue);
+                auto teamRunId = std::make_shared<std::string>();
                 auto doneModel = std::make_shared<std::string>();
                 auto doneUsage = std::make_shared<Json::Value>(Json::objectValue);
+                auto sawDone = std::make_shared<bool>(false);
+                auto streamError = std::make_shared<std::string>();
 
                 // Emit initial start event with session_id so client can track active session immediately
                 if (!sessionId.empty()) {
@@ -411,7 +504,7 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                 AiStreamProxy::stream(
                     "/chat/agent/stream",
                     requestPayload,
-                    [writer, assembledContent, assembledReasoning, assembledToolCalls, doneModel, doneUsage](const std::string& frame) {
+                    [writer, assembledContent, assembledReasoning, assembledToolCalls, assembledPermissions, assembledTeamEvents, teamRunId, doneModel, doneUsage, sawDone, streamError](const std::string& frame) {
                         writer->send(frame);
                         // Parse frame to record final response for persistence
                         try {
@@ -427,16 +520,47 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                                 std::istringstream s(jsonStr);
                                 if (Json::parseFromStream(reader, s, &event, &errs) && event.isObject()) {
                                     const std::string type = event.isMember("type") ? event["type"].asString() : "";
+                                    if(type=="agent_run" && event.isMember("run_id"))*teamRunId=event["run_id"].asString();
+                                    if(!event.get("agent_id", "").asString().empty() && event["agent_id"].asString()!="lead") {
+                                        if(assembledTeamEvents->size()<2000) {
+                                            if(event["result"].isObject()) {event["result"].removeMember("frame");event["result"].removeMember("som_frame");}
+                                            assembledTeamEvents->append(event);
+                                        }
+                                        return;
+                                    }
+                                    if(type=="done" && event.isMember("team_tasks"))assembledTeamEvents->append(event);
                                     if (type == "content" && event.isMember("delta")) {
                                         *assembledContent += event["delta"].asString();
                                     } else if (type == "reasoning" && event.isMember("delta")) {
                                         *assembledReasoning += event["delta"].asString();
+                                    } else if (type == "permission_request") {
+                                        Json::Value permission(Json::objectValue);
+                                        auto permissionId=event.get("id", "").asString();
+                                        const auto token=event.get("token", "").asString();
+                                        if(permissionId.empty() && !token.empty())permissionId="permission-"+token.substr(token.size()>32?token.size()-32:0);
+                                        permission["id"]=permissionId;
+                                        permission["toolName"]=event["tool_name"];
+                                        permission["title"]=event["tool_name"];
+                                        permission["description"]=event["description"];
+                                        permission["arguments"]=event["arguments"];
+                                        permission["status"]="pending";
+                                        if(event.isMember("browser_step"))permission["browserStep"]=event["browser_step"];
+                                        if(event["arguments"].isMember("command"))permission["command"]=event["arguments"]["command"];
+                                        assembledPermissions->append(permission);
                                     } else if (type == "tool_call") {
                                         Json::Value tc(Json::objectValue);
                                         tc["name"] = event.isMember("name") ? event["name"].asString() : "";
                                         tc["arguments"] = event.isMember("arguments") ? event["arguments"] : Json::Value(Json::objectValue);
                                         if (event.isMember("id")) tc["id"] = event["id"].asString();
                                         assembledToolCalls->append(tc);
+                                    } else if (type == "tool_step") {
+                                        Json::Value step(Json::objectValue);
+                                        step["id"] = event["id"];
+                                        step["parent_id"] = event["parent_id"];
+                                        step["name"] = event["name"];
+                                        step["arguments"] = event["arguments"];
+                                        step["result"] = event["result"];
+                                        assembledToolCalls->append(step);
                                     } else if (type == "tool_result") {
                                         const std::string tcName = event.isMember("name") ? event["name"].asString() : "";
                                         const std::string tcId = event.isMember("id") ? event["id"].asString() : "";
@@ -447,7 +571,13 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                                                 break;
                                             }
                                         }
+                                    } else if (type == "error") {
+                                        *streamError = event.get("error", "Agent stream failed").asString();
                                     } else if (type == "done") {
+                                        *sawDone = true;
+                                        if (event.get("status", "ok").asString()=="error") *streamError=event.get("error", "Agent request failed").asString();
+                                        if (event.isMember("content")) *assembledContent = event["content"].asString();
+                                        if (event.isMember("reasoning")) *assembledReasoning = event["reasoning"].asString();
                                         if (event.isMember("content") && !event["content"].asString().empty()) {
                                             *assembledContent = event["content"].asString();
                                         }
@@ -465,7 +595,9 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                             }
                         } catch (...) {}
                     },
-                    [writer, userId, sessionId, assembledContent, assembledReasoning, assembledToolCalls, doneModel, doneUsage](bool ok, const std::string& error) {
+                    [writer, userId, sessionId, requestPayload, assembledContent, assembledReasoning, assembledToolCalls, assembledPermissions, assembledTeamEvents, teamRunId, doneModel, doneUsage, sawDone, streamError](bool ok, const std::string& error) {
+                        const bool completed = ok && *sawDone && streamError->empty();
+                        const std::string completionError = !ok ? error : !streamError->empty() ? *streamError : "Stream closed before completion";
                         if (!ok) {
                             Json::Value failure(Json::objectValue);
                             failure["type"] = "error";
@@ -481,30 +613,60 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                                 auto conn = Database::getInstance().getConnection();
                                 pqxx::work txn(*conn);
                                 Json::Value meta(Json::objectValue);
+                                if(!writer->remoteId.empty())meta["remote_run_id"]=writer->remoteId;
+                                meta["provider"]=requestPayload.get("provider", "");
+                                meta["provider_connection_name"]=requestPayload.get("provider_connection_name", "");
                                 if (!assembledReasoning->empty()) meta["reasoning"] = *assembledReasoning;
                                 if (!assembledToolCalls->empty()) meta["tool_calls"] = *assembledToolCalls;
+                                if (!assembledPermissions->empty()) meta["permissions"] = *assembledPermissions;
+                                if (!assembledTeamEvents->empty()) meta["agent_events"] = *assembledTeamEvents;
+                                if (!teamRunId->empty()) meta["agent_run_id"] = *teamRunId;
                                 if (!doneModel->empty()) meta["model"] = *doneModel;
                                 if (!doneUsage->empty()) meta["token_usage"] = *doneUsage;
-                                if (!ok) meta["interrupted_reason"] = error;
+                                if (!completed) meta["interrupted_reason"] = completionError;
 
                                 std::string finalContent = *assembledContent;
                                 if (finalContent.empty()) {
-                                    finalContent = !ok
-                                        ? "Completed workspace actions and diagnostic inspection before stream closed: " + error
-                                        : "Completed workspace actions and diagnostic inspection. See the tool activity above for details.";
-                                } else if (!ok) {
-                                    finalContent += "\n\n*(Stream ended: " + error + ")*";
+                                    finalContent = !completed
+                                        ? "Partial agent activity before the stream closed: " + completionError
+                                        : !assembledPermissions->empty() ? "Waiting for your approval of this step."
+                                        : "Agent activity finished. Review the recorded tool results for its outcome.";
+                                } else if (!completed) {
+                                    finalContent += "\n\n*(Stream ended: " + completionError + ")*";
                                 }
 
-                                txn.exec_params(
+                                const auto continuationId=requestPayload.get("continuation_message_id", "").asString();
+                                const auto previous=continuationId.empty() ? pqxx::result{} : txn.exec_params("SELECT content,metadata FROM ai_messages WHERE id=$1 AND session_id=$2 AND role='assistant' FOR UPDATE",continuationId,sessionId);
+                                if(!previous.empty()) {
+                                    Json::Value oldMeta;Json::Reader reader;
+                                    if(!previous[0]["metadata"].is_null())reader.parse(previous[0]["metadata"].as<std::string>(),oldMeta);
+                                    const auto oldContent=previous[0]["content"].as<std::string>();
+                                    if(!oldContent.empty() && oldContent.rfind("Waiting for",0)!=0 && oldContent.rfind("Completed workspace actions",0)!=0)finalContent=oldContent+"\n\n"+finalContent;
+                                    if(oldMeta["reasoning"].isString())meta["reasoning"]=oldMeta["reasoning"].asString()+"\n"+meta.get("reasoning", "").asString();
+                                    for(const auto* key:{"tool_calls","agent_events","permissions"}) {
+                                        auto combined=oldMeta[key].isArray()?oldMeta[key]:Json::Value(Json::arrayValue);
+                                        if(std::string(key)=="permissions" && requestPayload.isMember("approval_token"))for(auto& item:combined)if(item["status"].asString()=="pending")item["status"]="approved";
+                                        if(meta[key].isArray())for(const auto& item:meta[key])combined.append(item);
+                                        if(!combined.empty())meta[key]=combined;
+                                        else meta.removeMember(key);
+                                    }
+                                    txn.exec_params("UPDATE ai_messages SET content=$3,metadata=$4::jsonb WHERE id=$1 AND session_id=$2",continuationId,sessionId,finalContent,strings::compactJson(meta));
+                                } else txn.exec_params(
                                     "INSERT INTO ai_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3::jsonb)",
                                     sessionId,
                                     finalContent,
                                     strings::compactJson(meta));
-                                txn.exec_params(
-                                    "UPDATE ai_sessions SET updated_at = NOW(), last_model = $2 WHERE id = $1",
-                                    sessionId,
-                                    *doneModel);
+                                const auto saved=txn.exec_params("SELECT memory_summary,memory_graph::text FROM ai_sessions WHERE id=$1 FOR UPDATE",sessionId);
+                                if (!saved.empty()) {
+                                    auto graph=aiMemory::sessionMemory("",saved[0][1].is_null()?"{}":saved[0][1].as<std::string>())["graph"];
+                                    auto summary=saved[0][0].is_null()?"":saved[0][0].as<std::string>();
+                                    // Partial or failed turns remain in history, but are not presented as durable successful outcomes.
+                                    if (completed && !assembledContent->empty()) {
+                                        graph=aiMemory::updateMemoryGraph(graph,requestPayload.get("message", "").asString(),*assembledContent);
+                                        summary=aiMemory::updateMemorySummary(summary,requestPayload.get("message", "").asString(),*assembledContent);
+                                    }
+                                    txn.exec_params("UPDATE ai_sessions SET updated_at=NOW(),last_model=$2,memory_summary=$3,memory_graph=$4::jsonb WHERE id=$1",sessionId,doneModel->empty()?requestPayload.get("model", "").asString():*doneModel,summary,strings::compactJson(graph));
+                                }
                                 txn.commit();
                             } catch (const std::exception& e) {
                                 spdlog::error("Failed to save streamed assistant message: {}", e.what());
@@ -513,7 +675,14 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
                         writer->finish();
                     });
             });
-        });
+        };
+
+    if(background){
+        produce(nullptr);
+        Json::Value result;result["run_id"]=remoteId;result["session_id"]=sessionId;result["state"]="working";
+        auto response=drogon::HttpResponse::newHttpJsonResponse(result);response->setStatusCode(drogon::k202Accepted);response->addHeader("Cache-Control","no-store");callback(response);return;
+    }
+    auto response = drogon::HttpResponse::newAsyncStreamResponse(produce);
 
     response->setContentTypeCodeAndCustomString(drogon::CT_CUSTOM, "text/event-stream");
     response->addHeader("Cache-Control", "no-cache");
@@ -540,11 +709,19 @@ void AiController::stopAgentStream(const drogon::HttpRequestPtr& req,
         sessionId = (*body)["session_id"].asString();
     }
 
-    BlockingTaskRunner::run([sessionId, callback]() {
+    const auto uid=auth["user_id"].asString();
+    BlockingTaskRunner::run([sessionId,uid,callback]() {
+        try {
+            auto connection=Database::getInstance().getConnection();pqxx::work txn(*connection);
+            auto allowed=txn.exec_params("SELECT id FROM ai_sessions WHERE id::text=$1 AND (user_id=$2::uuid OR has_project_access(project_id,$2,'admin'))",sessionId,uid);txn.commit();
+            if(allowed.empty()){Json::Value error;error["error"]="Session unavailable";auto response=drogon::HttpResponse::newHttpJsonResponse(error);response->setStatusCode(drogon::k404NotFound);callback(response);return;}
+        } catch(...) {Json::Value error;error["error"]="Session authorization unavailable";auto response=drogon::HttpResponse::newHttpJsonResponse(error);response->setStatusCode(drogon::k503ServiceUnavailable);callback(response);return;}
+
         Json::Value stopPayload(Json::objectValue);
         stopPayload["session_id"] = sessionId;
 
         const auto result = AiServiceClient::instance().postWorkflow("/chat/agent/stop", stopPayload);
+        if(result.ok){try{auto conn=Database::getInstance().getConnection();pqxx::work tx(*conn);tx.exec_params("UPDATE remote_runs SET state='cancelled',updated_at=NOW() WHERE session_id::text=$1 AND user_id=$2 AND state IN ('awaiting_approval','awaiting_input')",sessionId,uid);tx.commit();}catch(...){}}
 
         Json::Value out(Json::objectValue);
         out["status"] = result.ok ? "ok" : "error";

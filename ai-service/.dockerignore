@@ -1,0 +1,4 @@
+app/.runtime/
+**/__pycache__/
+tests/
+.env*

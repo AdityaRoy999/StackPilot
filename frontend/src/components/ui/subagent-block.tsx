@@ -7,12 +7,12 @@ import {
   ChevronDown,
   Code2,
   Copy,
-  FolderTree,
   Loader2,
-  ShieldCheck,
+  CircleAlert,
+  Clock3,
   Target,
   Workflow,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { ThinkingPanel } from "@/components/ui/thinking-panel";
 import { ToolsPanel, ToolCall } from "@/components/ui/tool-call-card";
+import type { AgentTaskStatus } from "@/lib/agent-team";
 
 export interface SubagentThreadMessage {
   id: string;
@@ -40,7 +41,7 @@ export interface SubagentTask {
   title?: string;
   task?: string;
   prompt?: string;
-  status: "running" | "completed" | "failed";
+  status: AgentTaskStatus;
   toolCalls?: ToolCall[];
   result?: string;
   response?: string;
@@ -49,6 +50,11 @@ export interface SubagentTask {
   thread?: SubagentThreadMessage[];
   objectiveDetails?: string;
   responseDetails?: string;
+  lastSequence?: number;
+  modelCalls?: number;
+  lastModelLatencyMs?: number;
+  providerRetry?: number;
+  messages?: Array<{id?: string; content: string; recipient?: string}>;
 }
 
 export function getSubagentMeta(role: string): {
@@ -58,40 +64,12 @@ export function getSubagentMeta(role: string): {
   textColor: string;
   defaultTitle: string;
 } {
-  const lower = (role || "").toLowerCase();
-  if (lower.includes("architect")) {
-    return {
-      icon: FolderTree,
-      tone: "from-blue-500/20 to-indigo-500/10 border-blue-500/30 text-blue-400",
-      badgeTone: "border-blue-500/40 bg-blue-500/10 text-blue-400",
-      textColor: "text-blue-400",
-      defaultTitle: "Architect Subagent",
-    };
-  }
-  if (lower.includes("coder") || lower.includes("code")) {
-    return {
-      icon: Code2,
-      tone: "from-emerald-500/20 to-teal-500/10 border-emerald-500/30 text-emerald-400",
-      badgeTone: "border-emerald-500/40 bg-emerald-500/10 text-emerald-400",
-      textColor: "text-emerald-400",
-      defaultTitle: "Coder Subagent",
-    };
-  }
-  if (lower.includes("verifier") || lower.includes("verify") || lower.includes("test")) {
-    return {
-      icon: ShieldCheck,
-      tone: "from-purple-500/20 to-pink-500/10 border-purple-500/30 text-purple-400",
-      badgeTone: "border-purple-500/40 bg-purple-500/10 text-purple-400",
-      textColor: "text-purple-400",
-      defaultTitle: "Verifier Subagent",
-    };
-  }
   return {
     icon: Bot,
-    tone: "from-amber-500/20 to-orange-500/10 border-amber-500/30 text-amber-400",
-    badgeTone: "border-amber-500/40 bg-amber-500/10 text-amber-400",
-    textColor: "text-amber-400",
-    defaultTitle: role || "Specialized Subagent",
+    tone: "border-primary/30 bg-primary/5 text-primary",
+    badgeTone: "border-primary/30 bg-primary/5 text-primary",
+    textColor: "text-primary",
+    defaultTitle: role || "Task worker",
   };
 }
 
@@ -103,18 +81,7 @@ export function generateSubagentThread(subagent: SubagentTask): SubagentThreadMe
   const thread: SubagentThreadMessage[] = [];
   const meta = getSubagentMeta(subagent.role);
   const title = subagent.title || meta.defaultTitle;
-  const lower = (subagent.role || "").toLowerCase();
-
-  const taskText =
-    subagent.task ||
-    subagent.prompt ||
-    (lower.includes("architect")
-      ? "Analyze repository architecture, dependency graph, diagnose failure root cause, and construct execution blueprint."
-      : lower.includes("coder")
-      ? "Apply surgical patches to configuration, resolve submodule checkout depth, and verify supervisor process syntax."
-      : lower.includes("verifier")
-      ? "Trigger deployment rebuild, stream build logs, and verify live container runtime health status."
-      : "Execute specialized directive and return validated deliverable.");
+  const taskText = subagent.task || subagent.prompt || "Task instruction unavailable.";
 
   thread.push({
     id: `${subagent.id}-directive`,
@@ -122,41 +89,7 @@ export function generateSubagentThread(subagent: SubagentTask): SubagentThreadMe
     title: "Main Agent Directive • Assigned Objective",
     badge: "Directive",
     status: "completed",
-    timestamp: "T+0.0s",
     content: taskText,
-  });
-
-  let analysisText = "";
-  if (lower.includes("architect")) {
-    analysisText =
-      "### 🔍 Workspace & Architecture Diagnosis\n" +
-      "- **Repository Topology:** Inspected project tree, dependency manifests, and build scripts.\n" +
-      "- **Failure Mode:** Identified missing submodule checkout depth during clone and misaligned supervisor process definitions.\n" +
-      "- **Remediation Strategy:** Standardize submodule checkout recursion (`git submodule update --init --recursive --depth 1`), enforce single-container multi-process supervision, and ensure non-blocking daemon directives.";
-  } else if (lower.includes("coder")) {
-    analysisText =
-      "### 🛠️ Surgical Code Patch Strategy\n" +
-      "- **Target Components:** Build service submodule initialization logic & container supervisor config.\n" +
-      "- **Safety Verifications:** Syntax validity checked, AST-safe diffs prepared, atomic file operations staged.\n" +
-      "- **Configuration Alignment:** Resolved invalid daemon syntax and set explicit log file paths.";
-  } else if (lower.includes("verifier")) {
-    analysisText =
-      "### 🚀 Verification & Readiness Plan\n" +
-      "- **Rebuild Pipeline:** Dispatch rebuild job to worker queue with high priority.\n" +
-      "- **Health Probe Matrix:** Monitor build stream for compiler exit code 0, probe HTTP `/` endpoint, and verify container port mapping.\n" +
-      "- **Readiness Gate:** Await container transitioning to running with verified active port.";
-  } else {
-    analysisText = `Diagnosed task parameters for ${title}. Formulated optimal execution sequence.`;
-  }
-
-  thread.push({
-    id: `${subagent.id}-reasoning`,
-    role: "subagent",
-    title: `${title} • Diagnostic Analysis & Strategy`,
-    badge: "Analysis",
-    status: "completed",
-    timestamp: "T+0.4s",
-    content: analysisText,
   });
 
   if (subagent.toolCalls && subagent.toolCalls.length > 0) {
@@ -167,17 +100,19 @@ export function generateSubagentThread(subagent: SubagentTask): SubagentThreadMe
         title: `Tool Execution • ${tc.name}`,
         badge: tc.name,
         status: tc.result
-          ? tc.result.error
+          ? tc.result.error || ['failed','blocked','denied','conflict'].includes(String(tc.result.status)) ||
+            (typeof tc.result.exit_code === 'number' && tc.result.exit_code !== 0)
             ? "failed"
             : "completed"
-          : subagent.status === "running"
-          ? "running"
-          : "completed",
-        timestamp: `T+${(0.8 + idx * 0.4).toFixed(1)}s`,
+          : "running",
         toolCall: tc,
-        content: `Executed tool ${tc.name}`,
+        content: tc.result ? `Observed result from ${tc.name}` : `Dispatched ${tc.name}`,
       });
     });
+  }
+  for (const [index, message] of (subagent.messages || []).entries()) {
+    thread.push({id: message.id || `${subagent.id}-message-${index}`, role: "subagent",
+      title: `${title} • Team message`, badge: "Message", content: message.content});
   }
 
   return thread;
@@ -214,7 +149,7 @@ export function extractSubagentDetails(subagent: SubagentTask) {
     subagent.result ||
     subagent.response ||
     subagent.responseDetails ||
-    "Completed task directive and returned validated deliverables to Main Agent.";
+    "No result has been received from this worker.";
 
   return {
     title,
@@ -519,12 +454,13 @@ export function SubagentsPanel({
                       {isRunning ? (
                         <span className="ml-auto inline-flex items-center gap-1.5 text-[10.5px] font-medium text-primary shrink-0">
                           <Loader2 className="size-3 animate-spin" />
-                          <span>Running</span>
+                          <span aria-live="polite">{subagent.providerRetry ? `Reconnecting (${subagent.providerRetry})` : "Running"}</span>
                         </span>
                       ) : (
-                        <span className="ml-auto inline-flex items-center gap-1 text-[10.5px] font-medium text-emerald-400 shrink-0">
-                          <Check className="size-3" />
-                          <span>Completed</span>
+                        <span className={cn("ml-auto inline-flex items-center gap-1 text-[10.5px] font-medium shrink-0",
+                          subagent.status === "completed" ? "text-emerald-400" : subagent.status === "failed" || subagent.status === "blocked" ? "text-amber-500" : "text-ink-3")}>
+                          {subagent.status === "completed" ? <Check className="size-3" /> : subagent.status === "blocked" || subagent.status === "failed" ? <CircleAlert className="size-3" /> : <Clock3 className="size-3" />}
+                          <span>{subagent.status === "submitted" ? "Awaiting integration" : subagent.status.charAt(0).toUpperCase() + subagent.status.slice(1)}</span>
                         </span>
                       )}
                     </button>

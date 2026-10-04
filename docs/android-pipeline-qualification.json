@@ -1,0 +1,57 @@
+{
+  "verified": true,
+  "scope": "local_android_pipeline",
+  "project_id": "b0e0dbfd-a373-4879-a02c-594eb34b9389",
+  "deployment_id": "89d70ac7-51fc-49ca-8cc8-fbd0dc917af8",
+  "runtime_url": "http://723b58ea-71e2-4188-9bfb-1e988ea4d674.preview.localhost:8091",
+  "native": {
+    "artifact_digest": "aaba99a7bfd07a4ebd940615dd6ada6edb309f56ced96d8e7e2705dcd20eced8",
+    "deployment_id": "89d70ac7-51fc-49ca-8cc8-fbd0dc917af8",
+    "package": "dev.stackpilot.qualification",
+    "preview_available": true,
+    "scenarios": [
+      {
+        "name": "Submit a native form",
+        "status": "passed",
+        "steps": [
+          {
+            "action": "assert",
+            "status": "executed"
+          },
+          {
+            "action": "input",
+            "status": "executed"
+          },
+          {
+            "action": "key",
+            "status": "executed"
+          },
+          {
+            "action": "tap",
+            "status": "executed"
+          },
+          {
+            "action": "assert",
+            "status": "executed"
+          }
+        ]
+      }
+    ],
+    "scope": "native_scenarios",
+    "screen_capture": "launch.png",
+    "serial": "emulator-5580",
+    "status": "passed",
+    "verified": true,
+    "workflow_verified": true
+  },
+  "authenticated_png_stream": true,
+  "wrong_deployment_ticket_rejected": true,
+  "worker_restart_recovered_frame_and_fresh_foreground_observation": true,
+  "project_deleted_and_existing_preview_revoked": true,
+  "screenshot": "C:\\Users\\adiro\\OneDrive\\Desktop\\ALL websites\\StackPilot\\docs\\screenshots\\android-workflow-qualified.png",
+  "limitations": [
+    "Single local emulator",
+    "PNG latest-frame capture, not qualified 60 FPS",
+    "No production signing or store publication"
+  ]
+}

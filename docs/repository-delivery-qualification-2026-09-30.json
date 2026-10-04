@@ -1,0 +1,381 @@
+[
+  {
+    "fixture": "interactive-node",
+    "contract": {
+      "version": 1,
+      "repository_plan": null,
+      "workload": "cli",
+      "protocol": "http",
+      "port": 3000,
+      "health_path": "/healthz",
+      "verification_scope": "console_workflow",
+      "entrypoint": [
+        "node",
+        "cli.cjs"
+      ],
+      "repository_discovery": {
+        "version": 1,
+        "workload": "cli",
+        "confidence": "package_bin",
+        "entrypoint": [
+          "node",
+          "cli.cjs"
+        ],
+        "components": [
+          {
+            "root": ".",
+            "languages": [
+              "node"
+            ],
+            "manifests": [
+              "package.json"
+            ]
+          }
+        ],
+        "python": [],
+        "issues": [],
+        "files_scanned": 4,
+        "truncated": false,
+        "delivery": "interactive_console",
+        "testing": {
+          "declared_commands": [],
+          "discovered_commands": [
+            [
+              "npm",
+              "run",
+              "test"
+            ]
+          ],
+          "console_scenarios": [
+            {
+              "name": "Original Node program computes a square",
+              "steps": [
+                {
+                  "output_contains": "Enter a number:"
+                },
+                {
+                  "input": "12\n",
+                  "output_contains": "Square: 144"
+                }
+              ]
+            },
+            {
+              "name": "Invalid input has an application error",
+              "steps": [
+                {
+                  "output_contains": "Enter a number:"
+                },
+                {
+                  "input": "invalid\n",
+                  "output_contains": "Invalid number"
+                }
+              ]
+            }
+          ],
+          "business_behavior_verified": false
+        }
+      },
+      "runtime_command": null,
+      "console_scenarios": [
+        {
+          "name": "Original Node program computes a square",
+          "steps": [
+            {
+              "output_contains": "Enter a number:"
+            },
+            {
+              "input": "12\n",
+              "output_contains": "Square: 144"
+            }
+          ]
+        },
+        {
+          "name": "Invalid input has an application error",
+          "steps": [
+            {
+              "output_contains": "Enter a number:"
+            },
+            {
+              "input": "invalid\n",
+              "output_contains": "Invalid number"
+            }
+          ]
+        }
+      ],
+      "job_timeout_seconds": 45,
+      "accepted_statuses": [
+        200
+      ],
+      "checks": [],
+      "tests": [],
+      "tests_required": true,
+      "build_secrets": [],
+      "browser_checks": [],
+      "fail_on_console_error": true,
+      "test_services": [],
+      "scenarios": [],
+      "monitor_scenarios": [],
+      "app_id": null,
+      "native_preview_required": false,
+      "native_scenarios": [],
+      "components": [
+        "."
+      ],
+      "primary_service": null,
+      "requires_worker": null,
+      "native_interactive_preview": null
+    },
+    "verification": {
+      "status": "passed",
+      "verified": true,
+      "scope": "console_workflow",
+      "checks": [
+        {
+          "path": "/healthz",
+          "status": 200,
+          "passed": true
+        }
+      ],
+      "scenarios": [
+        {
+          "name": "Original Node program computes a square",
+          "passed": true,
+          "output": "Square: 144\r\nEnter a number:\r\n"
+        },
+        {
+          "name": "Invalid input has an application error",
+          "passed": true,
+          "output": "Invalid number\r\nEnter a number:\r\n"
+        }
+      ],
+      "workflow_verified": true,
+      "reason": "Declared program input/output checks passed"
+    }
+  },
+  {
+    "fixture": "finite-python-job",
+    "contract": {
+      "version": 1,
+      "repository_plan": null,
+      "workload": "job",
+      "protocol": "http",
+      "port": 3000,
+      "health_path": "/healthz",
+      "verification_scope": "job_completion",
+      "entrypoint": [
+        "python",
+        "-u",
+        "job.py"
+      ],
+      "repository_discovery": {
+        "version": 1,
+        "workload": "job",
+        "confidence": "declared",
+        "entrypoint": [
+          "python",
+          "-u",
+          "job.py"
+        ],
+        "components": [],
+        "python": [
+          {
+            "path": "job.py",
+            "imports": [
+              "json",
+              "pathlib"
+            ],
+            "web": false,
+            "interactive": false,
+            "command_line": false,
+            "executable": true
+          }
+        ],
+        "issues": [],
+        "files_scanned": 3,
+        "truncated": false,
+        "delivery": "job_results",
+        "testing": {
+          "declared_commands": [
+            [
+              "python",
+              "test_job.py"
+            ]
+          ],
+          "discovered_commands": [
+            [
+              "python",
+              "-m",
+              "pytest",
+              "-q"
+            ]
+          ],
+          "console_scenarios": [],
+          "business_behavior_verified": false
+        }
+      },
+      "runtime_command": null,
+      "console_scenarios": [],
+      "job_timeout_seconds": 45,
+      "accepted_statuses": [
+        200
+      ],
+      "checks": [
+        {
+          "path": "/healthz",
+          "text_contains": "RESULT sum=55 count=4"
+        }
+      ],
+      "tests": [
+        [
+          "python",
+          "test_job.py"
+        ]
+      ],
+      "tests_required": true,
+      "build_secrets": [],
+      "browser_checks": [],
+      "fail_on_console_error": true,
+      "test_services": [],
+      "scenarios": [],
+      "monitor_scenarios": [],
+      "app_id": null,
+      "native_preview_required": false,
+      "native_scenarios": [],
+      "components": [],
+      "primary_service": null,
+      "requires_worker": null,
+      "native_interactive_preview": null
+    },
+    "verification": {
+      "status": "passed",
+      "verified": true,
+      "scope": "job_completion",
+      "reason": "Finite repository command exited successfully",
+      "checks": [
+        {
+          "path": "/healthz",
+          "status": 200,
+          "passed": true
+        },
+        {
+          "path": "/healthz",
+          "status": 200,
+          "passed": true
+        }
+      ],
+      "output": "RESULT sum=55 count=4\n",
+      "workflow_verified": false
+    }
+  },
+  {
+    "fixture": "portable-python-package",
+    "contract": {
+      "version": 1,
+      "repository_plan": null,
+      "workload": "package",
+      "protocol": "http",
+      "port": 3000,
+      "health_path": "/healthz",
+      "verification_scope": "artifact_delivery",
+      "entrypoint": null,
+      "repository_discovery": {
+        "version": 1,
+        "workload": "package",
+        "confidence": "declared",
+        "entrypoint": null,
+        "components": [
+          {
+            "root": ".",
+            "languages": [
+              "python"
+            ],
+            "manifests": [
+              "pyproject.toml"
+            ]
+          }
+        ],
+        "python": [
+          {
+            "path": "src/qualification_math/__init__.py",
+            "imports": [],
+            "web": false,
+            "interactive": false,
+            "command_line": false,
+            "executable": false
+          }
+        ],
+        "issues": [],
+        "files_scanned": 4,
+        "truncated": false,
+        "delivery": "artifact_download",
+        "testing": {
+          "declared_commands": [
+            [
+              "python",
+              "test_installed.py"
+            ]
+          ],
+          "discovered_commands": [
+            [
+              "python",
+              "-m",
+              "pytest",
+              "-q"
+            ]
+          ],
+          "console_scenarios": [],
+          "business_behavior_verified": false
+        }
+      },
+      "runtime_command": null,
+      "console_scenarios": [],
+      "job_timeout_seconds": 45,
+      "accepted_statuses": [
+        200
+      ],
+      "checks": [],
+      "tests": [
+        [
+          "python",
+          "test_installed.py"
+        ]
+      ],
+      "tests_required": true,
+      "build_secrets": [],
+      "browser_checks": [],
+      "fail_on_console_error": true,
+      "test_services": [],
+      "scenarios": [],
+      "monitor_scenarios": [],
+      "app_id": null,
+      "native_preview_required": false,
+      "native_scenarios": [],
+      "components": [
+        "."
+      ],
+      "primary_service": null,
+      "requires_worker": null,
+      "native_interactive_preview": null
+    },
+    "verification": {
+      "status": "passed",
+      "verified": true,
+      "scope": "artifact_delivery",
+      "reason": "Declared checks passed; undeclared business and device workflows remain unverified",
+      "checks": [
+        {
+          "path": "/healthz",
+          "status": 200,
+          "passed": true
+        }
+      ],
+      "artifacts": [
+        {
+          "name": "application.zip",
+          "size": 1083,
+          "sha256": "17bb446d2f3bdd87a3398825184f140bf6758e7f188e83a9041e2ea363cfee31"
+        }
+      ]
+    }
+  }
+]

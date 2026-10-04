@@ -167,7 +167,7 @@ void SshController::listConnections(
         auto conn = db.getConnection();
         pqxx::work txn(*conn);
         auto rows = txn.exec_params(
-            "SELECT id, name, COALESCE(connection_type, 'ssh') AS connection_type, host, port, username, auth_type, last_tested_at, created_at, updated_at "
+            "SELECT id, name, COALESCE(connection_type, 'ssh') AS connection_type, host, port, username, auth_type, last_tested_at, created_at, updated_at, host_capabilities::text, last_probed_at, last_probe_error "
             "FROM ssh_connections WHERE user_id = $1 ORDER BY created_at DESC",
             userId
         );
@@ -175,7 +175,11 @@ void SshController::listConnections(
 
         Json::Value connections(Json::arrayValue);
         for (const auto& row : rows) {
-            connections.append(toConnectionJson(row));
+            auto connection = toConnectionJson(row);
+            connection["host_capabilities"] = strings::parseJsonObject(row["host_capabilities"].as<std::string>());
+            connection["last_probed_at"] = row["last_probed_at"].is_null()?"":row["last_probed_at"].as<std::string>();
+            connection["last_probe_error"] = row["last_probe_error"].as<std::string>();
+            connections.append(connection);
         }
 
         Json::Value payload;
@@ -586,6 +590,9 @@ void SshController::probeConnection(
         SshService sshService;
         auto probeResult = sshService.probeHost(config);
         if (!probeResult.success) {
+            pqxx::work observation(*conn);
+            observation.exec_params("UPDATE ssh_connections SET last_probed_at=NOW(),last_probe_error=$3 WHERE id=$1 AND user_id=$2",id,userId,probeResult.error.empty()?"Host probe failed":probeResult.error);
+            observation.commit();
             Json::Value payload;
             payload["error"] = probeResult.error.empty() ? "Failed to probe remote host" : probeResult.error;
             payload["details"] = probeResult.output;
@@ -606,6 +613,9 @@ void SshController::probeConnection(
             capabilities[line.substr(0, equals)] = line.substr(equals + 1);
         }
 
+        pqxx::work observation(*conn);
+        observation.exec_params("UPDATE ssh_connections SET host_capabilities=$3::jsonb,last_probed_at=NOW(),last_probe_error='' WHERE id=$1 AND user_id=$2",id,userId,strings::compactJson(capabilities));
+        observation.commit();
         Json::Value payload;
         payload["message"] = "Remote host probed";
         payload["capabilities"] = capabilities;
@@ -719,6 +729,12 @@ void SshController::provisionKubernetes(
             callback(resp);
             return;
         }
+        const auto membership = txn.exec_params(
+            "SELECT c.name FROM kubernetes_cluster_nodes n JOIN kubernetes_clusters c ON c.id=n.cluster_id WHERE n.connection_id=$1 AND c.user_id=$2 AND n.status<>'removed' AND n.removed_at IS NULL AND c.control_plane_connection_id IS DISTINCT FROM $1::uuid LIMIT 1",id,userId);
+        if (!membership.empty()) {
+            auto response=drogon::HttpResponse::newHttpJsonResponse(makeErrorPayload("This server is already a node of another cluster. Remove it from that cluster before preparing a standalone control plane."));
+            response->setStatusCode(drogon::k409Conflict); callback(response); return;
+        }
         txn.commit();
 
         const SshConnectionConfig config = rowToConfig(rows[0]);
@@ -737,10 +753,13 @@ void SshController::provisionKubernetes(
             const std::string kubeconfig = extractBlock(provisionResult.output,
                                                         "__STACKPILOT_K3S_KUBECONFIG_BEGIN__",
                                                         "__STACKPILOT_K3S_KUBECONFIG_END__");
-            if (!serverUrl.empty() && !nodeToken.empty()) {
+            if (!serverUrl.empty() && !nodeToken.empty() && !kubeconfig.empty()) {
                 try {
                     const std::string connectionName = rows[0]["name"].as<std::string>();
-                    const std::string clusterName = safeClusterName("", connectionName + "-cluster");
+                    pqxx::work lookup(*conn);
+                    const auto existing = lookup.exec_params("SELECT name FROM kubernetes_clusters WHERE user_id=$1 AND control_plane_connection_id=$2 ORDER BY updated_at DESC LIMIT 1",userId,id);
+                    const std::string clusterName = existing.empty()?safeClusterName("", connectionName + "-cluster"):existing[0][0].as<std::string>();
+                    lookup.commit();
                     const std::string encryptedToken = TokenCrypto::encrypt(nodeToken);
                     const std::string encryptedKubeconfig = kubeconfig.empty() ? std::string() : TokenCrypto::encrypt(kubeconfig);
 
@@ -753,6 +772,7 @@ void SshController::provisionKubernetes(
                         "server_url = EXCLUDED.server_url, join_token_encrypted = EXCLUDED.join_token_encrypted, "
                         "status = 'ready', last_status = EXCLUDED.last_status, updated_at = NOW(), "
                         "kubeconfig_encrypted = COALESCE(NULLIF(EXCLUDED.kubeconfig_encrypted, ''), kubernetes_clusters.kubeconfig_encrypted) "
+                        "WHERE kubernetes_clusters.control_plane_connection_id = EXCLUDED.control_plane_connection_id "
                         "RETURNING id, name, provider, server_url, status",
                         userId,
                         clusterName,
@@ -762,6 +782,7 @@ void SshController::provisionKubernetes(
                         redactedDetails,
                         encryptedKubeconfig
                     );
+                    if (clusterRows.empty()) throw std::runtime_error("Cluster name belongs to a different control plane");
                     const std::string clusterId = clusterRows[0]["id"].as<std::string>();
                     writeTxn.exec_params(
                         "INSERT INTO kubernetes_cluster_nodes (cluster_id, connection_id, role, status, last_status, joined_at) "
@@ -782,7 +803,16 @@ void SshController::provisionKubernetes(
                     payload["message"] = "Lightweight Kubernetes prepared and registered as cluster: " + clusterName;
                 } catch (const std::exception& clusterEx) {
                     spdlog::warn("Could not register provisioned cluster into kubernetes_clusters: {}", clusterEx.what());
+                    provisionResult.success = false;
+                    payload["success"] = false;
+                    payload["message"] = "Host prepared; cluster registration failed";
+                    payload["error"] = "Kubernetes is installed, but StackPilot could not register its deployment target. Retry Prepare Kubernetes to register it.";
                 }
+            } else {
+                provisionResult.success = false;
+                payload["success"] = false;
+                payload["message"] = "Host prepared; deployment credentials unavailable";
+                payload["error"] = "Kubernetes was prepared, but its server URL, join token, or kubeconfig could not be read. Check sudo access and retry preparation.";
             }
         }
 
@@ -858,6 +888,19 @@ void SshController::initializeKubernetesCluster(
         }
         const std::string connectionName = rows[0]["name"].as<std::string>();
         const SshConnectionConfig config = rowToConfig(rows[0]);
+        const auto membership = readTxn.exec_params(
+            "SELECT c.name FROM kubernetes_cluster_nodes n JOIN kubernetes_clusters c ON c.id=n.cluster_id WHERE n.connection_id=$1 AND c.user_id=$2 AND n.status<>'removed' AND n.removed_at IS NULL AND c.control_plane_connection_id IS DISTINCT FROM $1::uuid LIMIT 1",id,userId);
+        if (!membership.empty()) {
+            auto response=drogon::HttpResponse::newHttpJsonResponse(makeErrorPayload("This server is already a node of another cluster. Remove it from that cluster before preparing a standalone control plane."));
+            response->setStatusCode(drogon::k409Conflict); callback(response); return;
+        }
+        const auto previousCluster=readTxn.exec_params("SELECT name FROM kubernetes_clusters WHERE user_id=$1 AND control_plane_connection_id=$2 ORDER BY updated_at DESC LIMIT 1",userId,id);
+        const std::string clusterName=previousCluster.empty()?safeClusterName(requestedClusterName,connectionName):previousCluster[0][0].as<std::string>();
+        const auto collision=readTxn.exec_params("SELECT id FROM kubernetes_clusters WHERE user_id=$1 AND name=$2 AND control_plane_connection_id IS DISTINCT FROM $3::uuid",userId,clusterName,id);
+        if (!collision.empty()) {
+            auto response=drogon::HttpResponse::newHttpJsonResponse(makeErrorPayload("Cluster name is already assigned to another control plane. Choose a different cluster name."));
+            response->setStatusCode(drogon::k409Conflict); callback(response); return;
+        }
         readTxn.commit();
 
         SshService sshService;
@@ -892,13 +935,16 @@ void SshController::initializeKubernetesCluster(
             return;
         }
 
-        const std::string clusterName = safeClusterName(requestedClusterName, connectionName);
         const std::string encryptedToken = TokenCrypto::encrypt(nodeToken);
         // This is what makes a built cluster usable as a deploy target. Without
         // it the platform provisions a cluster it can never talk to again.
         const std::string kubeconfig = extractBlock(initResult.output,
                                                     "__STACKPILOT_K3S_KUBECONFIG_BEGIN__",
                                                     "__STACKPILOT_K3S_KUBECONFIG_END__");
+        if (kubeconfig.empty()) {
+            payload["success"]=false; payload["error"]="Control plane initialized, but no deployment kubeconfig was captured. Check sudo access and retry initialization.";
+            auto response=drogon::HttpResponse::newHttpJsonResponse(payload); response->setStatusCode(drogon::k500InternalServerError); callback(response); return;
+        }
         const std::string encryptedKubeconfig =
             kubeconfig.empty() ? std::string() : TokenCrypto::encrypt(kubeconfig);
         pqxx::work writeTxn(*conn);
@@ -912,6 +958,7 @@ void SshController::initializeKubernetesCluster(
             // Keep the existing kubeconfig if this run could not read one,
             // rather than blanking a working target.
             "kubeconfig_encrypted = COALESCE(NULLIF(EXCLUDED.kubeconfig_encrypted, ''), kubernetes_clusters.kubeconfig_encrypted) "
+            "WHERE kubernetes_clusters.control_plane_connection_id=EXCLUDED.control_plane_connection_id "
             "RETURNING id, name, provider, server_url, status, created_at, updated_at",
             userId,
             clusterName,
@@ -921,6 +968,7 @@ void SshController::initializeKubernetesCluster(
             redactedDetails,
             encryptedKubeconfig
         );
+        if (clusterRows.empty()) throw std::runtime_error("Cluster name belongs to another control plane");
         const std::string clusterId = clusterRows[0]["id"].as<std::string>();
         writeTxn.exec_params(
             "INSERT INTO kubernetes_cluster_nodes (cluster_id, connection_id, role, status, last_status, joined_at) "
@@ -1048,6 +1096,10 @@ void SshController::joinKubernetesCluster(
             return;
         }
 
+        const auto otherWorkerMembership=readTxn.exec_params("SELECT c.name FROM kubernetes_cluster_nodes n JOIN kubernetes_clusters c ON c.id=n.cluster_id WHERE c.user_id=$1 AND n.connection_id=$2 AND n.cluster_id<>$3 AND n.role='agent' AND n.status<>'removed' AND n.removed_at IS NULL LIMIT 1",userId,workerConnectionId,clusterRows[0]["id"].as<std::string>());
+        if (!otherWorkerMembership.empty()) {
+            auto response=drogon::HttpResponse::newHttpJsonResponse(makeErrorPayload("Worker is managed by another cluster. Remove it from that cluster before joining this one.")); response->setStatusCode(drogon::k409Conflict); callback(response); return;
+        }
         const std::string clusterId = clusterRows[0]["id"].as<std::string>();
         const std::string clusterName = clusterRows[0]["name"].as<std::string>();
         const std::string serverUrl = clusterRows[0]["server_url"].as<std::string>();
@@ -1082,7 +1134,7 @@ void SshController::joinKubernetesCluster(
             "VALUES ($1, $2, $5::varchar, $3::varchar, $4, "
             "        CASE WHEN $3::varchar = 'ready' THEN NOW() ELSE NULL END) "
             "ON CONFLICT (cluster_id, connection_id) DO UPDATE SET "
-            "role = EXCLUDED.role, status = EXCLUDED.status, last_status = EXCLUDED.last_status, "
+            "role = EXCLUDED.role, status = EXCLUDED.status, last_status = EXCLUDED.last_status, removed_at = CASE WHEN EXCLUDED.status = 'ready' THEN NULL ELSE kubernetes_cluster_nodes.removed_at END, "
             "joined_at = CASE WHEN EXCLUDED.status = 'ready' THEN NOW() ELSE kubernetes_cluster_nodes.joined_at END, updated_at = NOW()",
             clusterId,
             workerConnectionId,

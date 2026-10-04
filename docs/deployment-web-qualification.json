@@ -1,0 +1,17 @@
+{
+  "deployment_id": "e930fdf1-355e-421c-b2a2-be22ec3c08f7",
+  "job_id": "744f8ecf-c92c-440f-8214-0cfa1f60fd44",
+  "runtime_url": "http://localhost:62075",
+  "elapsed_ms": 42380,
+  "scope": "render_smoke",
+  "verified": true,
+  "image_content_id": "sha256:774ea8883cea33cff46558e610026eac3380d4b2185a8760d8efd611b28357c4",
+  "container": "stackpilot-local-club-website-744f8ecf-c92-a1",
+  "duplicate_build_rejected": true,
+  "source_edit_during_build_rejected": true,
+  "wrong_job_rejected": true,
+  "status_exposes_exact_job_evidence": true,
+  "business_workflows": "unverified",
+  "previous_runtime_containers_retained": true,
+  "stable_routing_and_managed_rollback_retention": "unimplemented"
+}

@@ -5,6 +5,7 @@
 #include "JwtHelper.h"
 #include "StringUtils.h"
 #include "../db/Database.h"
+#include "../services/RemoteAccess.h"
 #include <spdlog/spdlog.h>
 #include <pqxx/pqxx>
 #include <chrono>
@@ -208,6 +209,10 @@ std::string JwtHelper::extractTokenFromRequest(const drogon::HttpRequestPtr& req
         return queryToken;
     }
 
+    auto deviceCookie = req->getCookie("stackpilot_remote_device");
+    if (deviceCookie.empty()) deviceCookie = extractCookieValue(req->getHeader("cookie"), "stackpilot_remote_device");
+    if (!deviceCookie.empty()) return deviceCookie;
+
     const std::string cookieValue = req->getCookie("token");
     if (cookieValue.empty()) {
         const std::string cookieHeader = req->getHeader("cookie");
@@ -264,6 +269,9 @@ Json::Value JwtHelper::verifyRequestToken(const drogon::HttpRequestPtr& req) {
     const std::string token = extractTokenFromRequest(req);
     if (token.empty()) {
         return Json::Value(Json::nullValue);
+    }
+    if (token.rfind("sp_remote_", 0) == 0) {
+        try { return remote::authenticate(req); } catch (...) { return Json::Value(); }
     }
 
     // MCP tokens are accepted on normal API routes — the MCP server drives

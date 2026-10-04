@@ -106,4 +106,12 @@ video/
 !stackpilot web/public/features/*.mp4
 !stackpilot web/public/preloader/*.mp4
 shrink_docker_disk.bat
+ai-service/app/.runtime/
+backups/ai-service-audit-runtime/
+native-browser/.venv/
 
+# Local conversation exports, one-off editing helpers and generated test output
+/user_inputs.txt
+/orbs.txt
+/fix_import.js
+/tests/artifacts/

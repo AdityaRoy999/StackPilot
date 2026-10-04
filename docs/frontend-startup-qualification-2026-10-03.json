@@ -1,0 +1,17 @@
+{
+  "projects_render_seconds": 1.147,
+  "projects_to_ai_seconds": 0.614,
+  "attach_modes": [
+    "local",
+    "remote",
+    "host",
+    "local"
+  ],
+  "chat_id_unchanged": true,
+  "failed_switch_kept_previous": true,
+  "loaded_fonts": 4,
+  "ready": "complete",
+  "ai_to_projects_seconds": 0.296,
+  "warm_projects_to_ai_seconds": 0.042,
+  "page_errors": []
+}

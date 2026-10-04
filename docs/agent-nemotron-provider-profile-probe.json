@@ -1,0 +1,27 @@
+{
+  "scope": "provider_tool_generation_only_no_actions",
+  "results": [
+    {
+      "profile": "documented_fast",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "status_code": 200,
+      "tool_names": [
+        "workspace_read_file"
+      ],
+      "finish_reason": "tool_calls",
+      "has_content": true,
+      "elapsed_seconds": 1.21
+    },
+    {
+      "profile": "baseline",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "status_code": 200,
+      "tool_names": [
+        "workspace_read_file"
+      ],
+      "finish_reason": "tool_calls",
+      "has_content": false,
+      "elapsed_seconds": 1.33
+    }
+  ]
+}

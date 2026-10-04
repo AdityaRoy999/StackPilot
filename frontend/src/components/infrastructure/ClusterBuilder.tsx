@@ -18,7 +18,7 @@ import {
   Server,
   ShieldCheck,
   Trash2,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 
@@ -56,6 +56,9 @@ interface SshConnection {
   username: string;
   auth_type: "password" | "key" | "tailscale" | "headscale";
   last_tested_at: string;
+  host_capabilities?: Record<string, string>;
+  last_probed_at?: string;
+  last_probe_error?: string;
   created_at: string;
   updated_at: string;
 }
@@ -154,6 +157,8 @@ export function ClusterBuilder() {
 
   const connectionsQuery = useQuery({
     queryKey: ["ssh-connections"],
+    refetchOnMount: "always",
+    refetchInterval: 30000,
     queryFn: async () => {
       const response = await api.get<SshConnectionsResponse>("/ssh/connections");
       return response.data;
@@ -162,6 +167,8 @@ export function ClusterBuilder() {
 
   const clustersQuery = useQuery({
     queryKey: ["kubernetes-clusters"],
+    refetchOnMount: "always",
+    refetchInterval: 30000,
     queryFn: async () => {
       const response = await api.get<KubernetesClustersResponse>("/ssh/clusters");
       return response.data;
@@ -176,9 +183,18 @@ export function ClusterBuilder() {
     () => clustersQuery.data?.clusters ?? [],
     [clustersQuery.data?.clusters]
   );
-  const effectiveControlPlaneId = controlPlaneId || connections[0]?.id || "";
+  const probeMutation = useMutation({
+    mutationFn: async (id: string) => (await api.post(`/ssh/connections/${id}/probe`, {}, { timeout: 45000 })).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ssh-connections"] }),
+    onError: (error) => { queryClient.invalidateQueries({ queryKey: ["ssh-connections"] }); toast.error(errorPayload(error)?.error || "Host probe failed"); },
+  });
+  const activeMembership = (id: string) => clusters.flatMap((cluster) => cluster.nodes.filter((node) => node.status !== "removed" && node.connection_id === id).map((node) => ({ cluster, node })));
+  const readiness = (connection: SshConnection) => connection.last_probe_error ? "Last probe failed" : !connection.last_probed_at ? "Readiness not checked" : `Docker ${connection.host_capabilities?.docker_daemon === "yes" ? "available" : "unavailable"} · Kubernetes ${connection.host_capabilities?.kubernetes_ready === "yes" ? "available" : "unavailable"}`;
+  const effectiveControlPlaneId = controlPlaneId || connections.find((connection) =>
+    !activeMembership(connection.id).some(({ cluster }) => cluster.control_plane_connection_id !== connection.id)
+  )?.id || "";
   const selectedControlPlane = connections.find((connection) => connection.id === effectiveControlPlaneId);
-  const effectiveClusterName = clusterName.trim() || (selectedControlPlane ? `${selectedControlPlane.name}-cluster` : "");
+  const effectiveClusterName = clusterName.trim() || clusters.find((cluster) => cluster.control_plane_connection_id === effectiveControlPlaneId)?.name || (selectedControlPlane ? `${selectedControlPlane.name}-cluster` : "");
   const workerOptions = useMemo(() => {
     return connections.filter((connection) => {
       if (connection.id === effectiveControlPlaneId) return false;
@@ -189,8 +205,8 @@ export function ClusterBuilder() {
 
   const effectiveSelectedWorkerIds = useMemo(() => {
     const validWorkerIdSet = new Set(workerOptions.map((w) => w.id));
-    return selectedWorkerIds.filter((id) => validWorkerIdSet.has(id));
-  }, [selectedWorkerIds, workerOptions]);
+    return selectedWorkerIds.filter((id) => validWorkerIdSet.has(id) && !clusters.some((cluster) => cluster.nodes.some((node) => node.connection_id === id && node.status !== "removed")));
+  }, [selectedWorkerIds, workerOptions, clusters]);
 
   const selectedCluster = useMemo(
     () => clusters.find((cluster) => cluster.control_plane_connection_id === effectiveControlPlaneId),
@@ -394,6 +410,7 @@ export function ClusterBuilder() {
 
   return (
     <div className="space-y-6">
+      {(connectionsQuery.isError || clustersQuery.isError) && <p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">Could not load saved servers or clusters. Use Refresh to retry.</p>}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground">
@@ -405,7 +422,7 @@ export function ClusterBuilder() {
             Bootstrap a control plane from a saved server, join worker servers, and verify the cluster without leaving StackPilot.
           </p>
         </div>
-        <div className="flex flex-nowrap items-center gap-2 shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 lg:shrink-0">
           <Button
             variant="outline"
             onClick={() => {
@@ -495,13 +512,18 @@ export function ClusterBuilder() {
                       </SelectTrigger>
                       <SelectContent className="max-h-72">
                         {connections.map((connection) => (
-                          <SelectItem key={connection.id} value={connection.id}>
+                          <SelectItem key={connection.id} value={connection.id} disabled={activeMembership(connection.id).some(({ cluster }) => cluster.control_plane_connection_id !== connection.id)}>
                             <span>{connection.name}</span>
                             <span className="font-mono text-xs text-muted-foreground">{connection.host}</span>
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
+                    {selectedControlPlane && <div className="space-y-2 rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">{readiness(selectedControlPlane)}</p>
+                      {selectedControlPlane.last_probed_at && <p className="text-[11px] text-muted-foreground">Last checked {new Date(selectedControlPlane.last_probed_at).toLocaleString()}</p>}
+                      <Button size="sm" type="button" variant="outline" disabled={probeMutation.isPending} onClick={() => probeMutation.mutate(selectedControlPlane.id)}><RefreshCw size={14} className={probeMutation.isPending ? "animate-spin" : ""} />Check readiness</Button>
+                    </div>}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="clusterName">Cluster name</Label>
@@ -621,7 +643,7 @@ export function ClusterBuilder() {
                   <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/20 p-4">
                     <Button
                       onClick={() => initializeMutation.mutate()}
-                      disabled={!effectiveControlPlaneId || !effectiveClusterName || initializeMutation.isPending}
+                      disabled={!effectiveControlPlaneId || !effectiveClusterName || initializeMutation.isPending || activeMembership(effectiveControlPlaneId).some(({ cluster }) => cluster.control_plane_connection_id !== effectiveControlPlaneId)}
                     >
                       {initializeMutation.isPending ? (
                         <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin"  />
@@ -677,7 +699,8 @@ export function ClusterBuilder() {
                   ) : (
                     <div className="grid gap-2 md:grid-cols-2">
                       {workerOptions.map((connection) => {
-                        const isAlreadyMember = selectedCluster?.nodes.some((n) => n.connection_id === connection.id);
+                        const isAlreadyMember = selectedCluster?.nodes.some((n) => n.connection_id === connection.id && n.status !== "removed");
+                        const managedWorker = activeMembership(connection.id).some(({ node }) => node.role === "agent");
                         return (
                           <Label
                             key={connection.id}
@@ -686,7 +709,8 @@ export function ClusterBuilder() {
                           >
                             <Checkbox
                               id={`worker-${connection.id}`}
-                              checked={effectiveSelectedWorkerIds.includes(connection.id)}
+                              disabled={Boolean(isAlreadyMember || managedWorker)}
+                              checked={Boolean(isAlreadyMember) || effectiveSelectedWorkerIds.includes(connection.id)}
                               onCheckedChange={(checked) => toggleWorker(connection.id, checked === true)}
                             />
                             <span className="min-w-0 flex-1">
@@ -702,6 +726,8 @@ export function ClusterBuilder() {
                                   </Badge>
                                 ) : null}
                               </div>
+                              <span className="block text-xs text-muted-foreground">{readiness(connection)}</span>
+                              {managedWorker && !isAlreadyMember && <span className="block text-xs text-amber-600">Worker managed by another cluster</span>}
                               <span className="block truncate font-mono text-xs text-muted-foreground">
                                 {connection.username}@{connection.host}
                               </span>

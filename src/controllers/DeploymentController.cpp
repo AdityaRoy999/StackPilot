@@ -5,14 +5,17 @@
 #include "DeploymentController.h"
 #include "../utils/StringUtils.h"
 #include "../utils/RuntimeRateLimiter.h"
+#include "../utils/BlockingTaskRunner.h"
 #include "../services/DeploymentJournal.h"
 #include "../services/ClusterTargets.h"
 #include "../services/LocalDockerRuntime.h"
+#include "../services/ComponentRuntimeVerification.h"
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
 #include "../utils/AgentPolicy.h"
 #include "../services/ApplicationCatalog.h"
 #include "../services/BuildService.h"
+#include "../services/AiServiceClient.h"
 #include "../services/DeploymentCleanupService.h"
 #include "../services/JobQueueService.h"
 #include "../services/KubernetesService.h"
@@ -23,6 +26,7 @@
 #include <json/json.h>
 #include <spdlog/spdlog.h>
 #include <pqxx/pqxx>
+#include <regex>
 #include <thread>
 #include <mutex>
 #include <sstream>
@@ -43,6 +47,55 @@ namespace stackpilot {
 namespace {
 
 using strings::trim;
+
+Json::Value savedReleaseSnapshot(const std::string& id) {
+    auto connection=Database::getInstance().getConnection();pqxx::work txn(*connection);
+    auto rows=txn.exec_params("SELECT COALESCE(runtime_snapshot::text,'{}') AS snapshot FROM deployments WHERE id=$1",id);
+    txn.commit();Json::Value value;Json::CharReaderBuilder reader;std::string errors;
+    if(!rows.empty()){std::istringstream input(rows[0]["snapshot"].as<std::string>());Json::parseFromStream(reader,input,&value,&errors);}
+    return value.isObject()?value:Json::Value(Json::objectValue);
+}
+
+Json::Value retainReleaseEvidence(const std::string& id, Json::Value snapshot) {
+    const auto saved=savedReleaseSnapshot(id);
+    for(const auto& key:{"deployment_plan","artifact_digest","test_evidence","runtime_verification","job_id","attempt"})
+        if(saved.isMember(key))snapshot[key]=saved[key];
+    return snapshot;
+}
+
+Json::Value verifyWebRuntime(const std::string& url,const std::string& deploymentId) {
+    Json::Value evidence(Json::objectValue);
+    evidence["verified"] = false;
+    const auto saved=savedReleaseSnapshot(deploymentId);
+    const auto contract=saved["deployment_plan"];
+    if(contract["repository_plan"].isObject() && saved.isMember("compose_project"))
+        return verifySavedComponentRuntime(saved,url,deploymentId);
+    evidence["scope"] = contract.get("verification_scope","render_smoke");
+    if (url.empty()) {
+        evidence["reason"] = "Runtime URL unavailable; fresh workload observation is required";
+        return evidence;
+    }
+    Json::Value probe(Json::objectValue);
+    probe["url"] = url;
+    probe["contract"] = contract;
+    const auto result = AiServiceClient::instance().postWorkflow("/runtime/verify", probe);
+    if (result.ok && result.body.isObject()) return result.body;
+    evidence["reason"] = result.error.empty() ? "Browser verification unavailable" : result.error;
+    return evidence;
+}
+
+void rejectUnverifiedRuntime(const std::string& deploymentId, const Json::Value& evidence) {
+    auto conn = Database::getInstance().getConnection();
+    pqxx::work txn(*conn);
+    txn.exec_params("UPDATE deployments SET status = 'failed', logs = COALESCE(logs, '') || $2, "
+                    "runtime_snapshot = COALESCE(runtime_snapshot, '{}'::jsonb) || jsonb_build_object('runtime_verification', $3::jsonb), "
+                    "updated_at = NOW() WHERE id = $1", deploymentId,
+                    "\nRuntime browser verification failed: " + evidence.get("reason", "No evidence").asString(),
+                    evidence.toStyledString());
+    txn.commit();
+    LogWebSocketController::broadcastStatus(deploymentId, "failed");
+    DeploymentJournal::broadcastSummary(deploymentId);
+}
 
 
 
@@ -615,7 +668,7 @@ std::string makeDockerMetricsCommand(const std::string& containerName) {
     const std::string container = shellQuote(containerName);
     return
         "docker stats --no-stream --format 'stats={{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}' " + container + " 2>&1; "
-        "docker inspect --format 'inspect=status={{.State.Status}}|restart_count={{.RestartCount}}|image={{.Config.Image}}' " + container + " 2>&1; " +
+        "docker inspect --format 'inspect=name={{.Name}}|status={{.State.Status}}|health={{if .State.Health}}{{.State.Health.Status}}{{end}}|restart_count={{.RestartCount}}|image={{.Config.Image}}' " + container + " 2>&1; " +
         makeHostMetricsCommandSegment();
 }
 
@@ -629,8 +682,8 @@ std::string makeDockerComposeMetricsCommand(const std::string& composeProject) {
         "echo provider=compose; echo project=" + shellQuote(composeProject) + "; echo running=$running; echo total=$total; "
         "if [ -n \"$names\" ]; then "
         "docker stats --no-stream --format 'stats={{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}' $names 2>&1; "
-        "docker inspect --format 'inspect=status={{.State.Status}}|restart_count={{.RestartCount}}|image={{.Config.Image}}' $names 2>&1; "
-        "fi; " +
+        "fi; "
+        "if [ -n \"$all_names\" ]; then docker inspect --format 'inspect=name={{.Name}}|status={{.State.Status}}|health={{if .State.Health}}{{.State.Health.Status}}{{end}}|restart_count={{.RestartCount}}|image={{.Config.Image}}' $all_names 2>&1; fi; " +
         makeHostMetricsCommandSegment();
 }
 
@@ -659,6 +712,7 @@ Json::Value parseDockerMetrics(const std::string& output,
 
     int runningServices = -1;
     int totalServices = -1;
+    Json::Value inspections(Json::objectValue);
 
     std::istringstream stream(output);
     std::string line;
@@ -696,6 +750,8 @@ Json::Value parseDockerMetrics(const std::string& output,
             totalServices = static_cast<int>(parseMetricNumber(line.substr(6)));
         } else if (line.rfind("inspect=", 0) == 0) {
             const auto fields = splitString(line.substr(8), '|');
+            Json::Value inspection(Json::objectValue);
+            std::string name;
             for (const auto& field : fields) {
                 const auto pos = field.find('=');
                 if (pos == std::string::npos) {
@@ -703,10 +759,13 @@ Json::Value parseDockerMetrics(const std::string& output,
                 }
                 const std::string key = trim(field.substr(0, pos));
                 const std::string value = trim(field.substr(pos + 1));
-                if (key == "status") summary["container_status"] = value;
-                if (key == "restart_count") summary["restart_count"] = value;
-                if (key == "image") summary["image"] = value;
+                if (key == "name") name = value.empty() || value[0] != '/' ? value : value.substr(1);
+                if (key == "status") inspection["container_status"] = value;
+                if (key == "health") inspection["health_status"] = value;
+                if (key == "restart_count") inspection["restart_count"] = value;
+                if (key == "image") inspection["image"] = value;
             }
+            if (!name.empty()) inspections[name] = inspection;
         } else if (line.rfind("cpu_name=", 0) == 0) {
             host["cpu_name"] = trim(line.substr(9));
         } else if (line.rfind("host_memory_total=", 0) == 0) {
@@ -742,7 +801,35 @@ Json::Value parseDockerMetrics(const std::string& output,
         }
     }
 
-    if (series.size() > 1) {
+    // Stats for stopped containers are synthetic zeroes. Join each sample to
+    // its own inspect record before exposing availability or readiness.
+    int readyServices = 0;
+    bool inspectedAll = true;
+    Json::Value measured(Json::arrayValue);
+    for (const auto& name : inspections.getMemberNames()) {
+        bool found = false;
+        for (const auto& item : series) if (item["name"].asString() == name) found = true;
+        if (!found) { Json::Value item; item["name"] = name; series.append(item); }
+    }
+    for (auto& item : series) {
+        const auto name = item["name"].asString();
+        if (inspections.isMember(name)) {
+            for (const auto& key : inspections[name].getMemberNames()) item[key] = inspections[name][key];
+        } else inspectedAll = false;
+        const bool running = item.get("container_status", "").asString() == "running";
+        const auto health = item.get("health_status", "").asString();
+        if (running && (health.empty() || health == "healthy")) ++readyServices;
+        const bool available = running && item.isMember("memory_bytes");
+        item["available"] = available;
+        if (available) measured.append(item);
+        else for (const auto& key : {"cpu_percent", "memory_bytes", "memory_limit_bytes", "memory_percent", "network_rx_bytes", "network_tx_bytes", "block_read_bytes", "block_write_bytes", "pids"}) item[key] = Json::Value();
+    }
+    payload["available"] = !measured.empty();
+    payload["message"] = measured.empty() ? "No running container metrics are available." : "Live Docker metrics";
+    summary = series.size() == 1 ? series[0] : Json::Value(Json::objectValue);
+    summary["available"] = !measured.empty();
+
+    if (measured.size() > 1 || (series.size() > 1 && !measured.empty())) {
         double cpuPercent = 0.0;
         long long memoryBytes = 0;
         long long memoryLimitBytes = 0;
@@ -752,8 +839,8 @@ Json::Value parseDockerMetrics(const std::string& output,
         long long blockWriteBytes = 0;
         int pids = 0;
 
-        for (Json::ArrayIndex i = 0; i < series.size(); ++i) {
-            const auto& item = series[i];
+        for (Json::ArrayIndex i = 0; i < measured.size(); ++i) {
+            const auto& item = measured[i];
             cpuPercent += item.get("cpu_percent", 0.0).asDouble();
             memoryBytes += item.get("memory_bytes", Json::Int64(0)).asInt64();
             memoryLimitBytes += item.get("memory_limit_bytes", Json::Int64(0)).asInt64();
@@ -777,15 +864,12 @@ Json::Value parseDockerMetrics(const std::string& output,
         aggregate["block_read_bytes"] = Json::Int64(blockReadBytes);
         aggregate["block_write_bytes"] = Json::Int64(blockWriteBytes);
         aggregate["pids"] = pids;
+        aggregate["available"] = true;
         summary = aggregate;
     }
 
-    if (runningServices >= 0) {
-        summary["ready_pods"] = runningServices;
-        payload["running_services"] = runningServices;
-    } else if (series.size() > 0) {
-        summary["ready_pods"] = static_cast<int>(series.size());
-    }
+    summary["ready_pods"] = inspectedAll && !series.empty() ? Json::Value(readyServices) : Json::Value();
+    if (runningServices >= 0) payload["running_services"] = runningServices;
     if (totalServices >= 0) {
         summary["pod_count"] = totalServices;
         payload["total_services"] = totalServices;
@@ -1002,6 +1086,51 @@ Json::Value parseKubernetesMetrics(const std::string& output,
     payload["host"] = host;
     payload["series"] = series;
     return payload;
+}
+
+
+void queueRuntimeRelease(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                         const std::string& deploymentId, const std::string& userId,
+                         const std::string& target) {
+    try {
+        if (userId.empty()) throw std::invalid_argument("Unauthorized");
+        auto conn=Database::getInstance().getConnection();pqxx::work txn(*conn);
+        auto rows=txn.exec_params("SELECT d.id FROM deployments d WHERE d.id=$1 AND has_project_access(d.project_id,$2,'member')",deploymentId,userId);
+        if(rows.empty()){Json::Value error;error["error"]="Deployment not found";auto response=drogon::HttpResponse::newHttpJsonResponse(error);response->setStatusCode(drogon::k404NotFound);callback(response);return;}
+        txn.commit();
+        Json::Value metadata;metadata["runtime_target"]=target;
+        Json::Value options(Json::objectValue);
+        if(auto body=req->getJsonObject()) {
+            for(const auto& key : {"container_port","replicas"}) if(body->isMember(key)) {
+                if(!(*body)[key].isInt())throw std::invalid_argument("Runtime numeric options must be integers");
+                int value=(*body)[key].asInt();int maximum=std::string(key)=="replicas"?20:65535;
+                if(value<1||value>maximum)throw std::invalid_argument("Runtime option outside admitted limits");options[key]=value;
+            }
+            if(body->isMember("namespace")) {
+                auto value=(*body)["namespace"].asString();
+                if(!std::regex_match(value,std::regex("[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")))throw std::invalid_argument("Invalid namespace");options["namespace"]=value;
+            }
+            if(body->isMember("exposure_mode")) {
+                auto value=(*body)["exposure_mode"].asString();
+                if(value!="nodeport"&&value!="ingress"&&value!="clusterip")throw std::invalid_argument("Invalid exposure mode");options["exposure_mode"]=value;
+            }
+            if(body->isMember("resource_preset"))options["resource_preset"]=normalizeResourcePreset((*body)["resource_preset"].asString());
+            if(body->isMember("health_path")) {
+                const auto value=(*body)["health_path"].asString();
+                if(value.empty()||value[0]!='/'||value.rfind("//",0)==0||value.find_first_of("\\\r\n")!=std::string::npos)throw std::invalid_argument("Invalid health path");options["health_path"]=value;
+            }
+        }
+        metadata["runtime_options"]=options;
+        auto job=JobQueueService::getInstance().enqueueDeploymentBuild(deploymentId,userId,"Runtime release queued through the verified build pipeline.",compactJson(metadata));
+        Json::Value result;result["message"]="Verified release queued";result["deployment_id"]=deploymentId;result["status"]="queued";result["job"]=job;
+        auto response=drogon::HttpResponse::newHttpJsonResponse(result);response->setStatusCode(drogon::k202Accepted);callback(response);
+    } catch(const std::invalid_argument& exception) {
+        Json::Value error;error["error"]=exception.what();auto response=drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(userId.empty()?drogon::k401Unauthorized:drogon::k400BadRequest);callback(response);
+    } catch(const std::exception& exception) {
+        Json::Value error;error["error"]=exception.what();auto response=drogon::HttpResponse::newHttpJsonResponse(error);response->setStatusCode(drogon::k409Conflict);callback(response);
+    }
 }
 
 } // namespace
@@ -1612,6 +1741,11 @@ void DeploymentController::cancelDeployment(
             callback(resp); return;
         }
 
+        auto committed=txn.exec_params("SELECT id FROM deployment_jobs WHERE id=(SELECT job_id FROM deployments WHERE id=$1) AND metadata->>'release_committed'='true'",deploymentId);
+        if(!committed.empty()) {
+            Json::Value error;error["error"]="The release has already switched traffic. Use rollback or pause to change the serving release.";
+            auto response=drogon::HttpResponse::newHttpJsonResponse(error);response->setStatusCode(drogon::k409Conflict);callback(response);return;
+        }
         // Cancel any in-flight build child processes
         BuildService::getInstance().cancelBuild(deploymentId);
 
@@ -1734,6 +1868,7 @@ void DeploymentController::deleteDeployment(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -1823,6 +1958,7 @@ void DeploymentController::deleteDeployment(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::deployToLocalDocker(
@@ -1830,281 +1966,9 @@ void DeploymentController::deployToLocalDocker(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
-    const std::string userId = extractUserId(req);
-    if (userId.empty()) {
-        Json::Value err; err["error"] = "Unauthorized";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(drogon::k401Unauthorized);
-        callback(resp); return;
-    }
-
-    const std::string rateLimitKey = RuntimeRateLimiter::makeKey("local-docker-deploy", req, userId, deploymentId);
-    int retryAfterSeconds = 0;
-    if (RuntimeRateLimiter::isLimited(rateLimitKey, retryAfterSeconds)) {
-        callback(RuntimeRateLimiter::makeLimitedResponse(retryAfterSeconds));
-        return;
-    }
-
-    try {
-        auto body = req->getJsonObject();
-        const int requestedContainerPort =
-            (body && body->isMember("container_port")) ? std::clamp((*body)["container_port"].asInt(), 1, 65535) : 0;
-
-        auto& db = Database::getInstance();
-        auto conn = db.getConnection();
-        pqxx::work txn(*conn);
-        auto rows = txn.exec_params(
-            "SELECT d.id, d.project_id, d.image_name, d.status, d.remote_container_name, d.runtime_snapshot::text AS runtime_snapshot, "
-            "p.name AS project_name "
-            "FROM deployments d "
-            "JOIN projects p ON d.project_id = p.id "
-            "WHERE d.id = $1 AND has_project_access(p.id, $2, 'member')",
-            deploymentId,
-            userId
-        );
-
-        if (rows.empty()) {
-            RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-            Json::Value err; err["error"] = "Deployment not found";
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k404NotFound);
-            callback(resp); return;
-        }
-
-        const auto& row = rows[0];
-        const Json::Value existingRuntimeSnapshot = parseJsonObject(
-            row["runtime_snapshot"].is_null() ? "" : row["runtime_snapshot"].as<std::string>()
-        );
-        const std::string imageName = jsonString(
-            existingRuntimeSnapshot,
-            "image_name",
-            row["image_name"].is_null() ? "" : row["image_name"].as<std::string>()
-        );
-        if (imageName.empty()) {
-            RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-            Json::Value err; err["error"] = "Build the image before deploying to local Docker";
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp); return;
-        }
-
-        const std::string runtimeProvider = jsonString(existingRuntimeSnapshot, "provider");
-        if (runtimeProvider == "local_compose") {
-            const std::string composeProject = jsonString(existingRuntimeSnapshot, "compose_project", row["remote_container_name"].is_null() ? "" : row["remote_container_name"].as<std::string>());
-            const std::string composeFile = jsonString(existingRuntimeSnapshot, "compose_file");
-            const std::string composeWorkdir = jsonString(existingRuntimeSnapshot, "compose_workdir");
-            if (composeProject.empty() || composeFile.empty() || composeWorkdir.empty()) {
-                RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-                Json::Value err; err["error"] = "Compose runtime metadata is incomplete";
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k400BadRequest);
-                callback(resp); return;
-            }
-
-            txn.exec_params(
-                "UPDATE deployments SET status = 'deploying', updated_at = NOW() WHERE id = $1",
-                deploymentId
-            );
-            txn.commit();
-            LogWebSocketController::broadcastStatus(deploymentId, "deploying");
-            DeploymentJournal::broadcastSummary(deploymentId);
-
-            const std::string quotedComposeFile = shellQuote(composeFile);
-            const std::string quotedComposeProject = shellQuote(composeProject);
-            const std::string composeCommand =
-                "cd " + shellQuote(composeWorkdir) + " && "
-                "compose_cmd='docker compose'; "
-                "if ! docker compose version >/dev/null 2>&1; then compose_cmd='docker-compose'; fi; "
-                "$compose_cmd -f " + quotedComposeFile + " -p " + quotedComposeProject + " config --services > .stackpilot-compose-services; "
-                + composePortFallbackShell(quotedComposeFile, quotedComposeProject) +
-                "runtime=''; "
-                "preferred_public_port=$(sed -n 's/^APP_PUBLIC_UI_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-                "domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-                "require_https=$(sed -n 's/^STACKPILOT_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
-                "http_port=$(sed -n 's/^STACKPILOT_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-                "https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-                "if [ -n \"$domain\" ]; then "
-                "  if [ \"$require_https\" = 'true' ]; then "
-                "    if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; "
-                "  else "
-                "    if [ -n \"$http_port\" ] && [ \"$http_port\" != '80' ]; then runtime=\"http://$domain:$http_port\"; else runtime=\"http://$domain\"; fi; "
-                "  fi; "
-                "fi; "
-                "if [ -z \"$runtime\" ] && [ -n \"$preferred_public_port\" ]; then runtime=\"http://localhost:$preferred_public_port\"; fi; "
-                "if [ -z \"$runtime\" ]; then "
-                "  for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
-                "    for port in 9001 15672 8222 3000 8080 8000 5000 5173 9090 3100 80 443 5432 3306 6379 27017 5672 9000 4222; do "
-                "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedComposeProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
-                "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
-                "    done; "
-                "  done; "
-                "fi; "
-                "echo __STACKPILOT_COMPOSE_URL__=$runtime; "
-                "$compose_cmd -f " + quotedComposeFile + " -p " + quotedComposeProject + " ps";
-            std::string output;
-            const int exitCode = LocalDockerRuntime::run("timeout 180s sh -lc " + shellQuote(composeCommand), output);
-            DeploymentJournal::appendBlock(deploymentId, output);
-            if (exitCode != 0) {
-                RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-                auto updateConn = db.getConnection();
-                pqxx::work updateTxn(*updateConn);
-                updateTxn.exec_params(
-                    "UPDATE deployments SET status = 'failed', logs = COALESCE(logs, '') || $1, updated_at = NOW() WHERE id = $2",
-                    "\nCompose deploy failed:\n" + output,
-                    deploymentId
-                );
-                updateTxn.commit();
-                LogWebSocketController::broadcastStatus(deploymentId, "failed");
-                Json::Value err; err["error"] = "Compose deploy failed";
-                err["details"] = output;
-                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-                resp->setStatusCode(drogon::k500InternalServerError);
-                callback(resp); return;
-            }
-
-            const std::string updatedRuntimeUrl = LocalDockerRuntime::markerValue(output, "__STACKPILOT_COMPOSE_URL__");
-            const std::string runtimeUrl = updatedRuntimeUrl.empty()
-                ? jsonString(existingRuntimeSnapshot, "runtime_url")
-                : updatedRuntimeUrl;
-            Json::Value updatedRuntimeSnapshot = existingRuntimeSnapshot.isObject()
-                ? existingRuntimeSnapshot
-                : Json::Value(Json::objectValue);
-            updatedRuntimeSnapshot["runtime_url"] = runtimeUrl;
-            updatedRuntimeSnapshot["runtime_scheme"] =
-                runtimeUrl.rfind("https://", 0) == 0 ? "https" : "http";
-            updatedRuntimeSnapshot["tls_enabled"] = updatedRuntimeSnapshot["runtime_scheme"].asString() == "https";
-            auto updateConn = db.getConnection();
-            pqxx::work updateTxn(*updateConn);
-            updateTxn.exec_params(
-                "UPDATE deployments SET status = 'running', runtime_url = $1, runtime_exposure = 'local_compose', "
-                "runtime_provider = 'local_compose', runtime_snapshot = $2::jsonb, runtime_paused = FALSE, updated_at = NOW() WHERE id = $3",
-                runtimeUrl,
-                compactJson(updatedRuntimeSnapshot),
-                deploymentId
-            );
-            updateTxn.commit();
-            LogWebSocketController::broadcastStatus(deploymentId, "running");
-            DeploymentJournal::broadcastSummary(deploymentId);
-            RuntimeRateLimiter::clear(rateLimitKey);
-
-            Json::Value payload;
-            payload["message"] = "Compose stack deployed";
-            payload["runtime"]["provider"] = "local_compose";
-            payload["runtime"]["url"] = runtimeUrl;
-            payload["runtime"]["compose_project"] = composeProject;
-            callback(drogon::HttpResponse::newHttpJsonResponse(payload));
-            return;
-        }
-
-        const auto deploymentEnvVars = loadDeploymentEnvVarPairs(txn, deploymentId);
-        const std::string projectName = row["project_name"].is_null() ? "deployment" : row["project_name"].as<std::string>();
-        const std::string containerName = "stackpilot-local-" + LocalDockerRuntime::sanitizeContainerName(projectName) + "-" + LocalDockerRuntime::sanitizeContainerName(deploymentId).substr(0, 12);
-        txn.exec_params(
-            "UPDATE deployments SET status = 'deploying', updated_at = NOW() WHERE id = $1",
-            deploymentId
-        );
-        txn.commit();
-
-        LogWebSocketController::broadcastStatus(deploymentId, "deploying");
-        DeploymentJournal::broadcastSummary(deploymentId);
-
-        std::string output;
-        const int exitCode = LocalDockerRuntime::run(
-            "timeout 120s sh -lc " + shellQuote(LocalDockerRuntime::makeRunCommand(containerName, imageName, requestedContainerPort, deploymentEnvVars)),
-            output
-        );
-        DeploymentJournal::appendBlock(deploymentId, output);
-
-        const std::string runtimeUrl = valueFromKeyValueOutput(output, "runtime_url");
-        int containerPort = requestedContainerPort > 0 ? requestedContainerPort : 3000;
-        const std::string actualContainerPort = valueFromKeyValueOutput(output, "container_port");
-        if (!actualContainerPort.empty()) {
-            try {
-                containerPort = std::clamp(std::stoi(actualContainerPort), 1, 65535);
-            } catch (...) {
-                containerPort = requestedContainerPort > 0 ? requestedContainerPort : 3000;
-            }
-        }
-        const std::string status = valueFromKeyValueOutput(output, "status");
-        const bool running = valueFromKeyValueOutput(output, "running") == "true";
-        if (exitCode != 0 || output.find("__STACKPILOT_LOCAL_DOCKER_RUNNING__") == std::string::npos || runtimeUrl.empty()) {
-            RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-            auto connUpdate = db.getConnection();
-            pqxx::work updateTxn(*connUpdate);
-            updateTxn.exec_params(
-                "UPDATE deployments SET status = 'failed', updated_at = NOW() WHERE id = $1",
-                deploymentId
-            );
-            updateTxn.commit();
-            LogWebSocketController::broadcastStatus(deploymentId, "failed");
-            DeploymentJournal::broadcastSummary(deploymentId);
-
-            Json::Value err;
-            if (output.find("__STACKPILOT_DOCKER_MISSING__") != std::string::npos) {
-                err["error"] = "Docker CLI is not available to the StackPilot backend";
-            } else if (output.find("__STACKPILOT_DOCKER_DAEMON_DOWN__") != std::string::npos) {
-                err["error"] = "Docker daemon is not reachable from the StackPilot backend";
-            } else if (output.find("__STACKPILOT_IMAGE_MISSING__") != std::string::npos) {
-                err["error"] = "Built image is missing from local Docker";
-            } else {
-                err["error"] = exitCode == 124 ? "Local Docker deploy timed out" : "Failed to start local Docker runtime";
-            }
-            err["runtime"]["logs"] = output;
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k500InternalServerError);
-            callback(resp);
-            return;
-        }
-
-        const std::string persistedStatus = running ? "running" : (status.empty() ? "built" : status);
-        auto connUpdate = db.getConnection();
-        pqxx::work updateTxn(*connUpdate);
-        updateTxn.exec_params(
-            "UPDATE deployments "
-            "SET status = $1, runtime_url = $2, runtime_exposure = 'local_docker', runtime_provider = 'local_docker', "
-            // Switching provider must clear the other provider's identity, or the
-            // old Kubernetes Deployment/Service keeps running, referenced by nothing,
-            // and pause/cleanup later route to a runtime that isn't there.
-            "k8s_namespace = '', k8s_deployment_name = '', k8s_service_name = '', k8s_ingress_name = '', "
-            "remote_container_name = $3, desired_replicas = 1, runtime_snapshot = $4::jsonb, runtime_paused = FALSE, updated_at = NOW() "
-            "WHERE id = $5",
-            persistedStatus,
-            runtimeUrl,
-            containerName,
-            compactJson(runtimeSnapshot("local_docker", imageName, runtimeUrl, "local_docker", 1, containerPort, "small", "/", "http")),
-            deploymentId
-        );
-        updateTxn.commit();
-
-        RuntimeRateLimiter::clear(rateLimitKey);
-        LogWebSocketController::broadcastStatus(deploymentId, persistedStatus);
-        DeploymentJournal::broadcastSummary(deploymentId);
-
-        Json::Value payload;
-        payload["message"] = "Deployment is running in local Docker";
-        payload["runtime"]["provider"] = "local_docker";
-        payload["runtime"]["status"] = persistedStatus;
-        payload["runtime"]["runtime_url"] = runtimeUrl;
-        payload["runtime"]["container_name"] = containerName;
-        payload["runtime"]["image"] = imageName;
-        payload["runtime"]["container_port"] = containerPort;
-        payload["runtime"]["published_ports"] = valueFromKeyValueOutput(output, "host_port");
-        payload["runtime"]["logs"] = remoteLogTailFromInspectOutput(output);
-        Json::Value auditMeta;
-        auditMeta["provider"] = "local_docker";
-        auditMeta["container_name"] = containerName;
-        auditMeta["image_name"] = imageName;
-        auditMeta["runtime_url"] = runtimeUrl;
-        AuditLogger::recordFromRequest(req, userId, "runtime.local_docker.deployed", "deployment", deploymentId, auditMeta);
-        callback(drogon::HttpResponse::newHttpJsonResponse(payload));
-    } catch (const std::exception& e) {
-        RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-        spdlog::error("Deploy to local Docker error: {}", e.what());
-        Json::Value err; err["error"] = "Internal server error";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(drogon::k500InternalServerError);
-        callback(resp);
-    }
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
+        queueRuntimeRelease(req,std::move(callback),deploymentId,extractUserId(req),"local_docker");
+    });
 }
 
 void DeploymentController::deployToKubernetes(
@@ -2112,235 +1976,9 @@ void DeploymentController::deployToKubernetes(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
-    const std::string userId = extractUserId(req);
-    if (userId.empty()) {
-        Json::Value err; err["error"] = "Unauthorized";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(drogon::k401Unauthorized);
-        callback(resp); return;
-    }
-
-    const std::string rateLimitKey = RuntimeRateLimiter::makeKey("deploy", req, userId, deploymentId);
-    int retryAfterSeconds = 0;
-    if (RuntimeRateLimiter::isLimited(rateLimitKey, retryAfterSeconds)) {
-        callback(RuntimeRateLimiter::makeLimitedResponse(retryAfterSeconds));
-        return;
-    }
-
-    try {
-        auto body = req->getJsonObject();
-        const std::string requestedNamespace =
-            (body && body->isMember("namespace")) ? (*body)["namespace"].asString() : "";
-        const std::string requestedExposureMode =
-            (body && body->isMember("exposure_mode")) ? (*body)["exposure_mode"].asString() : "";
-        const std::string requestedRuntimeScheme =
-            (body && body->isMember("runtime_scheme")) ? normalizeRuntimeScheme((*body)["runtime_scheme"].asString()) : "";
-        const int replicas =
-            (body && body->isMember("replicas")) ? std::max(1, (*body)["replicas"].asInt()) : 1;
-        const int containerPort =
-            (body && body->isMember("container_port")) ? std::max(1, (*body)["container_port"].asInt()) : 3000;
-        const std::string resourcePreset = normalizeResourcePreset(
-            (body && body->isMember("resource_preset")) ? (*body)["resource_preset"].asString() : "small"
-        );
-        const std::string healthPath = sanitizeHealthPath(
-            (body && body->isMember("health_path")) ? (*body)["health_path"].asString() : "/"
-        );
-
-        auto& db = Database::getInstance();
-        auto conn = db.getConnection();
-        pqxx::work txn(*conn);
-        auto rows = txn.exec_params(
-            "SELECT d.id, d.project_id, d.image_name, d.status, d.runtime_exposure, d.runtime_snapshot::text AS runtime_snapshot, "
-            "p.name AS project_name, p.runtime_scheme, p.local_https_enabled "
-            "FROM deployments d "
-            "JOIN projects p ON d.project_id = p.id "
-            "WHERE d.id = $1 AND has_project_access(p.id, $2, 'member')",
-            deploymentId, userId
-        );
-
-        if (rows.empty()) {
-            RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-            Json::Value err; err["error"] = "Deployment not found";
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k404NotFound);
-            callback(resp); return;
-        }
-
-        const auto& row = rows[0];
-        const Json::Value existingRuntimeSnapshot = parseJsonObject(
-            row["runtime_snapshot"].is_null() ? "" : row["runtime_snapshot"].as<std::string>()
-        );
-        const std::string savedScheme = normalizeRuntimeScheme(jsonString(
-            existingRuntimeSnapshot,
-            "runtime_scheme",
-            row["runtime_scheme"].is_null() ? "http" : row["runtime_scheme"].as<std::string>()
-        ));
-        const auto deploymentEnvVars = loadDeploymentEnvVarPairs(txn, deploymentId);
-        const std::string imageName = row["image_name"].is_null() ? "" : row["image_name"].as<std::string>();
-        if (imageName.empty()) {
-            RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-            Json::Value err; err["error"] = "Build the image before deploying to Kubernetes";
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp); return;
-        }
-
-        txn.exec_params(
-            "UPDATE deployments SET status = 'deploying', updated_at = NOW() WHERE id = $1",
-            deploymentId
-        );
-        txn.commit();
-        LogWebSocketController::broadcastStatus(deploymentId, "deploying");
-        DeploymentJournal::broadcastSummary(deploymentId);
-
-        KubernetesService service(ClusterTargets::forDeployment(deploymentId).kubeconfig);
-        KubernetesDeployOptions options;
-        options.deploymentId = deploymentId;
-        options.projectName = row["project_name"].as<std::string>();
-        options.imageName = imageName;
-        options.nameSpace = requestedNamespace;
-        options.exposureMode = toLower(trim(!requestedExposureMode.empty()
-            ? requestedExposureMode
-            : (row["runtime_exposure"].is_null() ? "" : row["runtime_exposure"].as<std::string>())));
-        options.runtimeScheme = requestedRuntimeScheme.empty() ? savedScheme : requestedRuntimeScheme;
-        options.replicas = replicas;
-        options.containerPort = containerPort;
-        options.resourcePreset = resourcePreset;
-        options.healthPath = healthPath;
-        options.envVars = deploymentEnvVars;
-
-        // Autoscaling, read from the deployment row and overridable per
-        // request. Until now the HPA manifest existed but nothing could switch
-        // it on, so every deployment ran at a fixed replica count.
-        {
-            auto autoConn = Database::getInstance().getConnection();
-            pqxx::work autoTxn(*autoConn);
-            const auto autoRows = autoTxn.exec_params(
-                "SELECT autoscaling_enabled, autoscaling_min_replicas, autoscaling_max_replicas, "
-                "autoscaling_cpu_target FROM deployments WHERE id = $1",
-                deploymentId);
-            autoTxn.commit();
-            if (!autoRows.empty()) {
-                options.autoscalingEnabled = autoRows[0]["autoscaling_enabled"].as<bool>();
-                options.autoscalingMinReplicas = autoRows[0]["autoscaling_min_replicas"].as<int>();
-                options.autoscalingMaxReplicas = autoRows[0]["autoscaling_max_replicas"].as<int>();
-                options.autoscalingCpuTarget = autoRows[0]["autoscaling_cpu_target"].as<int>();
-            }
-        }
-        if (body && body->isMember("autoscaling")) {
-            const Json::Value& autoscaling = (*body)["autoscaling"];
-            if (autoscaling.isObject()) {
-                options.autoscalingEnabled = autoscaling.get("enabled", options.autoscalingEnabled).asBool();
-                options.autoscalingMinReplicas =
-                    std::max(1, autoscaling.get("min_replicas", options.autoscalingMinReplicas).asInt());
-                options.autoscalingMaxReplicas =
-                    std::max(options.autoscalingMinReplicas,
-                             autoscaling.get("max_replicas", options.autoscalingMaxReplicas).asInt());
-                options.autoscalingCpuTarget =
-                    std::clamp(autoscaling.get("cpu_target", options.autoscalingCpuTarget).asInt(), 1, 100);
-
-                // Persist so a redeploy keeps autoscaling on without the
-                // caller having to send it again.
-                auto saveConn = Database::getInstance().getConnection();
-                pqxx::work saveTxn(*saveConn);
-                saveTxn.exec_params(
-                    "UPDATE deployments SET autoscaling_enabled = $2, autoscaling_min_replicas = $3, "
-                    "autoscaling_max_replicas = $4, autoscaling_cpu_target = $5, updated_at = NOW() "
-                    "WHERE id = $1",
-                    deploymentId, options.autoscalingEnabled, options.autoscalingMinReplicas,
-                    options.autoscalingMaxReplicas, options.autoscalingCpuTarget);
-                saveTxn.commit();
-            }
-        }
-
-        KubernetesRuntimeInfo runtime = service.deploy(options);
-        DeploymentJournal::appendBlock(deploymentId, runtime.logs);
-
-        auto connUpdate = db.getConnection();
-        pqxx::work updateTxn(*connUpdate);
-        if (runtime.success) {
-            updateTxn.exec_params(
-                "UPDATE deployments "
-                "SET status = $1, k8s_namespace = $2, k8s_deployment_name = $3, "
-                "k8s_service_name = $4, k8s_ingress_name = $5, desired_replicas = $6, runtime_url = $7, "
-                // Clear the Docker identity for the same reason as above.
-                "remote_container_name = '', "
-                "runtime_exposure = $8, runtime_provider = 'kubernetes', runtime_snapshot = $9::jsonb, runtime_paused = FALSE, updated_at = NOW() "
-                "WHERE id = $10",
-                runtime.status.empty() ? "running" : runtime.status,
-                runtime.nameSpace,
-                runtime.deploymentName,
-                runtime.serviceName,
-                runtime.ingressName,
-                runtime.desiredReplicas,
-                runtime.runtimeUrl,
-                runtime.exposureMode,
-                compactJson(runtimeSnapshot(
-                    "kubernetes",
-                    imageName,
-                    runtime.runtimeUrl,
-                    runtime.exposureMode,
-                    runtime.desiredReplicas,
-                    containerPort,
-                    resourcePreset,
-                    healthPath,
-                    runtime.runtimeScheme.empty() ? options.runtimeScheme : runtime.runtimeScheme
-                )),
-                deploymentId
-            );
-            updateTxn.commit();
-            RuntimeRateLimiter::clear(rateLimitKey);
-            LogWebSocketController::broadcastStatus(deploymentId, runtime.status.empty() ? "running" : runtime.status);
-            DeploymentJournal::broadcastSummary(deploymentId);
-        } else {
-            RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-            updateTxn.exec_params(
-                "UPDATE deployments SET status = 'failed', updated_at = NOW() WHERE id = $1",
-                deploymentId
-            );
-            updateTxn.commit();
-            LogWebSocketController::broadcastStatus(deploymentId, "failed");
-            DeploymentJournal::broadcastSummary(deploymentId);
-        }
-
-        Json::Value payload;
-        if (!runtime.success) {
-            payload["error"] = runtime.error.empty() ? "Failed to deploy to Kubernetes" : runtime.error;
-            payload["runtime"]["logs"] = runtime.logs;
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(payload);
-            resp->setStatusCode(drogon::k500InternalServerError);
-            callback(resp);
-            return;
-        }
-
-        payload["message"] = "Deployment pushed to Kubernetes";
-        payload["runtime"]["status"] = runtime.status;
-        payload["runtime"]["namespace"] = runtime.nameSpace;
-        payload["runtime"]["deployment_name"] = runtime.deploymentName;
-        payload["runtime"]["service_name"] = runtime.serviceName;
-        payload["runtime"]["ingress_name"] = runtime.ingressName;
-        payload["runtime"]["ingress_host"] = runtime.ingressHost;
-        payload["runtime"]["exposure_mode"] = runtime.exposureMode;
-        payload["runtime"]["runtime_url"] = runtime.runtimeUrl;
-        payload["runtime"]["runtime_scheme"] = runtime.runtimeScheme.empty() ? options.runtimeScheme : runtime.runtimeScheme;
-        payload["runtime"]["desired_replicas"] = runtime.desiredReplicas;
-        payload["runtime"]["ready_replicas"] = runtime.readyReplicas;
-        Json::Value auditMeta;
-        auditMeta["namespace"] = runtime.nameSpace;
-        auditMeta["exposure_mode"] = runtime.exposureMode;
-        auditMeta["desired_replicas"] = runtime.desiredReplicas;
-        auditMeta["resource_preset"] = resourcePreset;
-        auditMeta["runtime_scheme"] = payload["runtime"]["runtime_scheme"].asString();
-        AuditLogger::recordFromRequest(req, userId, "runtime.kubernetes.deployed", "deployment", deploymentId, auditMeta);
-        callback(drogon::HttpResponse::newHttpJsonResponse(payload));
-    } catch (const std::exception& e) {
-        RuntimeRateLimiter::recordFailure(rateLimitKey, kRuntimeMutationRateLimit);
-        spdlog::error("Deploy to Kubernetes error: {}", e.what());
-        Json::Value err; err["error"] = "Internal server error";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(drogon::k500InternalServerError);
-        callback(resp);
-    }
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
+        queueRuntimeRelease(req,std::move(callback),deploymentId,extractUserId(req),"kubernetes");
+    });
 }
 
 void DeploymentController::scaleKubernetesDeployment(
@@ -2348,6 +1986,7 @@ void DeploymentController::scaleKubernetesDeployment(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -2499,6 +2138,7 @@ void DeploymentController::scaleKubernetesDeployment(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::pauseRuntime(
@@ -2506,7 +2146,9 @@ void DeploymentController::pauseRuntime(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     setRuntimePausedState(req, std::move(callback), deploymentId, true);
+    });
 }
 
 void DeploymentController::resumeRuntime(
@@ -2514,7 +2156,9 @@ void DeploymentController::resumeRuntime(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     setRuntimePausedState(req, std::move(callback), deploymentId, false);
+    });
 }
 
 void DeploymentController::setRuntimePausedState(
@@ -2899,6 +2543,7 @@ void DeploymentController::updateDeploymentExposure(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err;
@@ -3095,6 +2740,7 @@ void DeploymentController::updateDeploymentExposure(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::getDeploymentMetrics(
@@ -3110,6 +2756,9 @@ void DeploymentController::getDeploymentMetrics(
         callback(resp); return;
     }
 
+    // Docker stats and SSH/kubectl can block for seconds. Keep polling traffic
+    // off Drogon's event loops so it cannot freeze unrelated API/stream work.
+    BlockingTaskRunner::run([deploymentId,userId,callback=std::move(callback)]() mutable {
     try {
         auto& db = Database::getInstance();
         auto conn = db.getConnection();
@@ -3306,6 +2955,7 @@ void DeploymentController::getDeploymentMetrics(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::getRuntimeHealth(
@@ -3313,6 +2963,7 @@ void DeploymentController::getRuntimeHealth(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -3327,7 +2978,7 @@ void DeploymentController::getRuntimeHealth(
         pqxx::work txn(*conn);
         auto rows = txn.exec_params(
             "SELECT d.runtime_url, d.runtime_provider, d.runtime_exposure, d.status, d.runtime_paused, "
-            "d.remote_container_name, "
+            "d.remote_container_name, d.runtime_snapshot, "
             "COALESCE(rs.connection_type, 'ssh') AS remote_connection_type, rs.host AS remote_host, rs.port AS remote_port, "
             "rs.username AS remote_username, rs.auth_type AS remote_auth_type, rs.password_encrypted AS remote_password_encrypted, "
             "rs.private_key_encrypted AS remote_private_key_encrypted, rs.known_hosts_entry AS remote_known_hosts_entry "
@@ -3366,6 +3017,29 @@ void DeploymentController::getRuntimeHealth(
             callback(drogon::HttpResponse::newHttpJsonResponse(payload));
             return;
         }
+        if(provider=="local_compose") {
+            Json::Value snapshot;Json::CharReaderBuilder reader;std::string parseError;
+            std::istringstream input(row["runtime_snapshot"].is_null()?"{}":row["runtime_snapshot"].as<std::string>());
+            Json::parseFromStream(reader,input,&snapshot,&parseError);
+            if(snapshot["deployment_plan"]["repository_plan"].isObject()) {
+                txn.commit();
+                auto& plan=snapshot["deployment_plan"];
+                plan["scenarios"]=plan.get("monitor_scenarios",Json::Value(Json::arrayValue));
+                for(const auto& name:plan["component_contracts"].getMemberNames()) {
+                    auto& component=plan["component_contracts"][name];
+                    component["scenarios"]=component.get("monitor_scenarios",Json::Value(Json::arrayValue));
+                }
+                const auto verification=verifySavedComponentRuntime(snapshot,runtimeUrl,deploymentId);
+                Json::Value payload;payload["deployment_id"]=deploymentId;payload["runtime_url"]=runtimeUrl;
+                payload["provider"]=provider;payload["verification"]=verification;
+                payload["verification_scope"]="component_contracts";
+                payload["healthy"]=verification.get("verified",false);
+                payload["available"]=verification.get("status","unverified").asString()!="unverified";
+                payload["message"]=verification.get("reason","Fresh component verification unavailable");
+                payload["checked_at"]=trantor::Date::now().toFormattedString(false);
+                callback(drogon::HttpResponse::newHttpJsonResponse(payload));return;
+            }
+        }
         if ((provider == "local_docker" || exposure == "local_docker") && !containerName.empty()) {
             txn.commit();
             std::string output;
@@ -3380,12 +3054,28 @@ void DeploymentController::getRuntimeHealth(
             payload["runtime_url"] = runtimeUrl;
             payload["provider"] = "local_docker";
             payload["available"] = exitCode == 0;
-            payload["healthy"] = exitCode == 0 && running && !paused;
+            payload["process_running"] = exitCode == 0 && running && !paused;
+            payload["healthy"] = false;
+            if(payload["process_running"].asBool()) {
+                Json::Value snapshot;Json::CharReaderBuilder reader;std::string parseError;
+                std::istringstream input(row["runtime_snapshot"].is_null()?"{}":row["runtime_snapshot"].as<std::string>());
+                Json::parseFromStream(reader,input,&snapshot,&parseError);
+                Json::Value plan=snapshot["deployment_plan"];
+                plan["scenarios"]=plan.get("monitor_scenarios",Json::Value(Json::arrayValue));
+                if(plan.get("protocol","http").asString()=="process") {
+                    payload["healthy"]=true;payload["verification_scope"]="process";
+                } else if(!runtimeUrl.empty()) {
+                    Json::Value probe;probe["url"]=runtimeUrl;probe["contract"]=plan;
+                    const auto verification=AiServiceClient::instance().postWorkflow("/runtime/verify",probe);
+                    payload["verification"]=verification.body;
+                    payload["healthy"]=verification.ok && verification.body.get("verified",false).asBool();
+                }
+            }
             payload["paused"] = paused;
             payload["status"] = valueFromKeyValueOutput(output, "status");
             payload["message"] = payload["healthy"].asBool()
-                ? "Local Docker container is running."
-                : "Local Docker container is not running.";
+                ? "Runtime passed its workload health contract."
+                : "Runtime health is failed or unverified; a running process alone is insufficient.";
             payload["checked_at"] = trantor::Date::now().toFormattedString(false);
             callback(drogon::HttpResponse::newHttpJsonResponse(payload));
             return;
@@ -3463,6 +3153,7 @@ void DeploymentController::getRuntimeHealth(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::getKubernetesStatus(
@@ -3470,6 +3161,7 @@ void DeploymentController::getKubernetesStatus(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -3793,6 +3485,7 @@ void DeploymentController::getKubernetesStatus(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::getKubernetesEvents(
@@ -3800,6 +3493,7 @@ void DeploymentController::getKubernetesEvents(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -3893,6 +3587,7 @@ void DeploymentController::getKubernetesEvents(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::rollbackKubernetesDeployment(
@@ -3900,6 +3595,7 @@ void DeploymentController::rollbackKubernetesDeployment(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -4041,6 +3737,10 @@ void DeploymentController::rollbackKubernetesDeployment(
         }
         DeploymentJournal::appendBlock(deploymentId, runtime.logs);
 
+        if(runtime.success) {
+            const auto proof=verifyWebRuntime(runtime.runtimeUrl,deploymentId);
+            if(!proof.get("verified",false).asBool()){runtime.success=false;runtime.error="Rollback application verification failed: "+proof.get("reason","No evidence").asString();}
+        }
         auto connUpdate = db.getConnection();
         pqxx::work updateTxn(*connUpdate);
         if (runtime.success) {
@@ -4057,7 +3757,7 @@ void DeploymentController::rollbackKubernetesDeployment(
                 runtime.serviceName,
                 runtime.ingressName,
                 runtime.exposureMode,
-                compactJson(runtimeSnapshot(
+                compactJson(retainReleaseEvidence(deploymentId,runtimeSnapshot(
                     runtimeProvider.empty() ? "kubernetes" : runtimeProvider,
                     imageName,
                     runtime.runtimeUrl,
@@ -4067,7 +3767,7 @@ void DeploymentController::rollbackKubernetesDeployment(
                     options.resourcePreset,
                     options.healthPath,
                     runtime.runtimeScheme.empty() ? options.runtimeScheme : runtime.runtimeScheme
-                )),
+                ))),
                 deploymentId
             );
             updateTxn.commit();
@@ -4116,6 +3816,7 @@ void DeploymentController::rollbackKubernetesDeployment(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 void DeploymentController::removeKubernetesDeployment(
@@ -4123,6 +3824,7 @@ void DeploymentController::removeKubernetesDeployment(
     std::function<void(const drogon::HttpResponsePtr&)>&& callback,
     const std::string& deploymentId
 ) {
+    BlockingTaskRunner::run([this, req, deploymentId, callback=std::move(callback)]() mutable {
     const std::string userId = extractUserId(req);
     if (userId.empty()) {
         Json::Value err; err["error"] = "Unauthorized";
@@ -4438,6 +4140,7 @@ void DeploymentController::removeKubernetesDeployment(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+    });
 }
 
 } // namespace stackpilot

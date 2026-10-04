@@ -1,0 +1,65 @@
+{
+    auto_https off
+    admin off
+}
+:8094 {
+    header {
+        Cache-Control "no-store"
+        Referrer-Policy "no-referrer"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+    # Pairing is public; all platform pages and APIs require an approved device.
+    @phoneApi path /api/v1/remote/connect /api/v1/remote/device /api/v1/remote/session
+    handle @phoneApi {
+        request_body {
+            max_size 256KB
+        }
+        reverse_proxy backend:8090 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+    handle /ws/browser/* {
+        reverse_proxy ai-service:8010
+    }
+    @phoneUi path /remote /_next/static/* /remote-manifest.webmanifest /remote-icon* /remote-sw.js /favicon.ico
+    handle @phoneUi {
+        reverse_proxy frontend:3000
+    }
+    handle / {
+        redir /remote 302
+    }
+    # The exchange and raw CDP are private. Dashboard tools use account auth;
+    # internal tool names still require backend service authentication.
+    @internal path /api/v1/remote/authorize /json/*
+    handle @internal {
+        respond "Not found" 404
+    }
+    @platformApi path /api/v1/* /ws/logs /ws/ssh-terminal
+    handle @platformApi {
+        forward_auth backend:8090 {
+            uri /api/v1/remote/authorize
+            header_up X-Forwarded-Proto https
+            header_up -Upgrade
+            header_up -Connection
+            copy_headers X-StackPilot-Device-Authorization>Authorization
+        }
+        reverse_proxy backend:8090 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+    @platformUi path /dashboard /dashboard/* /change-icon /theme-builder /preview/* /invite/* /api/* /provider-logos/* /_next/image
+    handle @platformUi {
+        forward_auth backend:8090 {
+            uri /api/v1/remote/authorize
+            header_up X-Forwarded-Proto https
+            header_up -Upgrade
+            header_up -Connection
+            copy_headers X-StackPilot-Device-Authorization>Authorization
+        }
+        reverse_proxy frontend:3000
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

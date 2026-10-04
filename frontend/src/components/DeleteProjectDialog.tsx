@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Trash2, Loader2, AlertTriangle, Copy } from "lucide-react";
+import { Trash2, Loader2, AlertTriangle, Copy } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";

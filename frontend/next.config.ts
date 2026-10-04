@@ -5,12 +5,21 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.resolve(__dirname),
   turbopack: {},
+  // Avoid recompiling recently visited dashboard pages during development.
+  onDemandEntries: {
+    maxInactiveAge: 10 * 60 * 1000,
+    pagesBufferLength: 16,
+  },
   allowedDevOrigins: [
     "localhost:3000",
     "127.0.0.1:3000",
     "localhost",
     "127.0.0.1",
   ],
+  async rewrites() {
+    const backend = process.env.STACKPILOT_BACKEND_INTERNAL_URL || "http://127.0.0.1:8090";
+    return [{ source: "/api/v1/remote/:path*", destination: `${backend}/api/v1/remote/:path*` }];
+  },
   async redirects() {
     return [
       {

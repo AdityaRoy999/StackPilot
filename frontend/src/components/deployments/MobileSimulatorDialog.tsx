@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import api from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -20,9 +21,12 @@ import {
   QrCode,
   RefreshCw,
   Globe,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
+import { HostRuntimeView } from "@/components/HostRuntimeView";
+import { useRemotePlatform } from "@/lib/use-remote-platform";
+import { remoteRuntimeHref } from "@/lib/remote-platform";
 
 interface MobileSimulatorDialogProps {
   open: boolean;
@@ -43,12 +47,33 @@ export function MobileSimulatorDialog({
   archetype,
   deploymentId,
 }: MobileSimulatorDialogProps) {
+  const remote = useRemotePlatform();
+  const runtimeHref = remoteRuntimeHref(runtimeUrl, deploymentId, remote);
+  const shareUrl = remote && runtimeUrl && typeof window !== "undefined"
+    ? new URL(runtimeHref, window.location.origin).href : runtimeUrl;
   const [device, setDevice] = useState<DeviceModel>("iphone16");
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [showQr, setShowQr] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [iframeKey, setIframeKey] = useState<number>(0);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [nativePreview, setNativePreview] = useState<string>("");
+  const [nativeReason, setNativeReason] = useState<string>("");
+  useEffect(() => {
+    if (!open || !deploymentId || !["native_android", "android_gradle"].includes(archetype || "")) return;
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        const { data } = await api.get(`/deployments/${deploymentId}/native-preview-ticket`);
+        if (!disposed) { setNativePreview(data.preview_url || ""); setNativeReason(""); }
+      } catch {
+        if (!disposed) { setNativePreview(""); setNativeReason("An installed and verified Android release is required for live preview."); }
+      }
+    };
+    setNativePreview(""); void refresh();
+    const timer = setInterval(() => void refresh(), 240_000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [open, deploymentId, archetype]);
 
   const reloadIframe = () => {
     setIsLoading(true);
@@ -58,7 +83,7 @@ export function MobileSimulatorDialog({
   const handleCopyUrl = async () => {
     if (!runtimeUrl) return;
     try {
-      await navigator.clipboard.writeText(runtimeUrl);
+      await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
       toast.success("Preview URL copied to clipboard");
       setTimeout(() => setCopied(false), 2000);
@@ -86,6 +111,28 @@ export function MobileSimulatorDialog({
 
   const dim = getDimensions();
 
+  if (["native_android", "android_gradle", "native_ios", "ios_xcode"].includes(archetype || "")) {
+    return (
+      <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
+        <DialogContent className="!flex !w-[min(94vw,64rem)] !max-w-[64rem] !max-h-[90dvh] !flex-col overflow-hidden p-0">
+          <DialogHeader className="border-b border-border px-6 py-5">
+            <DialogTitle>{deploymentTitle} — Native build</DialogTitle>
+            <DialogDescription>
+              {nativePreview ? "Live screen from the Android emulator. Click the screen to interact with the installed app." : "Build artifacts are available below. A verified emulator session enables live interaction."}
+            </DialogDescription>
+          </DialogHeader>
+          {nativeReason && <p className="px-6 text-sm text-muted-foreground">{nativeReason}</p>}
+          {remote && (nativePreview || runtimeUrl) ? <HostRuntimeView url={nativePreview || runtimeUrl} className="h-[60dvh] w-full" /> : nativePreview ? <iframe src={nativePreview} title="Live Android emulator" className="h-[60dvh] w-full border-0" sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" /> : runtimeUrl ? <iframe src={runtimeUrl} title="Native build artifacts" className="h-[60dvh] w-full border-0" sandbox="allow-scripts allow-same-origin allow-downloads" />
+            : <p className="p-6 text-muted-foreground">No native build artifacts are attached yet.</p>}
+          <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+            {runtimeUrl && <a href={runtimeHref} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Open build artifacts</a>}
+            <Button variant="ghost" onClick={onClose}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="!flex !w-[min(96vw,84rem)] !max-w-[84rem] !max-h-[94vh] !flex-col overflow-hidden rounded-2xl border-border bg-card p-0 shadow-2xl">
@@ -98,10 +145,10 @@ export function MobileSimulatorDialog({
               </div>
               <div>
                 <DialogTitle className="flex items-center gap-2 text-base font-bold">
-                  Mobile Simulator & Preview
+                  Responsive Web Preview
                   {archetype === "expo_react_native" && (
                     <Badge variant="outline" className="border-sky-500/40 bg-sky-500/10 text-sky-400 text-[11px] font-medium">
-                      Expo Web PWA
+                      Expo Web
                     </Badge>
                   )}
                   {archetype === "flutter_mobile" && (
@@ -111,7 +158,7 @@ export function MobileSimulatorDialog({
                   )}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-muted-foreground truncate max-w-[28rem]">
-                  {deploymentTitle} • Live touch-accurate device emulation
+                  {deploymentTitle} • Browser viewport preview; native device behavior is not emulated
                 </DialogDescription>
               </div>
             </div>
@@ -186,7 +233,7 @@ export function MobileSimulatorDialog({
                 </a>
               ) : runtimeUrl ? (
                 <a
-                  href={runtimeUrl}
+                  href={runtimeHref}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -216,7 +263,7 @@ export function MobileSimulatorDialog({
               <div className="mt-3 flex justify-center rounded-lg bg-white p-3 shadow-inner">
                 {runtimeUrl ? (
                   <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(runtimeUrl)}`}
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(shareUrl)}`}
                     alt="Scan preview on physical mobile device"
                     className="h-40 w-40 rounded-md object-contain"
                   />
@@ -294,7 +341,7 @@ export function MobileSimulatorDialog({
                     className="p-1 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 transition-colors"
                     title="Reload"
                   >
-                    <RefreshCw className={`h-3 w-3 ${isLoading ? "animate-spin text-primary" : ""}`} />
+                    <RefreshCw className={`h-3 w-3 ${isLoading && !remote ? "animate-spin text-primary" : ""}`} />
                   </button>
                   <button
                     onClick={handleCopyUrl}
@@ -308,7 +355,9 @@ export function MobileSimulatorDialog({
 
               {/* Iframe Viewport Container */}
               <div className="w-full h-[calc(100%-48px)] bg-white relative overflow-hidden">
-                {runtimeUrl ? (
+                {runtimeUrl && remote ? (
+                  <HostRuntimeView key={iframeKey} url={runtimeUrl} className="h-full w-full" />
+                ) : runtimeUrl ? (
                   <iframe
                     key={iframeKey}
                     src={runtimeUrl}

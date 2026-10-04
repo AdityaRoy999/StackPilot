@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowLeft, Copy, RotateCcw } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Copy, RotateCcw } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 
 import { Button } from "@/components/ui/button";

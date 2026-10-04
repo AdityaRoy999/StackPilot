@@ -1,0 +1,83 @@
+{
+  "scenario": "checkbox_and_email",
+  "elapsed_seconds": 14.28,
+  "independent_outcome": {
+    "checked": true,
+    "email": "qa@example.com"
+  },
+  "success": true,
+  "error": null,
+  "trace": [
+    {
+      "type": "browser_timing",
+      "phase": "planner",
+      "iteration": 0,
+      "elapsed_ms": 1796,
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "first_delta_ms": 743,
+      "finish_reason": "tool_calls",
+      "tool_count": 1,
+      "content_chars": 0,
+      "reasoning_chars": 286
+    },
+    {
+      "tool": "browser_interact_batch",
+      "args": {
+        "actions": [
+          {
+            "action": "set_checked",
+            "element_id": 2,
+            "checked": true
+          },
+          {
+            "action": "type",
+            "element_id": 3,
+            "text": "qa@example.com"
+          },
+          {
+            "action": "assert",
+            "purpose": "outcome",
+            "expectations": [
+              {
+                "kind": "checked",
+                "element_id": 2,
+                "expected": true
+              },
+              {
+                "kind": "value",
+                "element_id": 3,
+                "expected": "qa@example.com"
+              }
+            ]
+          }
+        ],
+        "session_id": "qa-regression-fixture",
+        "include_frame": false
+      }
+    },
+    {
+      "type": "browser_timing",
+      "phase": "tool",
+      "name": "browser_interact_batch",
+      "elapsed_ms": 621
+    },
+    {
+      "tool_result": "browser_interact_batch",
+      "status": "passed",
+      "error": null,
+      "completion_verified": false
+    },
+    {
+      "type": "browser_timing",
+      "phase": "planner",
+      "iteration": 1,
+      "elapsed_ms": 1940,
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "first_delta_ms": 843,
+      "finish_reason": "stop",
+      "tool_count": 0,
+      "content_chars": 281,
+      "reasoning_chars": 140
+    }
+  ]
+}

@@ -1,0 +1,448 @@
+{
+  "date": "2026-10-04",
+  "url": "https://www.navrobotec.com/",
+  "status": "observed",
+  "elapsed_ms": 121499,
+  "visited_pages": 4,
+  "discovered_pages": 6,
+  "pending_pages": 2,
+  "stop_reason": "Time budget reached; remaining controls/pages are untested.",
+  "exhaustive": false,
+  "routes": [
+    {
+      "url": "https://www.navrobotec.com/",
+      "source": "https://www.navrobotec.com/",
+      "label": "Requested page",
+      "status": "visited",
+      "title": "Navrobotec — Software, cloud, and hardware from one team.",
+      "controls_discovered": 34
+    },
+    {
+      "url": "https://www.navrobotec.com/services",
+      "source": "https://www.navrobotec.com/",
+      "label": "Services",
+      "status": "visited",
+      "title": "Services — Navrobotec",
+      "controls_discovered": 29
+    },
+    {
+      "url": "https://www.navrobotec.com/discover",
+      "source": "https://www.navrobotec.com/",
+      "label": "Discover",
+      "status": "visited",
+      "title": "Discover — Navrobotec",
+      "controls_discovered": 25
+    },
+    {
+      "url": "https://www.navrobotec.com/about",
+      "source": "https://www.navrobotec.com/",
+      "label": "About",
+      "status": "visited",
+      "title": "About — Navrobotec",
+      "controls_discovered": 19
+    },
+    {
+      "url": "https://www.navrobotec.com/contact",
+      "source": "https://www.navrobotec.com/",
+      "label": "Contact",
+      "status": "pending"
+    },
+    {
+      "url": "https://www.navrobotec.com/contact?demo=1",
+      "source": "https://www.navrobotec.com/",
+      "label": "Request a demo Request a demo",
+      "status": "pending"
+    }
+  ],
+  "cases": [
+    {
+      "action": "hover",
+      "label": "Navrobotec — home",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Navrobotec — home",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Services",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Services",
+      "url": "https://www.navrobotec.com/services",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Discover",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Discover",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "About",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "About",
+      "url": "https://www.navrobotec.com/about",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Contact",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Contact",
+      "url": "https://www.navrobotec.com/contact",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Start a project",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Start a project",
+      "url": "https://www.navrobotec.com/contact",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Start a project Start a project",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Our services",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Request a demo Request a demo",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "How quickly can you start? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "How quickly can you start? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "What does the free demo actually include? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "What does the free demo actually include? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Do you work with existing codebases? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Do you work with existing codebases? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Can you do hardware and software together? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Can you do hardware and software together? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "We already have systems. Do they all have to go? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "We already have systems. Do they all have to go? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Who owns the code? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Who owns the code? +",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Start a project",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Web application development",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Web application development",
+      "url": "https://www.navrobotec.com/services#web-applications",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Mobile application development",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Mobile application development",
+      "url": "https://www.navrobotec.com/services#mobile-applications",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "End-to-end e-commerce platforms",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "End-to-end e-commerce platforms",
+      "url": "https://www.navrobotec.com/services#ecommerce-platforms",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "ERP & systems integration",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "ERP & systems integration",
+      "url": "https://www.navrobotec.com/services#erp-integration",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Cloud-native architecture",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Cloud-native architecture",
+      "url": "https://www.navrobotec.com/services#cloud-architecture",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "LinkedIn",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Instagram",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "X",
+      "url": "https://www.navrobotec.com/",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "assert",
+      "label": "Services route",
+      "url": "https://www.navrobotec.com/services",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "support@navrobotec.com",
+      "url": "https://www.navrobotec.com/services",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Start a project →",
+      "url": "https://www.navrobotec.com/services",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "Start a project →",
+      "url": "https://www.navrobotec.com/contact",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Talk to an engineer",
+      "url": "https://www.navrobotec.com/services",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "assert",
+      "label": "Discover route",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "A Software your customers use An online shop, a booking page, an app they log in to.",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "B Software your business runs on Orders, stock, approvals, reports — the day-to-day.",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "C A machine or instrument, and its software One piece of equipment, and whatever reads and controls it.",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "D A fleet of devices out in the world Drones, vehicles, robots, trackers — many of them, reporting back.",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "click",
+      "label": "D A fleet of devices out in the world Drones, vehicles, robots, trackers — many of them, reporting back.",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "hover",
+      "label": "Start a project",
+      "url": "https://www.navrobotec.com/discover",
+      "status": "passed",
+      "error": null
+    },
+    {
+      "action": "assert",
+      "label": "About route",
+      "url": "https://www.navrobotec.com/about",
+      "status": "passed",
+      "error": null
+    }
+  ],
+  "review_count": 19,
+  "review_reasons": [
+    {
+      "Name": "Submission/unknown effect requires an explicit scenario and action-scoped approval.",
+      "Count": 9
+    },
+    {
+      "Name": "The discovered control disappeared or became ambiguous after a page update; no input was dispatched.",
+      "Count": 10
+    }
+  ]
+}

@@ -14,6 +14,7 @@
 #include "CostModel.h"
 #include "DeploymentCleanupService.h"
 #include "PreviewEnvironments.h"
+#include "LocalDockerRuntime.h"
 #include "../db/Database.h"
 #include "../utils/StringUtils.h"
 
@@ -40,6 +41,28 @@ int envInt(const char* name, int fallback) {
     } catch (...) {
         return fallback;
     }
+}
+
+void reconcileCandidates() {
+    auto connection=Database::getInstance().getConnection();pqxx::work txn(*connection);
+    auto rows=txn.exec("SELECT c.job_id::text,c.attempt,c.provider,c.resource_key,c.snapshot::text FROM deployment_runtime_candidates c JOIN deployment_jobs j ON j.id=c.job_id "
+        "WHERE c.status IN ('planned','promoted','cleanup_failed') AND c.created_at<NOW()-INTERVAL '3 minutes' AND (j.attempts<>c.attempt OR (j.status<>'running' AND NOT(j.status IN ('queued','retrying') AND j.metadata ? 'awaiting_runtime'))) "
+        "AND NOT EXISTS(SELECT 1 FROM environment_runtime_routes r JOIN deployments d ON d.id=r.deployment_id WHERE d.remote_container_name=c.resource_key) "
+        "AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.remote_container_name=c.resource_key AND d.status IN ('running','ready','deploying','paused')) "
+        "ORDER BY c.created_at FOR UPDATE OF c SKIP LOCKED LIMIT 4");
+    for(const auto& row:rows){
+        const auto provider=row["provider"].as<std::string>();const auto resource=row["resource_key"].as<std::string>();bool cleaned=false;
+        if(provider=="local_docker")cleaned=LocalDockerRuntime::removeContainer(resource,"",false).success;
+        if(provider=="local_compose"){
+            const auto snapshot=strings::parseJsonObject(row["snapshot"].as<std::string>());
+            const auto directory=snapshot.get("compose_workdir","").asString();const auto file=snapshot.get("compose_file","").asString();
+            if(!directory.empty()&&file=="compose.safe.json"){
+                std::string output;cleaned=LocalDockerRuntime::run("timeout 30s docker compose -p "+strings::shellQuote(resource)+" -f "+strings::shellQuote(directory+"/"+file)+" down --remove-orphans",output)==0;
+            }
+        }
+        txn.exec_params("UPDATE deployment_runtime_candidates SET status=$4,updated_at=NOW() WHERE job_id=$1 AND attempt=$2 AND resource_key=$3",row["job_id"].as<std::string>(),row["attempt"].as<int>(),resource,cleaned?"cleaned":"cleanup_failed");
+    }
+    txn.commit();
 }
 
 /// Records one cost sample for every deployment currently running.
@@ -254,6 +277,8 @@ void JobQueueService::maintenanceLoop() {
         if (!running_) break;
 
         try {
+            recoverInterruptedJobs();
+            reconcileCandidates();
             auto conn = Database::getInstance().getConnection();
             pqxx::work txn(*conn);
             sampleRunningDeployments(txn);

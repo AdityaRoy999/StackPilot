@@ -24,7 +24,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronRight, FolderTree, GitBranch, HardDrive, Link2, Plus, RefreshCw, Server, Settings2, ShieldCheck, Trash2 } from "lucide-react";
+import { CheckCircle2, ChevronRight, FolderTree, GitBranch, HardDrive, Link2, Plus, RefreshCw, Server, Settings2, ShieldCheck, Trash2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
 import { ProjectEnvEditor, ProjectEnvVar } from "@/components/ProjectEnvEditor";

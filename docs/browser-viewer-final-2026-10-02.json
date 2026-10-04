@@ -1,0 +1,393 @@
+{
+  "video": {
+    "native": true,
+    "presented": 349,
+    "submitted": 349,
+    "fps": 22.04800020215724,
+    "p95_gap_ms": 83.40000000000146,
+    "unique_colors": 15,
+    "max_gap_ms": 183.39999999999782,
+    "transport": "webrtc",
+    "codecs": {
+      "jpeg": 1,
+      "h264": 2
+    },
+    "decoded": 0,
+    "telemetry": "Live \u2022 22 fps",
+    "receiver": {
+      "rtt": 0.005,
+      "framesReceived": 479,
+      "framesDecoded": 478,
+      "framesDropped": 0,
+      "jitter": 0.002,
+      "jitterBufferDelay": 5.346979999999999,
+      "jitterBufferEmittedCount": 478,
+      "jitterBufferMinimumDelay": 7.8186539999999995,
+      "totalDecodeTime": 1.6227479999999999,
+      "totalProcessingDelay": 7.542897,
+      "packetsLost": 0
+    },
+    "video_metadata_tail": [
+      {
+        "processingDuration": 0.0018,
+        "receiveTime": 33581.7,
+        "presentationTime": 33598.7,
+        "expectedDisplayTime": 33596.8
+      },
+      {
+        "processingDuration": 0.001,
+        "receiveTime": 33628.9,
+        "presentationTime": 33650.7,
+        "expectedDisplayTime": 33663.5
+      },
+      {
+        "processingDuration": 0.0025,
+        "receiveTime": 33683.9,
+        "presentationTime": 33706.8,
+        "expectedDisplayTime": 33713.4
+      }
+    ],
+    "capture_tail": [
+      {
+        "h264_active": true,
+        "h264_capture_demand": true,
+        "jpeg_streaming": false,
+        "h264_source_fps": 27.06,
+        "jpeg_screencast_fps": 0,
+        "last_jpeg_age_ms": 16319,
+        "viewer_codecs": {
+          "h264": 2,
+          "jpeg": 0
+        }
+      },
+      {
+        "h264_active": true,
+        "h264_capture_demand": true,
+        "jpeg_streaming": false,
+        "h264_source_fps": 27.4,
+        "jpeg_screencast_fps": 0,
+        "last_jpeg_age_ms": 17341,
+        "viewer_codecs": {
+          "h264": 2,
+          "jpeg": 0
+        }
+      },
+      {
+        "h264_active": true,
+        "h264_capture_demand": true,
+        "jpeg_streaming": false,
+        "h264_source_fps": 29.59,
+        "jpeg_screencast_fps": 0,
+        "last_jpeg_age_ms": 18358,
+        "viewer_codecs": {
+          "h264": 2,
+          "jpeg": 0
+        }
+      }
+    ],
+    "target_720p30_met": false
+  },
+  "page_sync": {
+    "route_and_title_ms": 458.85,
+    "empty_title": true,
+    "full_navigation": true,
+    "reconnect_preserved_route": true
+  },
+  "input": {
+    "samples_ms": [
+      1614.1,
+      1096.2,
+      870.6,
+      959.4,
+      1644.2,
+      852.8,
+      613.2,
+      1145.5
+    ],
+    "median_ms": 1096.2,
+    "p95_ms": 1644.2,
+    "poll_seconds": 0.04,
+    "last_dispatch": {
+      "at": 44657.699999999255,
+      "type": "input_applied",
+      "dispatch_ms": 214.6
+    }
+  },
+  "reconnect": {
+    "native": true,
+    "presented": 338,
+    "submitted": 338,
+    "fps": 21.737173138515466,
+    "p95_gap_ms": 100,
+    "unique_colors": 15,
+    "max_gap_ms": 200,
+    "transport": "webrtc",
+    "codecs": {
+      "jpeg": 5,
+      "h264": 3
+    },
+    "decoded": 0,
+    "telemetry": "Live \u2022 20 fps",
+    "receiver": {
+      "rtt": 0.004,
+      "framesReceived": 421,
+      "framesDecoded": 420,
+      "framesDropped": 0,
+      "jitter": 0.004,
+      "jitterBufferDelay": 3.211535,
+      "jitterBufferEmittedCount": 421,
+      "jitterBufferMinimumDelay": 5.271373,
+      "totalDecodeTime": 1.366356,
+      "totalProcessingDelay": 5.064013,
+      "packetsLost": 0
+    },
+    "video_metadata_tail": [
+      {
+        "processingDuration": 0.0029,
+        "receiveTime": 64138.1,
+        "presentationTime": 64164.5,
+        "expectedDisplayTime": 64178.9
+      },
+      {
+        "processingDuration": 0.0162,
+        "receiveTime": 64182.7,
+        "presentationTime": 64218.8,
+        "expectedDisplayTime": 64228.9
+      },
+      {
+        "processingDuration": 0.0014,
+        "receiveTime": 64218.6,
+        "presentationTime": 64251.1,
+        "expectedDisplayTime": 64262.2
+      }
+    ],
+    "capture_tail": [
+      {
+        "h264_active": true,
+        "h264_capture_demand": true,
+        "jpeg_streaming": false,
+        "h264_source_fps": 22.31,
+        "jpeg_screencast_fps": 0,
+        "last_jpeg_age_ms": 13524,
+        "viewer_codecs": {
+          "h264": 2,
+          "jpeg": 0
+        }
+      },
+      {
+        "h264_active": true,
+        "h264_capture_demand": true,
+        "jpeg_streaming": false,
+        "h264_source_fps": 22.94,
+        "jpeg_screencast_fps": 0,
+        "last_jpeg_age_ms": 14552,
+        "viewer_codecs": {
+          "h264": 2,
+          "jpeg": 0
+        }
+      },
+      {
+        "h264_active": true,
+        "h264_capture_demand": true,
+        "jpeg_streaming": false,
+        "h264_source_fps": 22.4,
+        "jpeg_screencast_fps": 0,
+        "last_jpeg_age_ms": 15573,
+        "viewer_codecs": {
+          "h264": 2,
+          "jpeg": 0
+        }
+      }
+    ],
+    "target_720p30_met": false
+  },
+  "reconnect_controls": [
+    {
+      "at": 43503.099999997765,
+      "type": "cursor_action"
+    },
+    {
+      "at": 43595.5,
+      "type": "cursor_action"
+    },
+    {
+      "at": 43693.89999999851,
+      "type": "input_applied",
+      "dispatch_ms": 143.2
+    },
+    {
+      "at": 44276,
+      "type": "cursor_action"
+    },
+    {
+      "at": 44582.79999999702,
+      "type": "cursor_action"
+    },
+    {
+      "at": 44657.699999999255,
+      "type": "input_applied",
+      "dispatch_ms": 214.6
+    },
+    {
+      "at": 44781.199999999255,
+      "type": "pong"
+    },
+    {
+      "at": 45524,
+      "type": "pong"
+    },
+    {
+      "at": 47871.89999999851,
+      "type": "page_state"
+    },
+    {
+      "at": 47910.29999999702,
+      "type": "stream_capabilities"
+    },
+    {
+      "at": 47935.5,
+      "type": "page_state"
+    },
+    {
+      "at": 47935.699999999255,
+      "type": "stream_capabilities"
+    },
+    {
+      "at": 47935.89999999851,
+      "type": "page_state"
+    },
+    {
+      "at": 48192.5,
+      "type": "rtc_answer"
+    },
+    {
+      "at": 48493.39999999851,
+      "type": "pong"
+    },
+    {
+      "at": 49522,
+      "type": "pong"
+    },
+    {
+      "at": 50497,
+      "type": "pong"
+    },
+    {
+      "at": 51535.39999999851,
+      "type": "pong"
+    },
+    {
+      "at": 52532.89999999851,
+      "type": "pong"
+    },
+    {
+      "at": 53516.099999997765,
+      "type": "pong"
+    },
+    {
+      "at": 54504.89999999851,
+      "type": "pong"
+    },
+    {
+      "at": 55518.699999999255,
+      "type": "pong"
+    },
+    {
+      "at": 56520,
+      "type": "pong"
+    },
+    {
+      "at": 57514.89999999851,
+      "type": "pong"
+    },
+    {
+      "at": 58509.29999999702,
+      "type": "pong"
+    },
+    {
+      "at": 59501.39999999851,
+      "type": "pong"
+    },
+    {
+      "at": 60565.699999999255,
+      "type": "pong"
+    },
+    {
+      "at": 61581.89999999851,
+      "type": "pong"
+    },
+    {
+      "at": 62508.099999997765,
+      "type": "pong"
+    },
+    {
+      "at": 63505.89999999851,
+      "type": "pong"
+    }
+  ],
+  "fallback": {
+    "native": false,
+    "presented": 38,
+    "submitted": 0,
+    "fps": 9.296181226608343,
+    "p95_gap_ms": 199.69999999925494,
+    "unique_colors": 4,
+    "max_gap_ms": 255.5,
+    "transport": "websocket",
+    "codecs": {
+      "jpeg": 58,
+      "h264": 2
+    },
+    "decoded": 0,
+    "telemetry": "Live \u2022 10 fps",
+    "receiver": null,
+    "video_metadata_tail": [],
+    "capture_tail": [
+      {
+        "h264_active": false,
+        "h264_capture_demand": false,
+        "jpeg_streaming": true,
+        "h264_source_fps": 0,
+        "jpeg_screencast_fps": 7.55,
+        "last_jpeg_age_ms": 123,
+        "viewer_codecs": {
+          "h264": 0,
+          "jpeg": 1
+        }
+      },
+      {
+        "h264_active": false,
+        "h264_capture_demand": false,
+        "jpeg_streaming": true,
+        "h264_source_fps": 0,
+        "jpeg_screencast_fps": 9.28,
+        "last_jpeg_age_ms": 38,
+        "viewer_codecs": {
+          "h264": 0,
+          "jpeg": 1
+        }
+      },
+      {
+        "h264_active": false,
+        "h264_capture_demand": false,
+        "jpeg_streaming": true,
+        "h264_source_fps": 0,
+        "jpeg_screencast_fps": 11.03,
+        "last_jpeg_age_ms": 45,
+        "viewer_codecs": {
+          "h264": 0,
+          "jpeg": 1
+        }
+      }
+    ],
+    "target_720p30_met": false
+  },
+  "scope": {
+    "viewer": "software headless Chromium inside Docker",
+    "source": "owned animated 1280x720 canvas",
+    "existing_user_contexts_mutated": false,
+    "docker_only_ice_candidate_rewrite": true,
+    "functional_recovery_passed": true,
+    "windows_browser_qualified": false
+  }
+}

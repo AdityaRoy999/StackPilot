@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleAuthButton } from "@/components/auth/GoogleAuthButton";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 
 export function RegisterClient({

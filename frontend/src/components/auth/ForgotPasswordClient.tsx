@@ -5,7 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Eye, EyeOff, MailCheck, RotateCcw } from "lucide-react";
+import { Eye, EyeOff, MailCheck, RotateCcw } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 
 import api from "@/lib/api";

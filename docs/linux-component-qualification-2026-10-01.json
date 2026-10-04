@@ -1,0 +1,27 @@
+{
+  "qualification": "actual Docker adapters, daemon identities, and component runtime gate",
+  "project": "stackpilot-linux-components-d736b964743b",
+  "cases": [
+    {
+      "case": "all six real workload adapters pass on exact candidate identities",
+      "passed": true,
+      "scopes": {
+        "api": "http_contract",
+        "worker": "process",
+        "cli": "console_workflow",
+        "job": "job_completion",
+        "package": "artifact_delivery",
+        "tcp": "tcp_connect"
+      }
+    },
+    {
+      "case": "actual secondary/API assertion failure rejects entire release",
+      "passed": true
+    },
+    {
+      "case": "worker restart changes bound release identity",
+      "passed": true
+    }
+  ],
+  "passed": true
+}

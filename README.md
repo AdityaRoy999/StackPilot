@@ -188,6 +188,20 @@ Run the full platform with Docker:
 docker compose up -d --build
 ```
 
+The normal platform uses a prebuilt frontend: navigation never waits for route
+compilation. Rebuild it after source edits with
+`docker compose up -d --build --no-deps frontend`.
+
+For Docker hot reload, run:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build --watch frontend
+```
+
+Compose copies edits into the container's Linux filesystem so Next.js does not
+compile through a slow Windows/macOS bind mount. Dependency changes rebuild the
+development frontend automatically. Both modes use locally bundled fonts.
+
 Frontend-only development:
 
 ```bash
@@ -431,6 +445,7 @@ If AI responses do not work, check:
 - [Deployment Workflows](docs/deployment-workflows.md)
 - [MCP and IDE Agents](docs/mcp-ide-agents.md)
 - [AI Agent](docs/ai-agent.md)
+- [StackPilot Remote: phone pairing and live chats](docs/stackpilot-remote-2026-10-03.md)
 - [Environments and CI](docs/environments-ci.md)
 - [GitHub App Integration](docs/github-app.md)
 - [Security](docs/security.md)
@@ -447,4 +462,3 @@ StackPilot is an infrastructure platform. Treat it like production operations so
 - Restrict Docker socket access.
 - Use least-privilege SSH users for remote hosts.
 - Rotate secrets if debug files, terminal logs, or screenshots exposed them.
-

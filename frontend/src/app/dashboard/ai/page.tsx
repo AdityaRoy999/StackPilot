@@ -1,6 +1,8 @@
 "use client";
+import { RemoteRunRecovery } from "@/components/RemoteRunRecovery";
+import { isRemotePlatform } from "@/lib/remote-platform";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import {
@@ -40,7 +42,7 @@ import {
   X,
   Zap,
   ArrowRight,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -50,6 +52,7 @@ import { ThinkingOrb, type OrbState } from "thinking-orbs";
 import { toast } from "sonner";
 
 import api from "@/lib/api";
+import { AiProviderConnections } from "@/components/AiProviderConnections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -68,7 +71,9 @@ import { cn } from "@/lib/utils";
 import { StatusVerb } from "@/components/ui/status-verb";
 import { ThinkingPanel } from "@/components/ui/thinking-panel";
 import { ToolCallCard, ToolCall, ToolsPanel } from "@/components/ui/tool-call-card";
-import { AnimatedMarkdown } from "@/components/ui/animated-markdown";
+import { ChatMarkdown } from "@/components/ui/chat-markdown";
+import { PermissionsPanel, type MessagePermission } from "@/components/ui/permissions-panel";
+import { chatMessageId, permissionRequestId, upsertChatMessage, joinContinuation } from "@/lib/chat-continuation";
 import dynamic from "next/dynamic";
 import { SubagentBlock, SubagentTask, SubagentsPanel } from "@/components/ui/subagent-block";
 const FloatingPowerShellTerminal = dynamic(
@@ -80,6 +85,11 @@ const InteractiveBrowserCanvas = dynamic(
   { ssr: false }
 );
 import { streamAgentReply } from "@/lib/stream-agent";
+import { useAiSession } from "@/lib/use-ai-session";
+import { AiSessionChangedError } from "@/lib/ai-session";
+import { requestBrowserMode, type BrowserSandboxMode } from "@/lib/browser-sandbox";
+import { applyAgentEvent } from "@/lib/agent-team";
+import { AgentTurnLifecycle, permissionMatchesCall, streamOutcome } from "@/lib/agent-stream-state";
 import { ModelPickerModal } from "@/components/ModelPickerModal";
 import { isVisionModel, getModelMetadata, getModelCategory } from "@/lib/model-capabilities";
 
@@ -99,7 +109,7 @@ export interface OrbStyleDefinition {
   description: string;
 }
 
-export const ORB_STYLES: OrbStyleDefinition[] = [
+const ORB_STYLES: OrbStyleDefinition[] = [
   { id: "solving", label: "Solving", description: "Quarter-turn bands scramble and click back into place" },
   { id: "searching", label: "Searching", description: "A scan meridian sweeps across a dotted globe" },
   { id: "working", label: "Working", description: "Particle dots on tilted multi-axis orbits" },
@@ -193,6 +203,7 @@ interface ChatMessage {
   /** The model's working, when it exposes reasoning_content. */
   reasoning?: string;
   toolCalls?: ToolCall[];
+  permissions?: MessagePermission[];
   subagents?: SubagentTask[];
   stats?: {
     latencyMs?: number;
@@ -723,234 +734,16 @@ function parseAssistantMessageContent(
   rawContent: string,
   rawReasoning?: string,
   existingSubagents?: SubagentTask[],
-  toolCalls?: ToolCall[]
+  _toolCalls?: ToolCall[]
 ) {
-  let content = rawContent || "";
-  const rawReasoningBlocks: string[] = [];
-  const subagents: SubagentTask[] = existingSubagents ? [...existingSubagents] : [];
-
-  if (rawReasoning && rawReasoning.trim()) {
-    const splitExisting = rawReasoning.split(/\n\s*---\s*\n/).map((s) => s.trim()).filter(Boolean);
-    rawReasoningBlocks.push(...splitExisting);
-  }
-
-  // 1. Extract any <think>...</think> tags from content (including unclosed <think>)
-  if (content.includes("<think>")) {
-    const thinkRegex = /<think>([\s\S]*?)<\/think>/gi;
-    let match;
-    while ((match = thinkRegex.exec(content)) !== null) {
-      if (match[1] && match[1].trim()) {
-        rawReasoningBlocks.push(match[1].trim());
-      }
-    }
-    content = content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-    if (content.includes("<think>")) {
-      const parts = content.split("<think>");
-      if (parts[1] && parts[1].trim()) {
-        rawReasoningBlocks.push(parts[1].trim());
-      }
-      content = parts[0].trim();
-    }
-  }
-
-  // 2. Safeguard against raw internal scratchpad thinking leaking into content
-  const scratchpadPrefixes = [
-    "we are given that",
-    "since the build context",
-    "since the",
-    "let me check",
-    "let me inspect",
-    "let me look",
-    "let me examine",
-    "let's check",
-    "let's inspect",
-    "let's look",
-    "let's see",
-    "let's do",
-    "alternatively, we can",
-    "alternatively",
-    "looking at the logs",
-    "looking at the error",
-    "the deployment failed because",
-    "the error shows",
-    "we need to",
-    "i need to",
-    "wait, let's",
-    "wait, let me",
-    "first, let's",
-    "next, we should",
-  ];
-
-  const trimmed = content.trim();
-  const lower = trimmed.toLowerCase();
-  const startsWithScratchpad = scratchpadPrefixes.some((p) => lower.startsWith(p));
-
-  if (startsWithScratchpad) {
-    const headingMatch = trimmed.search(/\n###?\s+/);
-    if (headingMatch !== -1) {
-      const scratchpadPart = trimmed.slice(0, headingMatch).trim();
-      const answerPart = trimmed.slice(headingMatch).trim();
-      if (scratchpadPart) {
-        rawReasoningBlocks.push(scratchpadPart);
-      }
-      content = answerPart;
-    } else {
-      rawReasoningBlocks.push(trimmed);
-      content = "Completed workspace diagnostic analysis. Expand the thinking panel above to review the detailed reasoning.";
-    }
-  }
-
-  // Helper to extract specialized sections for subagent deliverables
-  const extractSectionForRole = (text: string, subRole: string): string | undefined => {
-    const lowerRole = subRole.toLowerCase();
-    let regex: RegExp | null = null;
-    if (lowerRole.includes("architect")) {
-      regex = /###?\s*(?:[🏛️\s]*)(?:Architectural|Architecture|Root Cause|Diagnostic Blueprint)[^\n]*\n([\s\S]*?)(?=\n###?|\s*$)/i;
-    } else if (lowerRole.includes("coder") || lowerRole.includes("code")) {
-      regex = /###?\s*(?:[🛠️\s]*)(?:Applied Fixes|Code Changes|Dockerfile|Patches|Remediation)[^\n]*\n([\s\S]*?)(?=\n###?|\s*$)/i;
-    } else if (lowerRole.includes("verifier") || lowerRole.includes("verify")) {
-      regex = /###?\s*(?:[🚀\s]*)(?:Verification|Live Deployment|Readiness|Status)[^\n]*\n([\s\S]*?)(?=\n###?|\s*$)/i;
-    }
-    if (regex) {
-      const match = text.match(regex);
-      if (match && match[1]?.trim()) {
-        return match[1].trim();
-      }
-    }
-    return undefined;
-  };
-
-  // 3. Extract subagents OUT of reasoning so they render in their own dedicated blocks outside thinking!
-  const reasoningBlocks: string[] = [];
-  for (const block of rawReasoningBlocks) {
-    const lines = block.split("\n");
-    const nonSubagentLines: string[] = [];
-    for (const line of lines) {
-      const subMatch = line.match(/\[([A-Za-z0-9\s_-]+Subagent)\]\s*(.*)/i);
-      if (subMatch) {
-        const role = subMatch[1].trim();
-        const rawTask = subMatch[2].trim().replace(/^[•\s\-\*]+/, "");
-        const lower = role.toLowerCase();
-
-        // Distinct, meaningful objective
-        let objective = rawTask;
-        if (
-          !objective ||
-          objective.toLowerCase().includes("formulating strategic") ||
-          objective.toLowerCase().includes("performing surgical") ||
-          objective.toLowerCase().includes("probing container")
-        ) {
-          if (lower.includes("architect")) {
-            objective =
-              "Analyze repository architecture, inspect dependency manifests and build logs, and formulate strategic execution blueprint.";
-          } else if (lower.includes("coder")) {
-            objective =
-              "Perform surgical workspace patches, resolve submodule recursion, and patch supervisor process configurations.";
-          } else if (lower.includes("verifier")) {
-            objective =
-              "Trigger deployment rebuild, monitor build logs, and probe container runtime health status.";
-          }
-        }
-
-        // Distinct, meaningful deliverable result
-        const extracted = extractSectionForRole(content, role);
-        let result = extracted;
-        if (!result) {
-          if (lower.includes("architect")) {
-            result =
-              "Formulated comprehensive architectural blueprint. Diagnosed build root cause: git submodules not recursively initialized during clone, and supervisor daemon syntax mismatch. Outlined single-container multi-service deployment architecture.";
-          } else if (lower.includes("coder")) {
-            result =
-              "Applied surgical workspace patches: Updated build service with recursive submodule initialization (`git submodule update --init --recursive --depth 1`) and corrected supervisor daemon configuration. Verified code change integrity.";
-          } else if (lower.includes("verifier")) {
-            result =
-              "Deployment rebuild enqueued and monitored. Container build completed successfully. Live HTTP runtime endpoint verified.";
-          } else {
-            result = rawTask || "Completed assigned subagent task.";
-          }
-        }
-
-        const existing = subagents.find((s) => s.role.toLowerCase() === role.toLowerCase());
-        if (!existing) {
-          subagents.push({
-            id: `subagent-${Date.now()}-${subagents.length}`,
-            role,
-            title: role,
-            task: objective,
-            status: "completed",
-            result,
-          });
-        } else {
-          if (!existing.task) existing.task = objective;
-          if (!existing.result || existing.result === existing.task) existing.result = result;
-        }
-      } else {
-        nonSubagentLines.push(line);
-      }
-    }
-    const rem = nonSubagentLines.join("\n").trim();
-    if (rem) {
-      reasoningBlocks.push(rem);
-    }
-  }
-
-  // 4. Extract invoke_subagent tool calls into subagent blocks
-  if (toolCalls && toolCalls.length > 0) {
-    for (const call of toolCalls) {
-      if (call.name === "invoke_subagent" || call.name === "subagent_spawn") {
-        const role = String(call.arguments?.role || call.arguments?.subagent_type || "Subagent");
-        const existing = subagents.find((s) => s.role.toLowerCase() === role.toLowerCase());
-        if (!existing) {
-          subagents.push({
-            id: `subagent-tool-${Date.now()}-${subagents.length}`,
-            role,
-            title: role,
-            task: String(call.arguments?.task || call.arguments?.prompt || ""),
-            status: call.result ? "completed" : "running",
-            result:
-              call.result?.output ||
-              call.result?.response ||
-              (typeof call.result === "string" ? call.result : undefined),
-          });
-        }
-      }
-    }
-
-    // 5. Associate relevant tool calls to each subagent
-    const architectToolNames = ["workspace_list_files", "workspace_read_file", "inspect_codebase"];
-    const coderToolNames = ["workspace_write_file", "workspace_edit_file", "terminal_run_command"];
-    const verifierToolNames = [
-      "workspace_trigger_rebuild",
-      "wait_for_deployment",
-      "get_deployment_status",
-      "browser_open_live_session",
-      "browser_interact",
-      "browser_get_page_state",
-      "browser_inspect_console",
-      "browser_close_session",
-    ];
-
-    subagents.forEach((s) => {
-      const lower = s.role.toLowerCase();
-      let matchedTools: ToolCall[] = [];
-      if (lower.includes("architect")) {
-        matchedTools = toolCalls.filter((tc) => architectToolNames.includes(tc.name));
-      } else if (lower.includes("coder") || lower.includes("code")) {
-        matchedTools = toolCalls.filter((tc) => coderToolNames.includes(tc.name));
-      } else if (lower.includes("verifier") || lower.includes("verify")) {
-        matchedTools = toolCalls.filter((tc) => verifierToolNames.includes(tc.name));
-      }
-      if (matchedTools.length > 0 && (!s.toolCalls || s.toolCalls.length === 0)) {
-        s.toolCalls = matchedTools;
-      }
-    });
-  }
-
-  return {
-    content,
-    reasoningBlocks,
-    subagents,
-  };
+  const reasoningBlocks = rawReasoning?.trim() ? [rawReasoning.trim()] : [];
+  const content = (rawContent || "").replace(/<think>([\s\S]*?)<\/think>/gi, (_, value: string) => {
+    if (value.trim()) reasoningBlocks.push(value.trim());
+    return "";
+  }).trim();
+  // Teammates exist only when the runtime recorded their IDs and events.
+  // Narration, role labels and dispatch results are not execution evidence.
+  return {content, reasoningBlocks, subagents: existingSubagents || []};
 }
 
 function CodeBlock({ className, children, ...props }: React.HTMLAttributes<HTMLElement>) {
@@ -1007,7 +800,7 @@ const markdownComponents = {
     <ul className="mb-2 ml-4 list-disc space-y-1 last:mb-0 break-words [overflow-wrap:anywhere]" {...props}>{children}</ul>
   ),
   li: ({ children, ...props }: React.LiHTMLAttributes<HTMLLIElement>) => (
-    <li className="text-sm break-words [overflow-wrap:anywhere]" {...props}>{children}</li>
+    <li className="text-[13px] sm:text-sm break-words [overflow-wrap:anywhere]" {...props}>{children}</li>
   ),
   strong: ({ children, ...props }: React.HTMLAttributes<HTMLElement>) => (
     <strong className="font-semibold text-foreground" {...props}>{children}</strong>
@@ -1025,15 +818,15 @@ const markdownComponents = {
     <blockquote className="border-l-2 border-primary/40 pl-3 italic text-muted-foreground break-words [overflow-wrap:anywhere]" {...props}>{children}</blockquote>
   ),
   table: ({ children, ...props }: React.TableHTMLAttributes<HTMLTableElement>) => (
-    <div className="my-2 overflow-x-auto rounded-lg border border-border max-w-full">
-      <table className="w-full text-sm" {...props}>{children}</table>
+    <div role="region" aria-label="Report table" tabIndex={0} className="my-2 min-w-0 max-w-full overflow-x-auto overscroll-x-contain rounded-lg border border-border">
+      <table className="w-full text-xs sm:text-sm" {...props}>{children}</table>
     </div>
   ),
   th: ({ children, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) => (
-    <th className="border-b border-border bg-muted/50 px-3 py-1.5 text-left text-xs font-medium" {...props}>{children}</th>
+    <th className="break-words [overflow-wrap:anywhere] border-b border-border bg-muted/50 px-2 py-1.5 text-left text-xs font-medium sm:px-3" {...props}>{children}</th>
   ),
   td: ({ children, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) => (
-    <td className="border-b border-border px-3 py-1.5" {...props}>{children}</td>
+    <td className="break-words [overflow-wrap:anywhere] border-b border-border px-2 py-1.5 sm:px-3" {...props}>{children}</td>
   ),
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 } as any;
@@ -1097,26 +890,57 @@ function conciseApplicationProjectName(template: AgentApplicationTemplate) {
   return names[template.id] || template.name;
 }
 
+const AssistantMessageBody = memo(function AssistantMessageBody({message, generating, orbStyle, onOpenTerminal}: {
+  message: ChatMessage; generating: boolean; orbStyle: ThinkingOrbStyle; onOpenTerminal: (command?: string) => void;
+}) {
+  const parsed = parseAssistantMessageContent(message.content,message.reasoning,message.subagents,message.toolCalls);
+  const tools = message.toolCalls?.filter(tc=>tc.name !== "invoke_subagent" && tc.name !== "subagent_spawn" &&
+    !(["requires_approval","permission_required"].includes(tc.result?.status || "") &&
+      message.permissions?.some(permission=>permission.status !== "pending" && permissionMatchesCall(permission,tc))));
+  return <>
+    <ThinkingPanel reasoning={parsed.reasoningBlocks.length ? parsed.reasoningBlocks : undefined} stats={message.stats} isGenerating={generating} orbStyle={orbStyle} />
+    {!!parsed.subagents?.length && <SubagentsPanel subagents={parsed.subagents} isGenerating={generating} onOpenTerminal={onOpenTerminal} />}
+    {!!tools?.length && <ToolsPanel toolCalls={tools} isGenerating={generating} onOpenTerminal={onOpenTerminal} />}
+    {!!parsed.content && <div className="prose-ai min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-[13px] leading-relaxed sm:text-sm"><ChatMarkdown content={parsed.content} components={markdownComponents} /></div>}
+  </>;
+});
+
 export default function AiAgentPage() {
+  const [remoteWorkRunning, setRemoteWorkRunning] = useState(false);
   const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
   const [messages, setMessages] = useState<ChatMessage[]>(starterMessages);
+  const messagesRef = useRef(messages);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  const [streamMessageId, setStreamMessageId] = useState("");
+  const approvedMessageRef = useRef<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [mobileOptionsOpen, setMobileOptionsOpen] = useState(false);
   const [mode, setMode] = useState<AiMode>("fast");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [mounted, setMounted] = useState(false);
   const isLoadedFromStorageRef = useRef(false);
-  const [pendingApproval, setPendingApproval] = useState<{
+  const [pendingApproval, setPendingApprovalState] = useState<{
     id: string;
-    type: "terminal" | "deploy";
+    messageId?: string;
+    type: "terminal" | "deploy" | "browser";
     title: string;
     description: string;
     command?: string;
+    browserStep?: { url: string; label: string; action: string; reason: string; step_index: number };
+    sessionId?: string;
+    toolName?: string;
+    arguments?: Record<string, unknown>;
     action: () => Promise<void> | void;
     onDecline: () => void;
   } | null>(null);
+  const pendingApprovalRef = useRef(pendingApproval);
+  const setPendingApproval = useCallback((value: typeof pendingApproval) => {
+    pendingApprovalRef.current = value;
+    setPendingApprovalState(value);
+  }, []);
   const [pendingAgentQuestion, setPendingAgentQuestion] = useState<{
     id: string;
     question: string;
@@ -1152,8 +976,13 @@ export default function AiAgentPage() {
       const params = new URLSearchParams(window.location.search);
       const initDeploymentId = params.get("deploymentId");
       const initCommand = params.get("command");
-      const initSession = params.get("session") || params.get("sessionId");
+      const initSession = params.get("session_id") || params.get("session") || params.get("sessionId");
       const initBrowser = params.get("browser");
+      const initUrl = params.get("custom_url");
+      if (initUrl && /^https?:\/\//i.test(initUrl) && initUrl.length < 4000) {
+        setCustomTargetUrl(initUrl);
+        setCustomUrlInput(initUrl);
+      }
 
       if (initSession) {
         setActiveSessionId(initSession);
@@ -1173,6 +1002,11 @@ export default function AiAgentPage() {
       try {
         const savedModel = window.localStorage.getItem("ai-default-model");
         if (savedModel) setSelectedModel(savedModel);
+
+        const savedBrowser = window.localStorage.getItem("ai-browser-sandbox-mode");
+        if (savedBrowser === "local" || savedBrowser === "remote" || savedBrowser === "host") {
+          setBrowserSandboxMode(savedBrowser);
+        }
 
         const savedAccess = window.localStorage.getItem("ai-agent-access-mode");
         if (savedAccess === "ask" || savedAccess === "auto_review" || savedAccess === "full_access") {
@@ -1212,7 +1046,16 @@ export default function AiAgentPage() {
   const [settingsModelOpen, setSettingsModelOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
   const [deploymentOpen, setDeploymentOpen] = useState(false);
-  const [activeSessionId, setActiveSessionId] = useState("");
+  const { activeSessionId, setActiveSessionId, ensureSession } = useAiSession();
+  const activeSessionIdRef = useRef(activeSessionId);
+  activeSessionIdRef.current = activeSessionId;
+  const turnsRef = useRef(new AgentTurnLifecycle());
+  const [browserSessionError, setBrowserSessionError] = useState("");
+  const [browserSessionRetry, setBrowserSessionRetry] = useState(0);
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
+  const [sessionRefreshError, setSessionRefreshError] = useState("");
+  const loadedSessionIdRef = useRef("");
+  const sessionRequestRef = useRef(0);
   const [provider, setProvider] = useState<AiProvider>("nvidia_nim");
   const [compatibleBaseUrl, setCompatibleBaseUrl] = useState("");
   const [compatibleApiKey, setCompatibleApiKey] = useState("");
@@ -1368,25 +1211,12 @@ export default function AiAgentPage() {
   const fetchModelsWithCurrentKey = async () => {
     setIsFetchingModels(true);
     try {
-      const currentApiKey = provider === "nvidia_nim" ? nvidiaApiKey.trim() : compatibleApiKey.trim();
-      const currentBaseUrl = provider === "openai_compatible" ? compatibleBaseUrl.trim() : undefined;
-      const res = await api.post("/ai/models", {
-        provider,
-        api_key: currentApiKey || undefined,
-        base_url: currentBaseUrl || undefined,
-      });
-      const data = res.data as AiModelsResponse;
-      if (data?.models && Array.isArray(data.models)) {
-        setCustomModelList(data.models);
-        if (data.models.length > 0 && !selectedModel) {
-          setSelectedModel(data.models[0].id);
-        }
-      }
-    } catch {
-      await modelsQuery.refetch();
-    } finally {
-      setIsFetchingModels(false);
-    }
+      const data = await modelsQuery.refetch();
+      if (data.error) throw data.error;
+      setCustomModelList(data.data?.models || []);
+    } catch (error) {
+      toast.error(errorMessage(error, "Could not fetch models from the active provider."));
+    } finally { setIsFetchingModels(false); }
   };
 
   // These normalize to a bare array, whereas the dashboard and deployments pages
@@ -1437,16 +1267,18 @@ export default function AiAgentPage() {
   const deployments = arrayFromResponse<Deployment>(deploymentsQuery.data);
   const sessions = sessionsQuery.data || [];
   const activeSession = sessions.find((session) => session.id === activeSessionId);
-
-  useEffect(() => {
-    if (!activeSessionId || activeSession?.session_type !== "sre_incident" || activeSession?.status !== "healing") {
-      return;
-    }
-    const interval = setInterval(() => {
-      loadSession(activeSessionId).catch(() => {});
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [activeSessionId, activeSession?.session_type, activeSession?.status]);
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => {
+      if (message.role === "user" && message.content.startsWith("[System]")) return false;
+      return Boolean(
+        message.content.trim() ||
+        message.reasoning?.trim() ||
+        (message.toolCalls && message.toolCalls.length > 0) ||
+        (message.subagents && message.subagents.length > 0)
+      );
+    }),
+    [messages]
+  );
   const fastModels = availableModels.filter((model) => modelMode(model) === "fast");
   const thinkingModels = availableModels.filter((model) => modelMode(model) === "thinking");
   const modeModels = mode === "thinking" ? thinkingModels : fastModels;
@@ -1558,6 +1390,46 @@ export default function AiAgentPage() {
     .sort((a, b) => Number(b.status === "failed") - Number(a.status === "failed"));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const composerBoxRef = useRef<HTMLDivElement>(null);
+  const commandButtonRef = useRef<HTMLButtonElement>(null);
+  const projectButtonRef = useRef<HTMLButtonElement>(null);
+  const [pickerOffsets, setPickerOffsets] = useState({
+    commandLeft: 12,
+    commandBottom: 44,
+    projectLeft: 16,
+    projectBottom: 44,
+  });
+
+  // Keep each menu anchored to the control that opened it. The composer can
+  // resize, scroll horizontally, or move with the sticky footer; hard-coded
+  // left offsets make the menu float over unrelated content at narrower widths.
+  useEffect(() => {
+    if (!commandPickerOpen && !projectOpen) return;
+    const updatePickerOffsets = () => {
+      const box = composerBoxRef.current;
+      if (!box) return;
+      const boxRect = box.getBoundingClientRect();
+      if (window.matchMedia("(max-width: 639px)").matches) {
+        setPickerOffsets({ commandLeft: 0, projectLeft: 0, commandBottom: boxRect.height + 8, projectBottom: boxRect.height + 8 });
+        return;
+      }
+      const next = { commandLeft: 12, commandBottom: 44, projectLeft: 16, projectBottom: 44 };
+      const commandRect = commandButtonRef.current?.getBoundingClientRect();
+      const projectRect = projectButtonRef.current?.getBoundingClientRect();
+      if (commandRect) {
+        next.commandLeft = Math.max(0, commandRect.left - boxRect.left);
+        next.commandBottom = Math.max(8, boxRect.height - (commandRect.top - boxRect.top) + 8);
+      }
+      if (projectRect) {
+        next.projectLeft = Math.max(0, projectRect.left - boxRect.left);
+        next.projectBottom = Math.max(8, boxRect.height - (projectRect.top - boxRect.top) + 8);
+      }
+      setPickerOffsets(next);
+    };
+    updatePickerOffsets();
+    window.addEventListener("resize", updatePickerOffsets);
+    return () => window.removeEventListener("resize", updatePickerOffsets);
+  }, [commandPickerOpen, projectOpen, selectedProjectId, customTargetUrl]);
 
   // Clicking anywhere outside the composer dismisses the command palette.
   // Previously it stayed open until something was chosen, which made a
@@ -1581,8 +1453,13 @@ export default function AiAgentPage() {
   }, [showCommands]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+    if (isUserScrolledUpRef.current || (browserOpen && !isDesktop)) return;
+    const frame=requestAnimationFrame(() => {
+      const element=scrollRef.current;
+      if (element?.clientHeight && !isUserScrolledUpRef.current) element.scrollTop=element.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages, browserOpen, isDesktop]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -1632,21 +1509,6 @@ export default function AiAgentPage() {
     if (!SpeechRecognitionClass) {
       toast.error("Voice input is not supported in this browser. Please use Chrome, Edge, or Safari.");
       return;
-    }
-
-    // Windows Chrome audio device priming:
-    // Requesting getUserMedia primes audio permissions and prevents Chrome from immediately failing with not-allowed
-    if (navigator?.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
-      } catch (mediaErr: any) {
-        if (mediaErr?.name === "NotAllowedError" || mediaErr?.name === "PermissionDeniedError") {
-          toast.error("Microphone permission denied. Please allow microphone access in your browser settings.");
-          return;
-        }
-        console.warn("Audio hardware initialization warning:", mediaErr);
-      }
     }
 
     try {
@@ -1712,6 +1574,9 @@ export default function AiAgentPage() {
       };
 
       recognitionRef.current = recognition;
+      // SpeechRecognition.start() must run inside the original button gesture.
+      // Awaiting getUserMedia first consumes the transient user activation in
+      // Chrome, which makes the microphone silently fail with NotAllowedError.
       recognition.start();
     } catch (err) {
       console.error("Failed to start speech recognition:", err);
@@ -1759,10 +1624,10 @@ export default function AiAgentPage() {
     }
   };
 
-  const openTerminalWithCommand = (command?: string) => {
+  const openTerminalWithCommand = useCallback((command?: string) => {
     setTerminalInitialCommand(command);
     setTerminalOpen(true);
-  };
+  }, []);
 
   const closePickers = () => {
     setComposerModelOpen(false);
@@ -1773,6 +1638,11 @@ export default function AiAgentPage() {
   };
 
   const appendMessage = (message: Omit<ChatMessage, "id">) => {
+    if (message.role === "assistant" && approvedMessageRef.current) {
+      const id = approvedMessageRef.current;
+      setMessages(current => current.map(item => item.id === id ? {...item,...message,content:joinContinuation(item.content,message.content)} : item));
+      return;
+    }
     setMessages((current) => [
       ...current,
       {
@@ -1783,8 +1653,15 @@ export default function AiAgentPage() {
   };
 
   const startNewChat = () => {
+    discardActiveTurn();
+    sessionRequestRef.current += 1;
+    loadedSessionIdRef.current = "";
     setActiveSessionId("");
+    setBrowserSessionError("");
+    setBrowserSessionRetry(attempt => attempt + 1);
     setMessages(starterMessages);
+    setIsSessionLoading(false);
+    setSessionRefreshError("");
     setPendingApproval(null);
     setPendingAgentQuestion(null);
     setAgentQuestionAnswers({});
@@ -1797,95 +1674,129 @@ export default function AiAgentPage() {
     }
   };
 
-  const loadSession = async (sessionId: string) => {
-    const res = await api.get(`/ai/sessions/${sessionId}`);
-    const data = res.data as { session?: AiChatSession; messages?: AiChatMessage[] };
-    setActiveSessionId(sessionId);
-    setPendingApproval(null);
-    setPendingAgentQuestion(null);
-    setAgentQuestionAnswers({});
-    if (data.session?.last_model) {
-      setSelectedModel(data.session.last_model);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("ai-default-model", data.session.last_model);
-      }
-    }
-    const mappedMessages = (data.messages || [])
-      .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "system")
-      .map((message) => {
-        const meta = (message.metadata || {}) as Record<string, any>;
-        const usage = (meta.token_usage || {}) as Record<string, number>;
-        return {
-          id: message.id,
-          role: message.role as Role,
-          content: message.content,
-          reasoning: typeof meta.reasoning === "string" && meta.reasoning.trim() ? meta.reasoning : undefined,
-          toolCalls: Array.isArray(meta.tool_calls) && meta.tool_calls.length > 0 ? meta.tool_calls : undefined,
-          stats: {
-            latencyMs: typeof meta.latency_ms === "number" ? meta.latency_ms : undefined,
-            promptTokens: usage.prompt_tokens,
-            completionTokens: usage.completion_tokens,
-            totalTokens: usage.total_tokens,
-            model: typeof meta.model === "string" ? meta.model : undefined,
-            provider: typeof meta.provider === "string" ? meta.provider : undefined,
-            traceId: typeof meta.trace_id === "string" ? meta.trace_id : undefined,
-          },
-        };
+  const loadSession = useCallback(async (sessionId: string, background = false) => {
+    if (!background && turnsRef.current.current?.sessionId && turnsRef.current.current.sessionId !== sessionId) discardActiveTurn();
+    const requestId = ++sessionRequestRef.current;
+    if (!background) setIsSessionLoading(true);
+    try {
+      const res = await api.get(`/ai/sessions/${sessionId}`, {
+        params: background ? { refresh: Date.now() } : undefined,
       });
-      
-    setMessages(mappedMessages);
-
-    if (mappedMessages.length > 0) {
-      const lastMsg = mappedMessages[mappedMessages.length - 1];
-      if (lastMsg.role === "assistant" && lastMsg.toolCalls && lastMsg.toolCalls.length > 0) {
-        const lastTool = lastMsg.toolCalls[lastMsg.toolCalls.length - 1];
-        if (lastTool.name === "ask_user_question" && !lastTool.result) {
-          try {
-            const args = typeof lastTool.arguments === "string" 
-              ? JSON.parse(lastTool.arguments) 
-              : (lastTool.arguments || {});
-            
-            const qFields = args.fields || [];
-            const initialAnswers: Record<string, string> = {};
-            qFields.forEach((f: any) => {
-              initialAnswers[f.id] = f.default_value || (f.options && f.options[0]) || "";
-            });
-            setAgentQuestionAnswers(initialAnswers);
-            setPendingAgentQuestion({
-              id: `q-restored-${Date.now()}`,
-              question: args.question || "Please clarify:",
-              fields: qFields,
-            });
-          } catch (e) {}
+      if (requestId !== sessionRequestRef.current) return;
+      const data = res.data as { session?: AiChatSession; messages?: AiChatMessage[] };
+      setActiveSessionId(sessionId);
+      setSessionRefreshError("");
+      loadedSessionIdRef.current = sessionId;
+      if (!background) {
+        setPendingApproval(null);
+        setPendingAgentQuestion(null);
+        setAgentQuestionAnswers({});
+      }
+      if (data.session?.last_model) {
+        setSelectedModel(data.session.last_model);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("ai-default-model", data.session.last_model);
         }
       }
-    }
+      const mappedMessages = (data.messages || [])
+        .filter((message) => !message.metadata?.continuation && (message.role === "user" || message.role === "assistant" || message.role === "system"))
+        .map((message) => {
+          const meta = (message.metadata || {}) as Record<string, any>;
+          const usage = (meta.token_usage || {}) as Record<string, number>;
+          return {
+            id: message.id,
+            role: message.role as Role,
+            content: message.content || "",
+            reasoning: typeof meta.reasoning === "string" && meta.reasoning.trim() ? meta.reasoning : undefined,
+            toolCalls: Array.isArray(meta.tool_calls) && meta.tool_calls.length > 0 ? meta.tool_calls : undefined,
+            permissions: Array.isArray(meta.permissions) ? meta.permissions : undefined,
+            subagents: Array.isArray(meta.agent_events) ? meta.agent_events.reduce(applyAgentEvent, [] as SubagentTask[]) : undefined,
+            stats: {
+              latencyMs: typeof meta.latency_ms === "number" ? meta.latency_ms : undefined,
+              promptTokens: usage.prompt_tokens,
+              completionTokens: usage.completion_tokens,
+              totalTokens: usage.total_tokens,
+              model: typeof meta.model === "string" ? meta.model : undefined,
+              provider: typeof meta.provider === "string" ? meta.provider : undefined,
+              traceId: typeof meta.trace_id === "string" ? meta.trace_id : undefined,
+            },
+          };
+        })
+        .filter((message) => Boolean(
+          message.content.trim() ||
+          message.reasoning?.trim() ||
+          (message.toolCalls && message.toolCalls.length > 0) ||
+          (message.subagents && message.subagents.length > 0)
+        ));
 
-    if (typeof window !== "undefined") {
-      window.history.replaceState(null, "", `/dashboard/ai?session_id=${sessionId}`);
+      setMessages(mappedMessages);
+
+      if (!background && mappedMessages.length > 0) {
+        const lastMsg = mappedMessages[mappedMessages.length - 1];
+        if (lastMsg.role === "assistant" && lastMsg.toolCalls && lastMsg.toolCalls.length > 0) {
+          const lastTool = lastMsg.toolCalls[lastMsg.toolCalls.length - 1];
+          if (lastTool.name === "ask_user_question" && !lastTool.result) {
+            try {
+              const args = typeof lastTool.arguments === "string"
+                ? JSON.parse(lastTool.arguments)
+                : (lastTool.arguments || {});
+              const qFields = args.fields || [];
+              const initialAnswers: Record<string, string> = {};
+              qFields.forEach((field: any) => {
+                initialAnswers[field.id] = field.default_value || (field.options && field.options[0]) || "";
+              });
+              setAgentQuestionAnswers(initialAnswers);
+              setPendingAgentQuestion({
+                id: `q-restored-${Date.now()}`,
+                question: args.question || "Please clarify:",
+                fields: qFields,
+              });
+            } catch {}
+          }
+        }
+      }
+
+      if (!background && typeof window !== "undefined") {
+        window.history.replaceState(null, "", `/dashboard/ai?session_id=${sessionId}`);
+      }
+    } catch (error) {
+      if (requestId === sessionRequestRef.current) {
+        setSessionRefreshError(errorMessage(error, "Could not refresh healing activity."));
+      }
+      throw error;
+    } finally {
+      if (!background && requestId === sessionRequestRef.current) {
+        setIsSessionLoading(false);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined" || activeSessionId) return;
-    const sessionId = new URLSearchParams(window.location.search).get("session_id");
-    if (sessionId) {
-      const handle = window.setTimeout(() => {
-        loadSession(sessionId).catch(() => {
-          setMessages([
-            ...starterMessages,
-            {
-              id: `session-load-error-${Date.now()}`,
-              role: "assistant",
-              content: "I could not load that chat. It may have been deleted or belongs to another account.",
-              meta: "Error",
-            },
-          ]);
-        });
-      }, 0);
-      return () => window.clearTimeout(handle);
+    if (!activeSessionId || loadedSessionIdRef.current === activeSessionId) return;
+    loadSession(activeSessionId).catch(() => {
+      setMessages([
+        {
+          id: `session-load-error-${Date.now()}`,
+          role: "assistant",
+          content: "I could not load that chat. It may have been deleted or belongs to another account.",
+          meta: "Error",
+        },
+      ]);
+    });
+  }, [activeSessionId, loadSession]);
+
+  useEffect(() => {
+    if (!activeSessionId || activeSession?.session_type !== "sre_incident" || activeSession?.status !== "healing") {
+      return;
     }
-  }, [activeSessionId]);
+    const refresh = () => {
+      loadSession(activeSessionId, true)
+        .then(() => queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] }))
+        .catch(() => {});
+    };
+    const interval = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(interval);
+  }, [activeSessionId, activeSession?.session_type, activeSession?.status, loadSession, queryClient]);
 
   const deployApplicationTemplate = async (template: AgentApplicationTemplate) => {
     const password = randomSecret(template.id);
@@ -1970,6 +1881,9 @@ export default function AiAgentPage() {
           command: parsedCommand || (message.startsWith("/") ? message.split(/\s+/)[0] : ""),
           model: activeModelId,
           model_mode: mode,
+          sandbox_mode: browserSandboxMode,
+          custom_url: customTargetUrl || undefined,
+          allow_agent_questions: allowAgentQuestions,
           session_id: activeSessionId || undefined,
           project_id: targetProjectId,
           deployment_id: targetDeploymentId,
@@ -2189,7 +2103,7 @@ export default function AiAgentPage() {
           model_mode: mode,
           message: customUserPrompt || undefined,
           problem_description: customUserPrompt || undefined,
-        }, { timeout: 120000 });
+        }, { timeout: 615000 });
         const data = res.data;
         const changes = (data.applied_changes || [])
           .map((c: { path: string; description: string; action: string }) => `  • [${c.action || 'modify'}] \`${c.path}\` — ${c.description || 'Updated'}`)
@@ -2201,8 +2115,8 @@ export default function AiAgentPage() {
           result: { status: "applied", path: c.path },
         }));
         return {
-          title: "AI Auto-Fix & Repair Complete",
-          body: `### Root Cause\n${data.structured_output?.root_cause || data.summary || "Identified configuration / build issues"}\n\n### Applied Fixes:\n${changes || "  • Auto-patched build configurations"}\n\n**New Deployment Queued:** ${data.new_deployment_id ? `\`${data.new_deployment_id}\`` : "In Progress"}`,
+          title: data.verified === true ? "Repair verified: page renders" : "Repair remains unverified",
+          body: `### Findings\n${data.structured_output?.root_cause || data.summary || "No diagnosis returned."}\n\n### Executed changes\n${changes || "No successful file changes recorded."}\n\n**Deployment:** \`${data.repaired_deployment_id || targetDeploymentId}\`\n**Verification:** ${data.verified === true ? "Browser render smoke passed; business workflows require separate tests." : (data.structured_output?.verification?.reason || "No completed, verified build was recorded.")}`,
           reasoning: typeof data.reasoning === "string" ? data.reasoning : (typeof data.structured_output?.root_cause === "string" ? data.structured_output.root_cause : ""),
           toolCalls: repairToolCalls.length > 0 ? repairToolCalls : undefined,
           stats: {
@@ -2237,7 +2151,7 @@ export default function AiAgentPage() {
             model_mode: mode,
             message: extraText,
             problem_description: extraText,
-          }, { timeout: 120000 });
+          }, { timeout: 615000 });
           const data = res.data;
           const changes = (data.applied_changes || [])
             .map((c: { path: string; description: string; action: string }) => `  • [${c.action || 'modify'}] \`${c.path}\` — ${c.description || 'Updated'}`)
@@ -2249,8 +2163,8 @@ export default function AiAgentPage() {
             result: { status: "applied", path: c.path },
           }));
           return {
-            title: "AI Auto-Fix & Deploy",
-            body: `### Diagnosed Issue\n${data.structured_output?.root_cause || data.summary || "Identified configuration and runtime issues"}\n\n### Applied Changes:\n${changes || "  • Resolved container & port conflicts"}\n\n**New Clean Deployment Started:** ${data.new_deployment_id ? `\`${data.new_deployment_id}\`` : "Queued"}`,
+            title: data.verified === true ? "Repair verified: page renders" : "Repair remains unverified",
+            body: `### Findings\n${data.structured_output?.root_cause || data.summary || "No diagnosis returned."}\n\n### Executed changes\n${changes || "No successful file changes recorded."}\n\n**Deployment:** \`${data.repaired_deployment_id || targetDeploymentId}\`\n**Verification:** ${data.verified === true ? "Browser render smoke passed; business workflows require separate tests." : (data.structured_output?.verification?.reason || "No completed, verified build was recorded.")}`,
             reasoning: typeof data.reasoning === "string" ? data.reasoning : (typeof data.structured_output?.root_cause === "string" ? data.structured_output.root_cause : ""),
             toolCalls: repairToolCalls.length > 0 ? repairToolCalls : undefined,
             stats: {
@@ -2656,7 +2570,82 @@ export default function AiAgentPage() {
   // On by default: watching the answer form is the whole point. Off is for
   // when someone wants the single atomic reply the blocking path gives.
   const [streamingEnabled, setStreamingEnabled] = useState(true);
-  const [browserSandboxMode, setBrowserSandboxMode] = useState<"local" | "remote">("local");
+  const [browserSandboxMode, setBrowserSandboxMode] = useState<"local" | "remote" | "host">("local");
+  const [browserSwitchPending, setBrowserSwitchPending] = useState<BrowserSandboxMode | null>(null);
+  const [browserSwitchError, setBrowserSwitchError] = useState("");
+  const browserSwitchRef = useRef(false);
+  const browserSwitchGeneration = useRef(0);
+  const selectBrowserSandboxMode = async (mode: BrowserSandboxMode) => {
+    if (browserSwitchRef.current) return;
+    browserSwitchRef.current = true;
+    const generation = ++browserSwitchGeneration.current;
+    setBrowserSwitchPending(mode);
+    setBrowserSwitchError("");
+    discardActiveTurn();
+    try {
+      const sessionId = await ensureChatSession();
+      const actual = await requestBrowserMode(sessionId, mode, canvasTargetUrl);
+      if (generation !== browserSwitchGeneration.current || sessionId !== activeSessionIdRef.current) return;
+      if (actual !== mode) throw new Error("The browser worker did not confirm the selected sandbox.");
+      setBrowserSandboxMode(actual);
+      try { window.localStorage.setItem("ai-browser-sandbox-mode", actual); } catch { /* Storage is optional. */ }
+    } catch (error) {
+      if (generation === browserSwitchGeneration.current) {
+        const detail = error instanceof Error && !(error instanceof AxiosError)
+          ? error.message
+          : errorMessage(error, "Could not switch the browser sandbox.");
+        setBrowserSwitchError(detail);
+        toast.error(detail);
+      }
+    } finally {
+      if (generation === browserSwitchGeneration.current) {
+        browserSwitchRef.current = false;
+        setBrowserSwitchPending(null);
+      }
+    }
+  };
+
+  useEffect(() => {
+    let disposed = false;
+    const generation = browserSwitchGeneration.current;
+    if (browserSwitchRef.current) return;
+    setBrowserSwitchError("");
+    if (!activeSessionId) {
+      try {
+        const saved = window.localStorage.getItem("ai-browser-sandbox-mode");
+        if (saved === "local" || saved === "remote" || saved === "host") setBrowserSandboxMode(saved);
+      } catch { /* Storage is optional. */ }
+    } else {
+      requestBrowserMode(activeSessionId).then(actual => {
+        if (!disposed && generation === browserSwitchGeneration.current && !browserSwitchRef.current && actual) setBrowserSandboxMode(actual);
+      }).catch(() => { /* A failed settings lookup must not interrupt chat loading. */ });
+    }
+    return () => { disposed = true; };
+  }, [activeSessionId]);
+
+  const ensureChatSession = useCallback(async () => {
+    const sessionId = await ensureSession();
+    // A newly created empty chat has no history to reload over the current
+    // composer/stream. Existing chats still use the normal history loader.
+    if (!activeSessionId) {
+      loadedSessionIdRef.current = sessionId;
+      window.history.replaceState(null, "", `/dashboard/ai?session_id=${sessionId}`);
+      void queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] });
+    }
+    return sessionId;
+  }, [activeSessionId, ensureSession, queryClient]);
+
+  useEffect(() => {
+    if (!browserOpen || activeSessionId) return;
+    let cancelled = false;
+    setBrowserSessionError("");
+    ensureChatSession().catch(error => {
+      if (!cancelled && !(error instanceof AiSessionChangedError)) {
+        setBrowserSessionError(errorMessage(error, "Could not create a chat for Live App."));
+      }
+    });
+    return () => { cancelled = true; };
+  }, [browserOpen, activeSessionId, ensureChatSession, browserSessionRetry]);
   const [streamReasoning, setStreamReasoning] = useState("");
   const [streamContent, setStreamContent] = useState("");
   const [streamToolCalls, setStreamToolCalls] = useState<ToolCall[]>([]);
@@ -2664,52 +2653,73 @@ export default function AiAgentPage() {
   const [isStreaming, setIsStreaming] = useState(false);
   const streamAbortRef = useRef<AbortController | null>(null);
 
+  const discardActiveTurn = useCallback(() => {
+    const turn = turnsRef.current.cancel(true);
+    const sessionId = turn?.sessionId || pendingApprovalRef.current?.sessionId;
+    if (sessionId && !isRemotePlatform()) api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
+    streamAbortRef.current = null;
+    setPendingApproval(null);
+    setPendingAgentQuestion(null);
+    setIsStreaming(false);
+    setStreamReasoning("");
+    setStreamContent("");
+    setStreamToolCalls([]);
+    setStreamSubagents([]);
+  }, [setPendingApproval]);
+
+  useEffect(() => () => {
+    const turn = turnsRef.current.cancel(true);
+    const sessionId = turn?.sessionId || pendingApprovalRef.current?.sessionId;
+    if (sessionId && !isRemotePlatform()) api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
+  }, []);
+
+  // Project/mode changes invalidate a displayed approval. Live navigation has
+  // its own page binding below, so normal agent navigation never cancels it.
+  useEffect(() => {
+    setPendingApproval(null);
+  }, [selectedProjectId, selectedDeploymentId, browserSandboxMode, setPendingApproval]);
+
   const handleStopGeneration = useCallback(() => {
     // 1. Abort client-side fetch stream
+    const turn = turnsRef.current.cancel();
     streamAbortRef.current?.abort();
+    setPendingApproval(null);
+    setPendingAgentQuestion(null);
 
     // 2. Notify backend stop endpoint to immediately halt agent & browser testing
-    api.post("/ai/chat/stop", { session_id: activeSessionId || "default" }).catch(() => {});
+    const sessionId = turn?.sessionId || activeSessionIdRef.current;
+    if (sessionId) api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
 
-    // 3. Directly notify ai-service stop endpoint as immediate fallback
-    try {
-      const aiHost = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "127.0.0.1";
-      const directAiUrl = `${window.location.protocol}//${aiHost === "localhost" ? "127.0.0.1" : aiHost}:8010`;
-      fetch(`${directAiUrl}/chat/agent/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: activeSessionId || "default" }),
-        mode: "cors",
-      }).catch(() => {});
-    } catch {}
-
-    // 4. Notify live browser session if window has active connection
+    // 3. Notify the authenticated browser session if window has active connection
     try {
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("stackpilot:browser:stop"));
       }
     } catch {}
-  }, [activeSessionId]);
+  }, [setPendingApproval]);
 
   const handleChatScroll = useCallback(() => {
-    if (!scrollRef.current) return;
+    if (!scrollRef.current?.clientHeight || (browserOpen && !isDesktop)) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
     const isUp = distanceFromBottom > 60;
     isUserScrolledUpRef.current = isUp;
-    setShowScrollBottom(isUp);
-  }, []);
+    setShowScrollBottom(current => current === isUp ? current : isUp);
+  }, [browserOpen, isDesktop]);
 
-  useEffect(() => {
-    if (isStreaming && !isUserScrolledUpRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+
+  const sendStreaming = async (prompt: string, images?: string[], continueThread: boolean = false, approvalToken?: string) => {
+    const turn = turnsRef.current.begin();
+    if (!turn) {
+      toast.info("Wait for the current turn to finish, or stop it first.");
+      return;
     }
-  }, [streamReasoning, streamToolCalls, streamSubagents, streamContent, isStreaming]);
-
-  const sendStreaming = async (prompt: string, images?: string[], continueThread: boolean = false) => {
+    const controller = turn.controller;
+    streamAbortRef.current = controller;
+    setPendingApproval(null);
     isUserScrolledUpRef.current = false;
     setShowScrollBottom(false);
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
 
     // Notify browser canvas to return to live feed on new AI action
     if (typeof window !== "undefined") {
@@ -2790,62 +2800,56 @@ export default function AiAgentPage() {
       ? `Analyzing deployment context and files for \`${parsedCommand}\`...`
       : "Analyzing request and inspecting project workspace...";
 
-    let prevContent = "";
-    let prevReasoning = initReasoning + "\n";
-    let prevToolCalls: ToolCall[] = [];
-    let prevSubagents: SubagentTask[] = [];
-
-    if (continueThread) {
-      setMessages((current) => {
-        const newMsgs = [...current];
-        for (let i = newMsgs.length - 1; i >= 0; i--) {
-          if (newMsgs[i].role === "assistant") {
-            const removed = newMsgs.splice(i, 1)[0];
-            prevContent = removed.content || "";
-            prevReasoning = removed.reasoning ? removed.reasoning + "\n" : "";
-            prevToolCalls = removed.toolCalls || [];
-            prevSubagents = removed.subagents || [];
-            break;
-          }
-        }
-        return newMsgs;
-      });
-    }
-
-    // React state update is async, so we set the initial stream state to match
+    const previous = continueThread ? [...messagesRef.current].reverse().find(message => message.role === "assistant") : undefined;
+    const messageId = previous?.id || chatMessageId();
+    setStreamMessageId(messageId);
+    const prevContent = previous?.content && !/^(Waiting for|Completed workspace actions)/.test(previous.content) ? previous.content : "";
+    const prevReasoning = previous?.reasoning ? previous.reasoning + "\n" : "";
+    const prevToolCalls = previous?.toolCalls || [];
+    const prevSubagents = previous?.subagents || [];
+    let permissions = previous?.permissions || [];
+    const priorBody = prevContent ? prevContent.trimEnd() + "\n\n" : "";
     setStreamReasoning(continueThread ? prevReasoning : initReasoning);
     setStreamContent(continueThread ? prevContent : "");
     setStreamToolCalls(continueThread ? prevToolCalls : []);
     setStreamSubagents(continueThread ? prevSubagents : []);
     setIsStreaming(true);
 
-    const controller = new AbortController();
-    streamAbortRef.current = controller;
-
     let reasoning = continueThread ? prevReasoning : initReasoning + "\n";
-    let content = continueThread ? prevContent : "";
+    let content = continueThread ? priorBody : "";
     let toolCalls: ToolCall[] = continueThread ? [...prevToolCalls] : [];
     let subagents: SubagentTask[] = continueThread ? [...prevSubagents] : [];
     let stats: ChatMessage["stats"] = {};
     let messageAppended = false;
+    let doneStatus: string | undefined;
+    let doneVerified: boolean | undefined;
+    let doneReceived = false;
+    let browserUsed = false;
+    let streamFailed = false;
 
     let contentBuffer = content;
     let reasoningBuffer = reasoning;
-    let streamRafId: number | null = null;
+    let streamRafId: ReturnType<typeof setTimeout> | null = null;
+    const saveResponse = (body: string, details: Partial<ChatMessage> = {}) => {
+      setMessages(current => upsertChatMessage(current, {id:messageId,role:"assistant",content:body,reasoning:reasoning.trim() || undefined,toolCalls,subagents,permissions,stats,...details}));
+    };
 
     const flushStream = () => {
+      if (!turnsRef.current.owns(turn)) return;
       setStreamContent(contentBuffer);
       setStreamReasoning(reasoningBuffer);
       streamRafId = null;
+      saveResponse(contentBuffer);
     };
 
     const queueStreamFlush = () => {
       if (streamRafId === null) {
-        streamRafId = requestAnimationFrame(flushStream);
+        streamRafId = setTimeout(flushStream, 100);
       }
     };
 
     const appendStoppedResponse = () => {
+      if (!turnsRef.current.owns(turn)) return;
       if (messageAppended) return;
       if (!content.trim() && !reasoning.trim() && toolCalls.length === 0 && subagents.length === 0) return;
       messageAppended = true;
@@ -2855,17 +2859,15 @@ export default function AiAgentPage() {
 
       finalBody = finalBody ? `${finalBody}\n\n*(Generation stopped by user)*` : "*(Generation stopped by user)*";
 
-      appendMessage({
-        role: "assistant",
-        content: finalBody,
+      saveResponse(finalBody, {
         reasoning: finalReasoning,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         subagents: subagents.length > 0 ? subagents : undefined,
         stats,
       });
 
-      if (activeSessionId) {
-        api.post(`/ai/sessions/${activeSessionId}/messages`, {
+      if (turn.sessionId) {
+        api.post(`/ai/sessions/${turn.sessionId}/messages`, {
           role: "assistant",
           content: finalBody,
           metadata: {
@@ -2877,15 +2879,21 @@ export default function AiAgentPage() {
       }
     };
 
+    saveResponse(content);
     try {
+      const sessionId = await ensureChatSession();
+      turn.sessionId = sessionId;
+      if (controller.signal.aborted || !turnsRef.current.owns(turn)) return;
       await streamAgentReply({
+        approvalToken,
+        continuation: continueThread,
         message: prompt,
         command: parsedCommand || undefined,
         deploymentId: targetDeploymentId,
         projectId: targetProjectId,
         customUrl: effectiveTargetUrl,
         workflowType,
-        sessionId: activeSessionId || undefined,
+        sessionId,
         modelMode: mode === "thinking" ? "thinking" : "fast",
         model: activeModelId,
         provider,
@@ -2896,6 +2904,14 @@ export default function AiAgentPage() {
         sandboxMode: browserSandboxMode,
         signal: controller.signal,
         onEvent: (event) => {
+          if (!turnsRef.current.owns(turn) || controller.signal.aborted) return;
+          const observedAgents = applyAgentEvent(subagents, event);
+          if (observedAgents !== subagents) {
+            subagents = observedAgents;
+            setStreamSubagents([...subagents]);
+            queueStreamFlush();
+            if (event.type !== "done") return;
+          }
           if (event.type === "start" && event.session_id) {
             if (event.session_id !== activeSessionId) {
               setActiveSessionId(event.session_id);
@@ -2910,55 +2926,26 @@ export default function AiAgentPage() {
             queueStreamFlush();
           } else if (event.type === "tool_call") {
             const newCall: ToolCall = {
+              id: event.id,
               name: event.name,
               arguments: event.arguments,
             };
             toolCalls = [...toolCalls, newCall];
             setStreamToolCalls([...toolCalls]);
+            queueStreamFlush();
             if (event.name.startsWith("browser_")) {
+              browserUsed = true;
               setBrowserOpen(true);
               setBrowserActive(true);
             }
-            if (event.name === "invoke_subagent" || event.name === "subagent_spawn") {
-              const sub: SubagentTask = {
-                id: `subagent-${Date.now()}`,
-                role: String(event.arguments?.role || "Specialized Subagent"),
-                title: String(event.arguments?.role || "Specialized Subagent"),
-                task: String(event.arguments?.task || ""),
-                status: "running",
-              };
-              subagents = [...subagents, sub];
-              setStreamSubagents([...subagents]);
-            }
-          } else if (event.type === "subagent_start") {
-            const sub: SubagentTask = {
-              id: event.id || `subagent-${Date.now()}`,
-              role: event.role || "Subagent",
-              title: event.title || event.role || "Subagent",
-              task: event.task || "",
-              status: "running",
-            };
-            subagents = [...subagents.filter((s) => s.id !== sub.id), sub];
-            setStreamSubagents([...subagents]);
-          } else if (event.type === "subagent_complete") {
-            subagents = subagents.map((s) =>
-              s.id === event.id || s.role.toLowerCase() === (event.role || "").toLowerCase()
-                ? { ...s, status: "completed", result: event.result || s.result }
-                : s
-            );
-            setStreamSubagents([...subagents]);
+          } else if (event.type === "tool_step") {
+            toolCalls = [...toolCalls, {id:event.id, name:event.name, arguments:event.arguments, result:event.result}];
+            setStreamToolCalls([...toolCalls]);
+            queueStreamFlush();
           } else if (event.type === "tool_result") {
-            if (event.name === "invoke_subagent" || event.name === "subagent_spawn") {
-              subagents = subagents.map((s, idx) =>
-                idx === subagents.length - 1
-                  ? { ...s, status: "completed", result: (event.result as any)?.output || "Task completed." }
-                  : s
-              );
-              setStreamSubagents([...subagents]);
-            }
             let foundIdx = -1;
             for (let i = toolCalls.length - 1; i >= 0; i--) {
-              if (toolCalls[i].name === event.name && (toolCalls[i].result === undefined || toolCalls[i].result === null)) {
+              if ((event.id ? toolCalls[i].id === event.id : toolCalls[i].name === event.name) && (toolCalls[i].result === undefined || toolCalls[i].result === null)) {
                 foundIdx = i;
                 break;
               }
@@ -2975,28 +2962,41 @@ export default function AiAgentPage() {
             } else {
               toolCalls = [...toolCalls, { name: event.name, arguments: {}, result: event.result }];
             }
+            setStreamToolCalls([...toolCalls]);
+            queueStreamFlush();
           } else if (event.type === "permission_request") {
             const toolName = event.tool_name || "Action";
             const args = event.arguments || {};
             const cmd = toolName === "terminal_run_command" ? (args.command as string) : undefined;
+            const browserStep = event.browser_step;
+            const permissionId = permissionRequestId(event);
+            const title = browserStep?.label || toolName;
+            permissions = [...permissions, {id:permissionId,toolName,title,description:event.description || browserStep?.reason,command:cmd,arguments:args,browserStep,status:"pending"}];
+            queueStreamFlush();
             setPendingApproval({
-              id: `perm-${Date.now()}`,
-              type: toolName === "terminal_run_command" ? "terminal" : "deploy",
-              title: `Permission Needed: ${toolName}`,
-              description: `Agent requested permission to execute high-risk action "${toolName}". Review parameters below.`,
+              id: permissionId,
+              messageId,
+              sessionId,
+              toolName,
+              arguments: args,
+              type: browserStep ? "browser" : toolName === "terminal_run_command" ? "terminal" : "deploy",
+              title: browserStep ? `Approve browser step ${browserStep.step_index + 1}: ${browserStep.label}` : `Permission Needed: ${toolName}`,
+              description: event.description || browserStep?.reason || `Agent requested permission to execute high-risk action "${toolName}". Review parameters below.`,
               command: cmd,
+              browserStep,
               action: async () => {
+                if (browserStep) {
+                  await sendStreaming("Approve this browser step and continue the website test.", undefined, true, event.token);
+                  return;
+                }
                 const approvalMsg = cmd
                   ? `Confirmed: Accept & run \`${cmd}\``
                   : `Confirmed: Approve execution of ${toolName}`;
-                await sendStreaming(approvalMsg);
+                await sendStreaming(approvalMsg, undefined, true, event.token);
               },
               onDecline: () => {
-                appendMessage({
-                  role: "assistant",
-                  content: `Execution of **${toolName}** was declined by user.`,
-                  meta: "Action Declined",
-                });
+                api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
+                setMessages(current => current.map(message => message.id === messageId ? {...message,permissions:message.permissions?.map(p => p.id === permissionId ? {...p,status:"declined"} : p)} : message));
               },
             });
           } else if (event.type === "agent_question") {
@@ -3015,10 +3015,14 @@ export default function AiAgentPage() {
             content = contentBuffer;
             queueStreamFlush();
           } else if (event.type === "error") {
-            contentBuffer += `\n\n_${event.error}_`;
+            streamFailed = true;
+            contentBuffer += `\n\n_${event.error || event.message || "The agent reported an error."}_`;
             content = contentBuffer;
             queueStreamFlush();
           } else if (event.type === "done") {
+            doneReceived = true;
+            doneStatus = event.stopped ? "stopped" : event.status;
+            doneVerified = event.verified;
             if (event.session_id && event.session_id !== activeSessionId) {
               setActiveSessionId(event.session_id);
               if (typeof window !== "undefined") {
@@ -3027,12 +3031,12 @@ export default function AiAgentPage() {
             }
             // The done frame carries the authoritative assembled text; trust it
             // over the accumulated deltas in case a frame was dropped.
-            content = event.content || contentBuffer;
-            reasoning = event.reasoning || reasoningBuffer;
+            content = event.content ? priorBody + event.content : contentBuffer;
+            reasoning = event.reasoning ? prevReasoning + event.reasoning : reasoningBuffer;
             contentBuffer = content;
             reasoningBuffer = reasoning;
             if (streamRafId !== null) {
-              cancelAnimationFrame(streamRafId);
+              clearTimeout(streamRafId);
               streamRafId = null;
             }
             flushStream();
@@ -3051,18 +3055,21 @@ export default function AiAgentPage() {
       });
 
       if (streamRafId !== null) {
-        cancelAnimationFrame(streamRafId);
+        clearTimeout(streamRafId);
         streamRafId = null;
       }
       flushStream();
+
+      if (!turnsRef.current.owns(turn)) return;
 
       if (controller.signal.aborted) {
         appendStoppedResponse();
       } else {
         messageAppended = true;
-        appendMessage({
-          role: "assistant",
-          content: content.trim() ? content : (toolCalls.length > 0 && toolCalls[toolCalls.length - 1].name === "ask_user_question" ? "Waiting for your input..." : (toolCalls.length > 0 ? "Completed workspace actions. See details above." : "_The model returned nothing._")),
+        const incompleteStream = !doneReceived && !streamFailed;
+        const responseBody = content.trim() ? content : streamOutcome(streamFailed ? "error" : incompleteStream ? "unverified" : doneStatus,
+          doneVerified, browserUsed, toolCalls.length > 0).text;
+        saveResponse(incompleteStream ? `${responseBody}\n\n_Stream ended before a completion result was received. This task remains unverified._` : responseBody, {
           reasoning: reasoning.trim() ? reasoning : undefined,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           subagents: subagents.length > 0 ? subagents : undefined,
@@ -3070,23 +3077,25 @@ export default function AiAgentPage() {
         });
       }
     } catch (error) {
+      if (!turnsRef.current.owns(turn)) return;
+      streamFailed = true;
       if (controller.signal.aborted) {
         appendStoppedResponse();
       } else {
-        appendMessage({
-          role: "assistant",
-          content: errorMessage(error, "Streaming failed."),
-        });
+        saveResponse(joinContinuation(content,errorMessage(error, "Streaming failed.")));
       }
     } finally {
       if (streamRafId !== null) {
-        cancelAnimationFrame(streamRafId);
+        clearTimeout(streamRafId);
         streamRafId = null;
       }
       if (controller.signal.aborted) {
         appendStoppedResponse();
       }
+      if (!turnsRef.current.finish(turn)) return;
       setIsStreaming(false);
+      setStreamMessageId("");
+      approvedMessageRef.current = null;
       setStreamReasoning("");
       setStreamContent("");
       setStreamToolCalls([]);
@@ -3094,7 +3103,9 @@ export default function AiAgentPage() {
       streamAbortRef.current = null;
       if (typeof window !== "undefined") {
         try {
-          window.dispatchEvent(new CustomEvent("stackpilot:browser:test_completed"));
+          if (doneReceived && !controller.signal.aborted && !streamFailed && streamOutcome(doneStatus, doneVerified, browserUsed, toolCalls.length > 0).browserCompleted) {
+            window.dispatchEvent(new CustomEvent("stackpilot:browser:test_completed"));
+          }
         } catch {}
       }
       queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] });
@@ -3102,7 +3113,51 @@ export default function AiAgentPage() {
     }
   };
 
-  const isRunning = isStreaming || runAgentMutation.isPending || commandMutation.isPending || autonomousDeployMutation.isPending;
+  const isRunning = remoteWorkRunning || !!browserSwitchPending || isStreaming || runAgentMutation.isPending || commandMutation.isPending || autonomousDeployMutation.isPending;
+
+  const approvePendingPermission = async (permission: NonNullable<typeof pendingApproval>) => {
+    if (pendingApprovalRef.current !== permission || turnsRef.current.current || isRunning) return;
+    if (permission.sessionId && permission.sessionId !== activeSessionIdRef.current) {
+      setPendingApproval(null);
+      toast.info("The active chat changed. Request a fresh review before approving this step.");
+      return;
+    }
+    setPendingApproval(null);
+    const id=permission.messageId || [...messagesRef.current].reverse().find(m=>m.role === "assistant")?.id;
+    approvedMessageRef.current=id || null;
+    if (id) {
+      const updated=messagesRef.current.map(m=>m.id === id ? {...m,permissions:(m.permissions || [{...permission,status:"pending" as const}]).map(p=>p.id === permission.id ? {...p,status:"approved" as const} : p)} : m);
+      messagesRef.current=updated;
+      setMessages(updated);
+    }
+    try { await permission.action(); } finally { approvedMessageRef.current=null; }
+  };
+
+  const declinePendingPermission = (permission: NonNullable<typeof pendingApproval>) => {
+    if (pendingApprovalRef.current !== permission) return;
+    turnsRef.current.cancel();
+    setPendingApproval(null);
+    const id=permission.messageId || [...messagesRef.current].reverse().find(m=>m.role === "assistant")?.id;
+    approvedMessageRef.current=id || null;
+    if (id) setMessages(current=>current.map(m=>m.id === id ? {...m,permissions:(m.permissions || [{...permission,status:"pending" as const}]).map(p=>p.id === permission.id ? {...p,status:"declined" as const} : p)} : m));
+    try { permission.onDecline(); } finally { approvedMessageRef.current=null; }
+  };
+
+  const changeTargetUrl = (url: string) => {
+    discardActiveTurn();
+    setCustomTargetUrl(url);
+  };
+
+  const closeBrowser = useCallback(() => setBrowserOpen(false), []);
+
+  const observeBrowserUrl = useCallback((url: string) => {
+    const permission = pendingApprovalRef.current;
+    if (permission?.browserStep && permission.browserStep.url !== url) {
+      setPendingApproval(null);
+      if (permission.sessionId) api.post("/ai/chat/stop", { session_id: permission.sessionId }).catch(() => {});
+    }
+    if (url && !url.includes("localhost:3000") && !url.includes("127.0.0.1:3000") && url !== "about:blank") setCustomTargetUrl(url);
+  }, []);
 
   // The verb is picked from what was actually asked, so the indicator keys off
   // the most recent user turn rather than the composer (which is cleared on
@@ -3162,14 +3217,23 @@ export default function AiAgentPage() {
   };
 
   const handleAllowToolCall = async (call: ToolCall) => {
-    // 1. Clear pending approval banner if matching
-    if (pendingApproval) {
-      const action = pendingApproval.action;
-      setPendingApproval(null);
-      if (action) {
-        await action();
+    const permission = pendingApprovalRef.current;
+    if (turnsRef.current.current) {
+      toast.info("Wait for the current turn to finish before approving an action.");
+      return;
+    }
+    if (permission) {
+      if (!permissionMatchesCall(permission, call)) {
+        toast.info("This tool row belongs to another step. Review the current permission banner.");
         return;
       }
+      await approvePendingPermission(permission);
+      return;
+    }
+    if (call.name.startsWith("browser_")) {
+      toast.info("This saved step needs a fresh review of the current page before approval.");
+      await sendStreaming("Review the current page before continuing this website test, and ask for fresh approval of any critical step.");
+      return;
     }
 
     // 2. Interactive execution for terminal commands
@@ -3228,9 +3292,9 @@ export default function AiAgentPage() {
   };
 
   const handleDenyToolCall = (call: ToolCall) => {
-    if (pendingApproval) {
-      pendingApproval.onDecline?.();
-      setPendingApproval(null);
+    const permission = pendingApprovalRef.current;
+    if (permission && permissionMatchesCall(permission, call)) {
+      declinePendingPermission(permission);
     }
     const declinedResult = { status: "declined", error: "User declined execution of this tool." };
     setStreamToolCalls((current) =>
@@ -3273,6 +3337,7 @@ export default function AiAgentPage() {
   };
 
   const handleBranchChat = async (messageIndex: number) => {
+    discardActiveTurn();
     const branchMessages = messages.slice(0, messageIndex + 1);
     if (activeSessionId) {
       try {
@@ -3443,11 +3508,41 @@ export default function AiAgentPage() {
     </div>
   );
 
+  const browserSessionPlaceholder = (
+    <div className="flex h-full flex-col items-center justify-center gap-3 rounded-xl border border-border bg-background px-6 text-center" role="status" aria-live="polite">
+      {browserSessionError ? (
+        <>
+          <p className="text-sm text-muted-foreground">{browserSessionError}</p>
+          <Button variant="outline" size="sm" onClick={() => setBrowserSessionRetry(attempt => attempt + 1)}>Retry connection</Button>
+        </>
+      ) : (
+        <>
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
+          <p className="text-xs text-muted-foreground">Preparing Live App…</p>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <>
-      <div className="flex h-full min-h-0 overflow-hidden bg-background text-foreground">
-        <section className="flex min-w-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center justify-between border-b border-border/40 px-6 py-3">
+      <Dialog open={mobileOptionsOpen} onOpenChange={setMobileOptionsOpen}>
+        <DialogContent className="max-w-sm" data-mobile-chat-options>
+          <DialogHeader>
+            <DialogTitle>Chat options</DialogTitle>
+            <DialogDescription>Choose context or add something to your message.</DialogDescription>
+          </DialogHeader>
+          <div className="grid min-w-0 gap-1">
+            <Button variant="ghost" className="justify-start gap-3" disabled={isRunning} onClick={() => { setMobileOptionsOpen(false); fileInputRef.current?.click(); }}><Paperclip className="size-4" />Attach files or photos</Button>
+            <Button variant="ghost" className="justify-start gap-3" onClick={() => { setMobileOptionsOpen(false); setCommandPickerOpen(true); setProjectOpen(false); }}><FilledStarIcon className="size-4" />Commands</Button>
+            <Button variant="ghost" className="h-auto min-w-0 justify-start gap-3 py-3 text-left" onClick={() => { setMobileOptionsOpen(false); setProjectOpen(true); setCommandPickerOpen(false); }}><Layers className="size-4 shrink-0" /><span className="min-w-0"><span className="block">Choose project or website</span><span className="block truncate text-xs text-muted-foreground">{customTargetUrl || selectedProject?.name || "All projects"}</span></span></Button>
+            {customTargetUrl && <Button variant="ghost" className="justify-start gap-3" onClick={() => { changeTargetUrl(""); setMobileOptionsOpen(false); }}><X className="size-4" />Clear website target</Button>}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <div className="flex h-full min-h-0 min-w-0 overflow-hidden bg-background text-foreground">
+        <section className={cn("min-h-0 min-w-0 flex-1 flex-col", browserOpen && !isDesktop ? "hidden" : "flex")}>
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/40 px-3 py-2 sm:px-6 sm:py-3">
           <div className="flex items-center gap-2">
             <Button
               type="button"
@@ -3498,7 +3593,7 @@ export default function AiAgentPage() {
               title="Toggle Live Application Screen (Computer Use)"
             >
               <Globe className="h-3.5 w-3.5 text-sky-400" />
-              <span>Live App</span>
+              <span className="sr-only sm:not-sr-only">Live App</span>
               {browserActive && (
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               )}
@@ -3515,12 +3610,12 @@ export default function AiAgentPage() {
               title="Toggle Workspace Terminal"
             >
               <AppIcon name="terminal" fallback={Terminal} className="h-3.5 w-3.5 mr-1" />
-              Terminal
+              <span className="sr-only sm:not-sr-only">Terminal</span>
             </Button>
             <Link href="/dashboard/ai/history">
               <Button type="button" variant="ghost" size="sm" className="h-8 gap-1.5 px-3 text-xs text-muted-foreground hover:text-foreground">
                 <AppIcon name="clock" fallback={Clock} className="h-3.5 w-3.5" />
-                History
+                <span className="sr-only sm:not-sr-only">History</span>
               </Button>
             </Link>
             <Button
@@ -3536,56 +3631,69 @@ export default function AiAgentPage() {
           </div>
         </header>
 
-        <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-8 md:px-8">
-          <div className="mx-auto flex max-w-5xl flex-col gap-6">
+        <div ref={scrollRef} onScroll={handleChatScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-2 py-3 sm:px-4 sm:py-8 md:px-8">
+          <div className="mx-auto flex max-w-5xl flex-col gap-3 sm:gap-6">
+            {activeSession?.session_type === "sre_incident" && visibleMessages.length === 0 && (
+              <div className="rounded-xl border border-border bg-card px-5 py-4 text-sm" role="status" aria-live="polite">
+                <div className="flex items-center gap-2 font-medium">
+                  {activeSession.status === "healing" && <Loader2 className="h-4 w-4 animate-spin text-amber-400" aria-hidden="true" />}
+                  {activeSession.status === "healing" ? "Preparing deployment recovery" : "Deployment recovery update"}
+                </div>
+                <p className="mt-1 text-muted-foreground">
+                  {activeSession.status === "healing"
+                    ? "Checking the failed build and starting the AI repair agent. Steps will appear here as they are recorded."
+                    : "This recovery did not record any visible steps. Check the deployment logs for the failure reason."}
+                </p>
+              </div>
+            )}
+            <RemoteRunRecovery sessionId={activeSessionId} busy={isStreaming || isSessionLoading}
+              onWorking={setRemoteWorkRunning}
+              onSettled={() => { void loadSession(activeSessionId, true).catch(() => {}); }}
+              onPermission={event => {
+                const toolName=event.tool_name || "Action";
+                const id=permissionRequestId(event);
+                const messageId=[...messagesRef.current].reverse().find(message=>message.role === "assistant")?.id;
+                const permission:MessagePermission={id,toolName,title:toolName,arguments:event.arguments,description:event.description,browserStep:event.browser_step,status:"pending"};
+                if(messageId)setMessages(current=>current.map(message=>message.id === messageId ? {...message,permissions:[
+                  ...(message.permissions || []).filter(old=>old.id !== id && (old.id || !permissionMatchesCall(permission,{name:old.toolName || "",arguments:old.arguments}))),permission
+                ]} : message));
+                setPendingApproval({id,messageId,sessionId:activeSessionId,toolName,arguments:event.arguments,
+                  type:event.browser_step ? "browser" : "deploy",title:toolName,description:event.description || "Approve this exact action to continue.",browserStep:event.browser_step,
+                  action:async()=>{await sendStreaming("Approve this exact step and continue.",undefined,true,event.token);},
+                  onDecline:()=>{void api.post("/ai/chat/stop",{session_id:activeSessionId}).catch(()=>{});}
+                });
+              }}
+              onQuestion={event => {
+                setAgentQuestionAnswers(Object.fromEntries((event.fields || []).map(f => [f.id, f.default_value || f.options?.[0] || ""])));
+                setPendingAgentQuestion({id: event.question_id, question: event.question, fields: event.fields || []});
+              }} />
+            {sessionRefreshError && activeSession?.session_type === "sre_incident" && (
+              <p className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">{sessionRefreshError}</p>
+            )}
             {messages.filter(m => !(m.role === "user" && m.content.startsWith("[System]"))).map((message, messageIndex) => (
               <div
                 key={message.id}
-                className={cn("flex gap-3", message.role === "user" ? "justify-end" : "justify-start")}
+                data-chat-message={message.role}
+                data-message-id={message.id}
+                className={cn("flex gap-2 sm:gap-3", message.role === "user" ? "justify-end" : "justify-start")}
               >
                 {message.role !== "user" && (
-                  <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-background">
-                    <AppIcon name="star" fallback={Star} className="h-4 w-4"  />
+                  <div className="mt-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border bg-background sm:flex">
+                    <AppIcon name="star" fallback={Star} className="h-3.5 w-3.5 sm:h-4 sm:w-4"  />
                   </div>
                 )}
                 <div
                   className={cn(
-                    "min-w-0 max-w-[min(56rem,88%)] rounded-2xl px-5 py-4 overflow-hidden break-words",
-                    message.role === "user" ? "bg-primary text-primary-foreground" : "border border-border bg-background"
+                    "min-w-0 overflow-hidden break-words text-[13px] sm:max-w-[min(56rem,88%)] sm:rounded-2xl sm:px-5 sm:py-4 sm:text-sm",
+                    message.role === "user" ? "max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-foreground sm:bg-primary sm:text-primary-foreground" : "w-full max-w-full px-2 py-2 sm:w-auto sm:border sm:border-border sm:bg-background"
                   )}
                 >
-                  {(() => {
-                    const parsed = message.role === "assistant"
-                      ? parseAssistantMessageContent(message.content, message.reasoning, message.subagents, message.toolCalls)
-                      : { content: message.content, reasoningBlocks: [], subagents: [] };
-
-                    const mainToolCalls = message.toolCalls?.filter(
-                      (tc) => tc.name !== "invoke_subagent" && tc.name !== "subagent_spawn"
-                    );
-
-                    return (
-                      <>
-                        {message.role === "assistant" && (
-                          <ThinkingPanel
-                            reasoning={parsed.reasoningBlocks.length > 0 ? parsed.reasoningBlocks : undefined}
-                            stats={message.stats}
-                            orbStyle={orbStyle}
-                          />
-                        )}
-                        {message.role === "assistant" && parsed.subagents && parsed.subagents.length > 0 && (
-                          <SubagentsPanel
-                            subagents={parsed.subagents}
-                            onOpenTerminal={openTerminalWithCommand}
-                          />
-                        )}
-                        {message.role === "assistant" && mainToolCalls && mainToolCalls.length > 0 && (
-                          <ToolsPanel
-                            toolCalls={mainToolCalls}
-                            onOpenTerminal={openTerminalWithCommand}
-                            onAllow={handleAllowToolCall}
-                            onDeny={handleDenyToolCall}
-                          />
-                        )}
+                  {message.role === "assistant" && <AssistantMessageBody message={message} generating={isStreaming && message.id === streamMessageId} orbStyle={orbStyle} onOpenTerminal={openTerminalWithCommand} />}
+                  {message.role === "assistant" && <PermissionsPanel
+                    permissions={message.permissions?.length ? message.permissions : pendingApproval && !pendingApproval.messageId && messageIndex === messages.length - 1 ? [{...pendingApproval,status:"pending"}] : []}
+                    pendingId={pendingApproval?.id} disabled={isRunning}
+                    onApprove={() => { if (pendingApproval) void approvePendingPermission(pendingApproval); }}
+                    onDecline={() => { if (pendingApproval) declinePendingPermission(pendingApproval); }} />}
                         {message.role === "assistant" && pendingAgentQuestion && messageIndex === messages.filter(m => !(m.role === "user" && m.content.startsWith("[System]"))).length - 1 && (
                           <div className="mt-3 rounded-xl border border-border bg-card p-4 shadow-sm animate-in fade-in slide-in-from-bottom-2">
                             <div className="flex items-start gap-3.5">
@@ -3645,8 +3753,8 @@ export default function AiAgentPage() {
                                       setAgentQuestionAnswers({});
                                       const replyStr = Object.entries(answers)
                                         .map(([k, v]) => `${k}: ${v}`)
-                                        .join("\\n");
-                                      await sendStreaming(`[System] User answered the question:\\n${replyStr}`, undefined, true);
+                                        .join("\n");
+                                      await sendStreaming(`[System] User answered the question:\n${replyStr}`, undefined, true);
                                     }}
                                   >
                                     Submit & Continue
@@ -3657,7 +3765,7 @@ export default function AiAgentPage() {
                             </div>
                           </div>
                         )}
-                        {message.role === "user" ? (
+                        {message.role === "user" && (
                           <div className="space-y-2">
                             {message.images && message.images.length > 0 && (
                               <div className="flex flex-wrap gap-2 mb-2">
@@ -3666,24 +3774,16 @@ export default function AiAgentPage() {
                                     key={i}
                                     src={imgUrl}
                                     alt={`Attachment ${i + 1}`}
-                                    className="max-h-52 max-w-xs rounded-xl border border-white/20 object-cover shadow-sm"
+                                    className="max-h-52 max-w-full rounded-xl border border-white/20 object-cover shadow-sm"
                                   />
                                 ))}
                               </div>
                             )}
-                            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{message.content}</p>
-                          </div>
-                        ) : (
-                          <div className="prose-ai min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm leading-relaxed">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                              {parsed.content}
-                            </ReactMarkdown>
+                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[13px] leading-relaxed sm:text-sm">{message.content}</p>
                           </div>
                         )}
-                      </>
-                    );
-                  })()}
-                  {message.role === "assistant" && (
+                  {isStreaming && message.id === streamMessageId && <Button size="sm" variant="ghost" className="mt-2 h-7 text-xs text-muted-foreground" onClick={handleStopGeneration}><Square className="size-3" />Stop generation</Button>}
+                  {message.role === "assistant" && !(isStreaming && message.id === streamMessageId) && (
                     <div className="mt-2.5 flex items-center gap-0.5 text-muted-foreground">
                       <Button
                         type="button"
@@ -3728,138 +3828,6 @@ export default function AiAgentPage() {
                 </div>
               </div>
             ))}
-            {isStreaming && (
-              <div className="flex justify-start">
-                <div className="min-w-0 max-w-[min(56rem,88%)] rounded-2xl border border-border bg-background px-5 py-4 overflow-hidden break-words">
-                  {(() => {
-                    const parsedStream = parseAssistantMessageContent(
-                      streamContent,
-                      streamReasoning,
-                      streamSubagents,
-                      streamToolCalls
-                    );
-                    const streamMainToolCalls = streamToolCalls.filter(
-                      (tc) => tc.name !== "invoke_subagent" && tc.name !== "subagent_spawn"
-                    );
-                    return (
-                      <>
-                        {(parsedStream.reasoningBlocks.length > 0 || isStreaming) && (
-                          <ThinkingPanel
-                            isGenerating={isStreaming}
-                            reasoning={
-                              parsedStream.reasoningBlocks.length > 0
-                                ? parsedStream.reasoningBlocks
-                                : "Initializing workspace context and analyzing request..."
-                            }
-                            orbStyle={orbStyle}
-                          />
-                        )}
-                        {parsedStream.subagents && parsedStream.subagents.length > 0 && (
-                          <SubagentsPanel
-                            subagents={parsedStream.subagents}
-                            isGenerating={isStreaming}
-                            onOpenTerminal={openTerminalWithCommand}
-                          />
-                        )}
-                        {streamMainToolCalls.length > 0 && (
-                          <ToolsPanel
-                            toolCalls={streamMainToolCalls}
-                            isGenerating={isStreaming}
-                            onOpenTerminal={openTerminalWithCommand}
-                            onAllow={handleAllowToolCall}
-                            onDeny={handleDenyToolCall}
-                          />
-                        )}
-                        {parsedStream.content && (
-                          <div className="prose-ai min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-sm leading-relaxed">
-                            <AnimatedMarkdown
-                              content={parsedStream.content}
-                              animation="blurIn"
-                              animationDuration="0.4s"
-                              animationTimingFunction="ease-out"
-                              sep="diff"
-                            />
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                  <button
-                    type="button"
-                    onClick={handleStopGeneration}
-                    className="mt-3 inline-flex items-center gap-1.5 text-xs text-rose-500 hover:text-rose-600 font-medium px-2 py-1 rounded bg-rose-500/10 hover:bg-rose-500/20 transition-colors cursor-pointer"
-                  >
-                    <Square className="h-3 w-3 fill-current" />
-                    <span>Stop generation</span>
-                  </button>
-                </div>
-              </div>
-            )}
-            {pendingApproval && (
-              <div className="my-2 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 shadow-sm animate-in fade-in slide-in-from-bottom-2">
-                <div className="flex items-start gap-3.5">
-                  <div className="rounded-xl bg-amber-500/20 p-2.5 text-amber-500 shrink-0">
-                    <ShieldAlert className="h-5 w-5" />
-                  </div>
-                  <div className="flex-1 space-y-2 min-w-0">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <h4 className="font-semibold text-foreground text-sm">{pendingApproval.title}</h4>
-                      <Badge variant="outline" className="border-amber-500/40 text-amber-500 text-[10px] uppercase tracking-wider font-mono">
-                        Permission Required
-                      </Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed break-words">
-                      {pendingApproval.description}
-                    </p>
-                    {pendingApproval.command && (
-                      <pre className="rounded-lg bg-zinc-950/80 p-2.5 font-mono text-xs text-emerald-400 overflow-x-auto border border-zinc-800">
-                        <span className="text-zinc-500 select-none">$ </span>{pendingApproval.command}
-                      </pre>
-                    )}
-                    <div className="flex items-center gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs h-8 px-3.5 gap-1.5 shadow-sm"
-                        onClick={async () => {
-                          const act = pendingApproval.action;
-                          setPendingApproval(null);
-                          await act();
-                        }}
-                      >
-                        <Check className="h-3.5 w-3.5" />
-                        Accept & Run
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-border hover:bg-rose-500/10 hover:text-rose-500 font-medium text-xs h-8 px-3.5 gap-1.5"
-                        onClick={() => {
-                          const dec = pendingApproval.onDecline;
-                          setPendingApproval(null);
-                          dec();
-                        }}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                        Decline
-                      </Button>
-                      {pendingApproval.command && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="font-medium text-xs h-8 px-3 gap-1.5"
-                          onClick={() => {
-                            openTerminalWithCommand(pendingApproval.command);
-                          }}
-                        >
-                          <Terminal className="h-3.5 w-3.5 text-emerald-500" />
-                          Inspect in Terminal
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
             {isRunning && !isStreaming && (
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                 {orbStyle !== "off" && (
@@ -3885,7 +3853,7 @@ export default function AiAgentPage() {
           onInitialCommandConsumed={() => setTerminalInitialCommand(undefined)}
         />
 
-        <div className="sticky bottom-0 z-20 shrink-0 bg-gradient-to-t from-background via-background/95 to-transparent px-4 pb-4 pt-2 md:px-6">
+        <div className="sticky bottom-0 z-20 shrink-0 bg-gradient-to-t from-background via-background/95 to-transparent px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-4 md:px-6">
           <div ref={composerRef} className="relative mx-auto max-w-5xl">
             {/* Floating Scroll to Bottom Button - Positioned directly above the right side of the chat box */}
             {showScrollBottom && (
@@ -4017,16 +3985,22 @@ export default function AiAgentPage() {
               </div>
             )}
 
-            <div className="relative rounded-2xl border border-border bg-background px-3 py-2 shadow-sm">
+            <div data-chat-composer ref={composerBoxRef} className="relative min-w-0 rounded-2xl border border-border bg-background px-2 py-2 shadow-sm sm:px-3">
               {/* Popovers rendered at the chat-box level so they NEVER get clipped by horizontal overflow or masks */}
               {commandPickerOpen && (
-                <div className="absolute bottom-full left-3 z-50 mb-2 w-96 max-w-[calc(100vw-3rem)]">
+                <div
+                  className="absolute z-50 w-full max-w-full sm:w-96 sm:max-w-[calc(100vw-3rem)]"
+                  style={{ left: pickerOffsets.commandLeft, bottom: pickerOffsets.commandBottom }}
+                >
                   {renderCommandPicker()}
                 </div>
               )}
 
               {projectOpen && (
-                <div className="absolute bottom-full left-4 sm:left-36 z-50 mb-2 w-64 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl">
+                <div
+                  className="absolute z-50 w-full max-w-full rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-xl sm:w-64"
+                  style={{ left: pickerOffsets.projectLeft, bottom: pickerOffsets.projectBottom }}
+                >
                   <div className="px-2.5 py-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                     Target Project
                   </div>
@@ -4135,7 +4109,14 @@ export default function AiAgentPage() {
                 </div>
               )}
 
+              {(selectedProject || customTargetUrl) && <div className="mb-1 flex min-w-0 sm:hidden">
+                <button type="button" aria-label="Change chat target" className="flex min-w-0 max-w-full items-center gap-2 rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted" onClick={() => { setProjectOpen(open => !open); setCommandPickerOpen(false); }}>
+                  {customTargetUrl ? <Globe className="size-3.5 shrink-0" /> : <Layers className="size-3.5 shrink-0" />}
+                  <span className="truncate">{customTargetUrl?.replace(/^https?:\/\//, "") || selectedProject?.name}</span><ChevronDown className="size-3 shrink-0" />
+                </button>
+              </div>}
               <textarea
+                aria-label="Message StackPilot"
                 ref={textareaRef}
                 value={input}
                 onChange={(event) => {
@@ -4159,10 +4140,18 @@ export default function AiAgentPage() {
                 rows={1}
                 className="max-h-44 min-h-10 w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground"
               />
-              <div className="relative flex items-center justify-between gap-1 pt-1 min-w-0">
+              <div data-mobile-composer-controls className="flex min-w-0 items-center gap-1 pt-1 sm:hidden">
+                <Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" aria-label="Chat options" onClick={() => { closePickers(); setMobileOptionsOpen(true); }}><Plus className="size-5" /></Button>
+                <Button type="button" variant="ghost" className="h-11 min-w-0 flex-1 justify-start gap-1.5 px-2 text-xs" aria-label={`Choose model: ${modelLabel(activeModel)}`} onClick={() => setModelPickerOpen(true)} suppressHydrationWarning>
+                  <span className="truncate" suppressHydrationWarning>{mode === "thinking" ? "Think" : isVisionActive ? "Vision" : "Fast"} · {mounted ? shortId(modelLabel(activeModel).split("/").pop() || "Select model", 16) : "Select model"}</span><ChevronDown className="size-3 shrink-0" />
+                </Button>
+                <Button type="button" variant={isListening ? "destructive" : "ghost"} size="icon" className="size-11 shrink-0 rounded-full" disabled={isRunning} onClick={toggleListening} aria-label={isListening ? "Stop voice input" : "Start voice input"}>{isListening ? <Square className="size-4" /> : <Mic className="size-4" />}</Button>
+                <Button type="button" size="icon" className="size-11 shrink-0 rounded-full" onClick={isStreaming ? handleStopGeneration : submit} disabled={!isStreaming && ((!input.trim() && attachments.length === 0) || isRunning)} aria-label={isStreaming ? "Stop generating response" : "Send message"}>{isStreaming ? <Square className="size-4 fill-current" /> : isRunning ? <Loader2 className="size-4 animate-spin" /> : <ArrowDown className="size-5 rotate-180" />}</Button>
+              </div>
+              <div className="relative hidden min-w-0 items-center justify-between gap-1 pt-1 sm:flex">
                 {/* Scrollable Left Controls Track with Right Fade Mask */}
                 <div
-                  className="flex items-center gap-1.5 min-w-0 flex-1 overflow-x-auto no-scrollbar scroll-smooth py-0.5 pr-6 [mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent_100%)]"
+                  className="flex w-full min-w-0 items-center gap-1.5 overflow-x-auto overscroll-x-contain py-0.5 sm:w-auto sm:flex-1 sm:pr-6 sm:[mask-image:linear-gradient(to_right,black_calc(100%-2.5rem),transparent_100%)]"
                   onWheel={(e) => {
                     if (e.deltaY !== 0 && e.currentTarget.scrollWidth > e.currentTarget.clientWidth) {
                       e.currentTarget.scrollLeft += e.deltaY;
@@ -4196,6 +4185,7 @@ export default function AiAgentPage() {
                   </Button>
 
                   <Button
+                    ref={commandButtonRef}
                     type="button"
                     variant="secondary"
                     size="sm"
@@ -4231,7 +4221,7 @@ export default function AiAgentPage() {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setCustomTargetUrl("");
+                          changeTargetUrl("");
                         }}
                         className="p-0.5 hover:bg-sky-500/20 rounded text-sky-400 hover:text-sky-200 transition-colors"
                         title="Clear custom target URL"
@@ -4241,6 +4231,7 @@ export default function AiAgentPage() {
                     </div>
                   ) : (
                     <Button
+                      ref={projectButtonRef}
                       type="button"
                       variant="secondary"
                       size="sm"
@@ -4267,7 +4258,7 @@ export default function AiAgentPage() {
                 </div>
 
                 {/* Pinned Right Controls Group with Gradient Overlay */}
-                <div className="relative flex items-center gap-1.5 shrink-0 ml-auto pl-1.5 bg-background z-10">
+                <div className="relative z-10 ml-auto flex shrink-0 items-center gap-1.5 bg-background sm:pl-1.5">
                   {/* Fade gradient overlay to the left of the right buttons */}
                   <div className="pointer-events-none absolute -left-8 top-0 bottom-0 w-8 bg-gradient-to-r from-transparent to-background" />
 
@@ -4365,6 +4356,24 @@ export default function AiAgentPage() {
         </div>
         </section>
 
+        {/* Phones use a dedicated view in the dashboard instead of a floating
+            desktop window over messages. The chat stays mounted with its draft. */}
+        {browserOpen && !isDesktop && (
+          <div data-mobile-computer className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+            {activeSessionId ? <InteractiveBrowserCanvas
+              sessionId={activeSessionId}
+              initialUrl={canvasTargetUrl}
+              sandboxMode={browserSandboxMode}
+              isOpen={browserOpen}
+              onClose={closeBrowser}
+              embedded
+              closeLabel="Back to chat"
+              className="rounded-none border-0 shadow-none"
+              onUrlChange={observeBrowserUrl}
+            /> : <div className="flex min-h-0 flex-1 flex-col"><Button variant="ghost" className="self-end" aria-label="Close browser" onClick={closeBrowser}>Back to chat</Button>{browserSessionPlaceholder}</div>}
+          </div>
+        )}
+
         {/* Live Application Canvas Drawer (Desktop Side-by-Side Split View) */}
         {browserOpen && isDesktop && (
           <>
@@ -4397,40 +4406,19 @@ export default function AiAgentPage() {
               style={{ width: `${drawerWidth}px` }}
               className="flex h-full border-l border-border/60 bg-muted/10 p-3 flex-col shrink-0 relative"
             >
-              <InteractiveBrowserCanvas
-                sessionId={activeSessionId || "default"}
+              {activeSessionId ? <InteractiveBrowserCanvas
+                sessionId={activeSessionId}
                 initialUrl={canvasTargetUrl}
+                sandboxMode={browserSandboxMode}
                 isOpen={browserOpen}
-                onClose={() => setBrowserOpen(false)}
+                onClose={closeBrowser}
                 embedded={true}
-                onUrlChange={(url) => {
-                  if (url && !url.includes("localhost:3000") && !url.includes("127.0.0.1:3000") && url !== "about:blank") {
-                    setCustomTargetUrl(url);
-                  }
-                }}
-              />
+                onUrlChange={observeBrowserUrl}
+              /> : browserSessionPlaceholder}
             </div>
           </>
         )}
       </div>
-
-      {/* Floating Modal for Mobile / Small Screens */}
-      {browserOpen && !isDesktop && (
-        <div className="fixed inset-3 z-50 shadow-2xl">
-          <InteractiveBrowserCanvas
-            sessionId={activeSessionId || "default"}
-            initialUrl={canvasTargetUrl}
-            isOpen={browserOpen}
-            onClose={() => setBrowserOpen(false)}
-            embedded={false}
-            onUrlChange={(url) => {
-              if (url && !url.includes("localhost:3000") && !url.includes("127.0.0.1:3000") && url !== "about:blank") {
-                setCustomTargetUrl(url);
-              }
-            }}
-          />
-        </div>
-      )}
 
       <Dialog
         open={settingsOpen}
@@ -4439,7 +4427,7 @@ export default function AiAgentPage() {
           if (!open) closePickers();
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl max-w-[95vw] p-6">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-6xl max-w-[calc(100vw-2rem)] [--dialog-padding:1.25rem] sm:[--dialog-padding:1.75rem]">
           <DialogHeader>
             <DialogTitle>Agent Settings</DialogTitle>
             <DialogDescription>Configure provider keys, model, reasoning mode, project context, and deployment context.</DialogDescription>
@@ -4529,18 +4517,19 @@ export default function AiAgentPage() {
                       <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0ZM8.94 6.94a.75.75 0 1 1-1.061-1.061 .75.75 0 0 1 1.06 1.06ZM10 16.25a.75.75 0 0 1-.75-.75v-5a.75.75 0 0 1 1.5 0v5a.75.75 0 0 1-.75.75Z" clipRule="evenodd" />
                     </svg>
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">
-                      <p className="font-medium mb-1">Local vs Remote</p>
-                      <p><span className="font-semibold">Local:</span> Runs in Docker on your machine. No extra setup, but lower FPS (~30-45fps) due to CPU encoding.</p>
-                      <p className="mt-1"><span className="font-semibold">Remote:</span> Runs on a GPU-accelerated cloud VM. Smooth 60fps streaming with hardware encoding. Requires AWS setup.</p>
+                      <p className="font-medium mb-1">Browser modes</p>
+                      <p><span className="font-semibold">Local:</span> Runs in Docker with adaptive capture and hardware encoding when available.</p>
+                      <p className="mt-1"><span className="font-semibold">Remote:</span> Runs on a configured remote browser worker. Performance depends on its hardware and network.</p>
                     </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-muted/30 p-1">
+                <div aria-busy={!!browserSwitchPending} className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-muted/30 p-1">
                   <Button
                     type="button"
-                    variant={browserSandboxMode === "local" ? "default" : "ghost"}
+                    variant={(browserSwitchPending || browserSandboxMode) === "local" ? "default" : "ghost"}
                     size="sm"
-                    onClick={() => setBrowserSandboxMode("local")}
+                    onClick={() => selectBrowserSandboxMode("local")}
+                    disabled={!!browserSwitchPending}
                     className="gap-1.5"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
@@ -4550,9 +4539,10 @@ export default function AiAgentPage() {
                   </Button>
                   <Button
                     type="button"
-                    variant={browserSandboxMode === "remote" ? "default" : "ghost"}
+                    variant={(browserSwitchPending || browserSandboxMode) === "remote" ? "default" : "ghost"}
                     size="sm"
-                    onClick={() => setBrowserSandboxMode("remote")}
+                    onClick={() => selectBrowserSandboxMode("remote")}
+                    disabled={!!browserSwitchPending}
                     className="gap-1.5"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
@@ -4560,12 +4550,15 @@ export default function AiAgentPage() {
                     </svg>
                     Remote
                   </Button>
+                  <Button type="button" size="sm" disabled={!!browserSwitchPending} variant={(browserSwitchPending || browserSandboxMode) === "host" ? "default" : "ghost"} onClick={() => selectBrowserSandboxMode("host")}>Host Chrome</Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {browserSandboxMode === "local"
-                    ? "Browser testing runs locally in Docker. Good for development with no extra setup needed."
-                    : "Browser testing runs on a remote GPU VM for smooth 60fps. Configure BROWSER_SANDBOX_URL in .env."}
+                  {browserSwitchPending ? `Connecting to ${browserSwitchPending === "host" ? "Host Chrome" : browserSwitchPending === "remote" ? "Remote" : "Local"} for this chat…` : browserSandboxMode === "local"
+                    ? "Runs locally in Docker with adaptive streaming."
+                    : browserSandboxMode === "host" ? "Uses the dedicated host Chrome worker for this chat."
+                    : "Uses the configured remote browser worker."}
                 </p>
+                {browserSwitchError && <p role="alert" className="text-xs text-destructive">{browserSwitchError}</p>}
               </div>
 
               <div className="space-y-2">
@@ -4793,167 +4786,20 @@ export default function AiAgentPage() {
 
             {/* Right Column: Where it runs & Permissions */}
             <div className="space-y-6">
-            {/* ── 2. Where it runs ──────────────────────────────── */}
-            <section className="space-y-3">
-              <div>
-                <h3 className="text-sm font-medium">Where it runs</h3>
-                <p className="text-xs text-muted-foreground">
-                  Which service answers, and the key used to reach it. Changes here need saving.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Provider</Label>
-                <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-muted/30 p-1">
-                  <Button
-                    type="button"
-                    variant={provider === "nvidia_nim" ? "default" : "ghost"}
-                    onClick={() => setProvider("nvidia_nim")}
-                  >
-                    NVIDIA
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={provider === "openai_compatible" ? "default" : "ghost"}
-                    onClick={() => setProvider("openai_compatible")}
-                  >
-                    OpenAI-compatible
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {provider === "nvidia_nim" ? (
-                  settingsQuery.data?.has_nvidia_key ? (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-emerald-600 dark:text-emerald-400">
-                      <AppIcon name="check" fallback={Check} className="h-3 w-3" />
-                      NVIDIA key saved
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
-                      No NVIDIA key saved yet
-                    </span>
-                  )
-                ) : settingsQuery.data?.has_openai_compatible_key ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-emerald-600 dark:text-emerald-400">
-                    <AppIcon name="check" fallback={Check} className="h-3 w-3" />
-                    API key saved
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-muted-foreground">
-                    No API key saved yet
-                  </span>
-                )}
-                {availableModels.length > 0 && (
-                  <span className="text-muted-foreground">{availableModels.length} models fetched</span>
-                )}
-              </div>
-
-              {provider === "nvidia_nim" && (
-                <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-3">
-                  <div className="space-y-2">
-                    <Label>NVIDIA NIM API Key</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        type="password"
-                        value={nvidiaApiKey}
-                        onChange={(event) => setNvidiaApiKey(event.target.value)}
-                        placeholder={
-                          settingsQuery.data?.has_nvidia_key
-                            ? "Leave blank to keep saved key"
-                            : "Paste your nvapi-... key"
-                        }
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={fetchModelsWithCurrentKey}
-                        disabled={isFetchingModels}
-                        title="Fetch models with this API key"
-                      >
-                        {isFetchingModels ? (
-                          <AppIcon name="loader2" fallback={Loader2} className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4" />
-                        )}
-                        <span className="ml-1.5 hidden sm:inline">Fetch Models</span>
-                      </Button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Enter your API key and click Fetch Models to dynamically load all available models from NVIDIA NIM.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {provider === "openai_compatible" && (
-                <div className="grid gap-3 rounded-lg border border-border bg-muted/20 p-3 sm:grid-cols-2">
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>Base URL</Label>
-                    <Input
-                      value={compatibleBaseUrl}
-                      onChange={(event) => setCompatibleBaseUrl(event.target.value)}
-                      placeholder="https://api.openai.com/v1"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Must be HTTPS (OpenAI, OpenRouter, Groq, local proxy, etc.).
-                    </p>
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>API Key</Label>
-                    <div className="flex gap-2">
-                      <Input
-                        type="password"
-                        value={compatibleApiKey}
-                        onChange={(event) => setCompatibleApiKey(event.target.value)}
-                        placeholder={
-                          settingsQuery.data?.has_openai_compatible_key
-                            ? "Leave blank to keep saved key"
-                            : "Paste API key"
-                        }
-                      />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={fetchModelsWithCurrentKey}
-                        disabled={isFetchingModels}
-                        title="Fetch models with this API key"
-                      >
-                        {isFetchingModels ? (
-                          <AppIcon name="loader2" fallback={Loader2} className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4" />
-                        )}
-                        <span className="ml-1.5 hidden sm:inline">Fetch Models</span>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center justify-end gap-3">
-                {saveSettingsMutation.isSuccess && !saveSettingsMutation.isPending && (
-                  <span className="text-xs text-muted-foreground">Saved</span>
-                )}
-                <Button
-                  type="button"
-                  onClick={() => saveSettingsMutation.mutate()}
-                  disabled={saveSettingsMutation.isPending}
-                >
-                  {saveSettingsMutation.isPending ? (
-                    <AppIcon name="loader2" fallback={Loader2} className="h-4 w-4 animate-spin"  />
-                  ) : (
-                    <AppIcon name="check" fallback={Check} className="h-4 w-4"  />
-                  )}
-                  Save provider
-                </Button>
-              </div>
-              {saveSettingsMutation.isError && (
-                <p className="text-xs text-destructive">
-                  {errorMessage(saveSettingsMutation.error, "Could not save provider settings.")}
-                </p>
-              )}
-            </section>
+            <AiProviderConnections onActivated={async (connection) => {
+              const refreshed = await settingsQuery.refetch();
+              const engine = connection?.provider || refreshed.data?.provider || "nvidia_nim";
+              setProvider(engine);
+              setCompatibleBaseUrl(connection?.base_url || refreshed.data?.openai_compatible_base_url || "");
+              setCustomModelList(null);
+              const catalog = await modelsQuery.refetch();
+              const models = catalog.data?.models || [];
+              setCustomModelList(models);
+              if (models.length && !models.some((model) => model.id === selectedModel)) {
+                setSelectedModel(models[0].id);
+                await api.put("/ai/settings", { provider: engine, model: models[0].id });
+              }
+            }} />
 
             <div className="space-y-2 rounded-lg border border-border p-3">
               <div>
@@ -5003,20 +4849,23 @@ export default function AiAgentPage() {
               </div>
 
               <div className="space-y-1.5 pt-3 border-t border-border/50">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <Label className="text-xs font-semibold text-foreground">Interactive Questions by AI Agent</Label>
-                  <Badge variant="outline" className={cn("text-[10px] font-mono", allowAgentQuestions ? "border-sky-500/40 text-sky-400" : "border-amber-500/40 text-amber-400")}>
+                  <Badge variant="outline" className={cn("shrink-0 text-[10px] font-mono", allowAgentQuestions ? "border-sky-500/40 text-sky-400" : "border-amber-500/40 text-amber-400")}>
                     {allowAgentQuestions ? "Interactive" : "Autonomous"}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   When ambiguous choices are encountered (e.g. multiple railway stations or airport codes for a city like Mumbai), the AI will prompt you with interactive dropdowns directly in chat.
                 </p>
-                <div className="grid gap-2 sm:grid-cols-2 pt-1">
+                <div className="grid grid-cols-1 gap-2 pt-1 lg:grid-cols-2">
                   <Button
                     type="button"
                     variant={allowAgentQuestions ? "default" : "outline"}
-                    className={allowAgentQuestions ? "bg-sky-600 hover:bg-sky-700 text-white font-medium text-xs h-8" : "text-xs h-8"}
+                    className={cn(
+                      "h-auto min-h-8 w-full min-w-0 justify-center px-3 py-2 text-center text-xs leading-tight whitespace-normal",
+                      allowAgentQuestions && "bg-sky-600 font-medium text-white hover:bg-sky-700",
+                    )}
                     onClick={() => setAllowAgentQuestions(true)}
                   >
                     Ask when needed (Recommended)
@@ -5024,7 +4873,10 @@ export default function AiAgentPage() {
                   <Button
                     type="button"
                     variant={!allowAgentQuestions ? "default" : "outline"}
-                    className={!allowAgentQuestions ? "bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs h-8" : "text-xs h-8"}
+                    className={cn(
+                      "h-auto min-h-8 w-full min-w-0 justify-center px-3 py-2 text-center text-xs leading-tight whitespace-normal",
+                      !allowAgentQuestions && "bg-amber-600 font-medium text-white hover:bg-amber-700",
+                    )}
                     onClick={() => setAllowAgentQuestions(false)}
                   >
                     Autonomous (Never ask)
@@ -5050,6 +4902,13 @@ export default function AiAgentPage() {
         selectedModelId={activeModelId}
         onSelectModel={(modelId: string, newMode?: "fast" | "thinking") => {
           setSelectedModel(modelId);
+          // Background recovery reads ai_preferences, not this tab's local
+          // storage. Keep the saved model in sync when using that provider.
+          if (provider === settingsQuery.data?.provider) {
+            api.put("/ai/settings", { model: modelId })
+              .then(() => settingsQuery.refetch())
+              .catch(() => toast.error("Model selected for this chat, but it could not be saved for background recovery."));
+          }
           if (newMode) {
             setMode(newMode);
           }
@@ -5070,7 +4929,7 @@ export default function AiAgentPage() {
         open={showCustomUrlDialog}
         onOpenChange={setShowCustomUrlDialog}
       >
-        <DialogContent className="sm:max-w-md p-6">
+        <DialogContent className="sm:max-w-md [--dialog-padding:1.5rem]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <Globe className="h-5 w-5 text-sky-400" />
@@ -5091,7 +4950,7 @@ export default function AiAgentPage() {
                 if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
                   trimmed = `https://${trimmed}`;
                 }
-                setCustomTargetUrl(trimmed);
+                changeTargetUrl(trimmed);
                 setShowCustomUrlDialog(false);
               }
             }}
@@ -5119,7 +4978,7 @@ export default function AiAgentPage() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setCustomTargetUrl("");
+                    changeTargetUrl("");
                     setCustomUrlInput("");
                     setShowCustomUrlDialog(false);
                   }}

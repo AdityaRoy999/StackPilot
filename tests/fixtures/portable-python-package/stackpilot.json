@@ -1,0 +1,13 @@
+{
+  "workload": "package",
+  "tests_required": true,
+  "tests": [["python", "test_installed.py"]],
+  "build_recipe": {
+    "image": "python:3.12-slim",
+    "commands": [
+      ["python", "-m", "pip", "wheel", ".", "--no-deps", "--wheel-dir", "dist"],
+      ["python", "-m", "pip", "install", "--no-index", "--find-links", "dist", "stackpilot-qualification-math==1.0.0"]
+    ],
+    "outputs": ["dist"]
+  }
+}

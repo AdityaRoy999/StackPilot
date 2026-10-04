@@ -8,6 +8,8 @@
 #include "SshService.h"
 
 #include <algorithm>
+#include <chrono>
+#include <map>
 #include <cctype>
 #include <cstdlib>
 #include <json/json.h>
@@ -390,21 +392,15 @@ rewrite_conflicting_application_ports() {
 }
 sed -i -E 's/^([[:space:]]*)container_name:/\1# [stackpilot-isolated] container_name:/g' )sh" + composeFileArg + R"sh( 2>/dev/null || true
 compose_up_exit=0
-compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans 2>&1) || compose_up_exit=$?
+compose_up_output=$($compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans --wait --wait-timeout 180 2>&1) || compose_up_exit=$?
 printf '%s\n' "$compose_up_output"
 if [ "$compose_up_exit" -ne 0 ]; then
   if printf '%s\n' "$compose_up_output" | grep -Eqi 'Conflict\. The container name|is already in use by container'; then
     echo "Resolving container name conflicts and re-isolating stack..."
-    conflicting_ids=$(printf '%s\n' "$compose_up_output" | grep -oE 'in use by container "[a-f0-9]+"' | awk -F'"' '{print $2}' || true)
-    for cid in $conflicting_ids; do
-      [ -n "$cid" ] && docker rm -f "$cid" 2>/dev/null || true
-    done
-    conflicting_names=$(printf '%s\n' "$compose_up_output" | grep -oE 'The container name "/[^"]+"' | awk -F'"' '{print $2}' | tr -d '/' || true)
-    for cname in $conflicting_names; do
-      [ -n "$cname" ] && docker rm -f "$cname" 2>/dev/null || true
-    done
+    echo "Container name conflict: refusing to remove a runtime owned by another deployment"
+    exit "$compose_up_exit"
     sed -i -E 's/^([[:space:]]*)container_name:/\1# [stackpilot-isolated] container_name:/g' )sh" + composeFileArg + R"sh( 2>/dev/null || true
-    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
+    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans --wait --wait-timeout 180
   elif printf '%s\n' "$compose_up_output" | grep -Eqi 'address already in use|ports are not available|only one usage of each socket address|bind:|port is already allocated'; then
     rewrite_conflicting_application_ports || true
     if grep -Eq 'STACKPILOT_HTTP_PORT|STACKPILOT_HTTPS_PORT' )sh" + composeFileArg + R"sh( 2>/dev/null; then
@@ -429,7 +425,7 @@ if [ "$compose_up_exit" -ne 0 ]; then
         echo "Port conflict resolved: remapped host port $p -> $np in compose file"
       fi
     done
-    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans
+    $compose_cmd -f )sh" + composeFileArg + " -p " + projectArg + R"sh( up -d --build --remove-orphans --wait --wait-timeout 180
   else
     exit "$compose_up_exit"
   fi
@@ -643,69 +639,37 @@ bool isValidEnvKey(const std::string& key) {
     return true;
 }
 
-void ensureDockerignoreIncludesGeneratedEnv(const std::filesystem::path& sourceDir) {
-    const std::filesystem::path dockerignorePath = sourceDir / ".dockerignore";
-    std::string existing;
-    if (std::filesystem::exists(dockerignorePath)) {
-        std::ifstream in(dockerignorePath);
-        existing.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
-
-    const std::vector<std::string> requiredLines = {
-        "!.env",
-        "!.env.local",
-        "!.env.production.local"
-    };
-
-    std::ofstream out(dockerignorePath, std::ios::app);
-    for (const auto& line : requiredLines) {
-        if (existing.find(line) == std::string::npos) {
-            if (!existing.empty() && existing.back() != '\n') {
-                out << "\n";
-                existing.push_back('\n');
-            }
-            out << line << "\n";
-            existing += line + "\n";
-        }
-    }
-}
-
 void injectBuildEnvironmentFiles(const std::filesystem::path& sourceDir,
                                  const std::vector<BuildEnvVar>& envVars,
                                  LogCallback onLogLine) {
-    if (envVars.empty()) {
-        return;
+    // Runtime credentials never belong in the Docker build context.
+    for (const auto& path : {sourceDir.parent_path() / "runtime.env", sourceDir / ".env.production.local", sourceDir / ".dockerignore"}) {
+        if (std::filesystem::is_symlink(path)) throw std::runtime_error("Reserved build configuration must not be a symlink");
     }
-
-    std::ostringstream content;
-    for (const auto& envVar : envVars) {
-        if (!isValidEnvKey(envVar.key)) {
-            continue;
-        }
-        content << envVar.key << "=" << encodeEnvValue(envVar.value) << "\n";
+    std::map<std::string,std::string> inheritedPublic;
+    auto isPublic=[](const std::string& key){return key.rfind("NEXT_PUBLIC_",0)==0||key.rfind("VITE_",0)==0||key.rfind("REACT_APP_",0)==0||key.rfind("PUBLIC_",0)==0;};
+    {std::ifstream previous(sourceDir/".env.production.local");std::string line;while(std::getline(previous,line)){auto equal=line.find('=');if(equal!=std::string::npos){auto key=trim(line.substr(0,equal));if(isValidEnvKey(key)&&isPublic(key))inheritedPublic[key]=line.substr(equal+1);}}}
+    for(const auto& item:envVars)inheritedPublic.erase(item.key);
+    std::ofstream runtime(sourceDir.parent_path() / "runtime.env", std::ios::trunc);
+    chmod((sourceDir.parent_path() / "runtime.env").c_str(), S_IRUSR | S_IWUSR);
+    std::ofstream publicConfig(sourceDir / ".env.production.local", std::ios::trunc);
+    if(!runtime.is_open()||!publicConfig.is_open())throw std::runtime_error("Unable to prepare deployment configuration");
+    for(const auto& item:inheritedPublic)publicConfig<<item.first<<"="<<item.second<<"\n";
+    for (const auto& item : envVars) {
+        if (!isValidEnvKey(item.key)) continue;
+        runtime << item.key << "=" << encodeEnvValue(item.value) << "\n";
+        const bool publicKey = item.key.rfind("NEXT_PUBLIC_", 0) == 0 ||
+            item.key.rfind("VITE_", 0) == 0 || item.key.rfind("REACT_APP_", 0) == 0 ||
+            item.key.rfind("PUBLIC_", 0) == 0;
+        if (publicKey && !item.secret) publicConfig << item.key << "=" << encodeEnvValue(item.value) << "\n";
     }
-
-    const std::string envContent = content.str();
-    if (envContent.empty()) {
-        return;
-    }
-
-    const std::vector<std::filesystem::path> envFiles = {
-        sourceDir / ".env",
-        sourceDir / ".env.local",
-        sourceDir / ".env.production.local"
-    };
-
-    for (const auto& path : envFiles) {
-        std::ofstream out(path, std::ios::trunc);
-        out << envContent;
-    }
-
-    ensureDockerignoreIncludesGeneratedEnv(sourceDir);
-
-    if (onLogLine) {
-        onLogLine("Injected project environment variables into build context");
-    }
+    runtime.close(); publicConfig.close();
+    chmod((sourceDir.parent_path() / "runtime.env").c_str(), S_IRUSR | S_IWUSR);
+    std::ofstream ignore(sourceDir / ".dockerignore", std::ios::app);
+    if(!ignore.is_open())throw std::runtime_error("Unable to enforce build context exclusions");
+    // Last-match rules override unsafe repository exceptions.
+    ignore << "\n.git\n**/.git\n.env\n.env.*\n**/.env\n**/.env.*\n*.pem\n*.key\n**/*.keystore\n**/*.jks\n!.env.production.local\n";
+    if (onLogLine) onLogLine("Separated runtime credentials from explicitly public build configuration");
 }
 
 void appendLogLine(const std::filesystem::path& logFile,
@@ -1314,6 +1278,7 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
                                                     LogCallback onLogLine) const {
     BuildResult result;
     const std::string imageName = "stackpilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+
     std::string projectSlug = sanitizeName(projectName);
     if (projectSlug.size() > 32) {
         projectSlug.resize(32);
@@ -1324,7 +1289,7 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     if (projectSlug.empty()) {
         projectSlug = "project";
     }
-    const std::string containerName = "stackpilot-" + projectSlug + "-" + sanitizeName(deploymentId).substr(0, 8);
+    const std::string containerName = "stackpilot-" + projectSlug + "-" + sanitizeName(deploymentId).substr(0, 8) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     result.remoteContainerName = containerName;
 
     std::vector<std::pair<std::string, std::string>> sshEnvVars;
@@ -1340,6 +1305,31 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     }
 
     SshService sshService;
+    const auto localSource=sourceWorkspace(deploymentId);
+    const auto localLog=localSource.parent_path()/"build.log";
+    std::filesystem::create_directories(localSource.parent_path());
+    auto synced=sshService.syncDirectory(sshConfig,remotePath,localSource.string(),cloneTimeoutSeconds_,onLogLine);
+    if(!synced.success){result.error="Remote source could not be inspected before build: "+synced.error;return result;}
+    injectBuildEnvironmentFiles(localSource,envVars,onLogLine);
+    const char* assetsEnv=std::getenv("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT");
+    const std::filesystem::path assetsRoot=assetsEnv&&*assetsEnv?assetsEnv:"/app/deployment-runtime";
+    const auto arch=classifyRepositoryArchetype(localSource);
+    if(runCommandCapture("python3 "+shellQuote((assetsRoot/"planner.py").string())+" "+shellQuote(localSource.string())+" --archetype "+shellQuote(arch.type),localLog,true,60,onLogLine,deploymentId)!=0){result.error="Remote repository contract is invalid";return result;}
+    {std::ifstream input(localSource/".stackpilot-plan.json");input>>result.deploymentPlan;}
+    if(!result.deploymentPlan["build_secrets"].empty()){result.error="Remote BuildKit credentials require a scoped remote secret adapter; release refused";return result;}
+    if(!result.deploymentPlan["requires_worker"].isNull()){result.error="Required native worker is unavailable for the remote target";return result;}
+    if(result.deploymentPlan.get("protocol","http").asString()!="http"){result.error="Remote process/TCP workload routing needs a dedicated runtime adapter";return result;}
+    if(!findComposeFile(localSource).empty()){result.error="Remote Compose requires isolated routing and policy qualification; unchecked host execution refused";return result;}
+    std::string reason;
+    if(!ensureDockerfile(localSource,localLog,reason,onLogLine)){result.error=reason;return result;}
+    const auto bundle=localSource.parent_path()/"runtime-plan.tar";
+    if(runCommandCapture("tar -cf "+shellQuote(bundle.string())+" -C "+shellQuote(localSource.string())+" Dockerfile .dockerignore .env.production.local .stackpilot-runtime .stackpilot-plan.json",localLog,true,60,onLogLine,deploymentId)!=0){result.error="Remote build plan packaging failed";return result;}
+    const std::string remoteBundle="/tmp/"+containerName+"-plan.tar";
+    auto uploaded=sshService.uploadFile(sshConfig,bundle.string(),remoteBundle,cloneTimeoutSeconds_,onLogLine);
+    if(!uploaded.success){result.error=uploaded.error;return result;}
+    auto installed=sshService.runRemoteCommand(sshConfig,remotePath,"set -e; for p in Dockerfile .dockerignore .env.production.local .stackpilot-runtime .stackpilot-plan.json; do [ ! -L \"$p\" ] || exit 21; done; tar -xf "+shellQuote(remoteBundle)+"; rm -f "+shellQuote(remoteBundle),60);
+    if(!installed.success){result.error="Remote build plan installation failed";return result;}
+    if(result.deploymentPlan.get("port",0).asInt()>0)containerPort=result.deploymentPlan["port"].asInt();
     SshOperationResult remoteResult = sshService.buildAndRunDockerProject(
         sshConfig,
         remotePath,
@@ -1355,6 +1345,9 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     result.imageName = imageName;
     result.remoteContainerName = containerName;
     result.runtimeProvider = "remote_docker";
+    result.artifactDigest=markerValue(remoteResult.output,"__STACKPILOT_REMOTE_DIGEST__");
+    {Json::CharReaderBuilder reader;std::string errors;std::istringstream input(markerValue(remoteResult.output,"__STACKPILOT_REMOTE_TEST_EVIDENCE__"));
+     Json::parseFromStream(reader,input,&result.testEvidence,&errors);}
 
     const std::string remoteComposeProject = markerValue(remoteResult.output, "__STACKPILOT_REMOTE_COMPOSE_PROJECT__");
     if (!remoteComposeProject.empty()) {
@@ -1381,6 +1374,10 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     if (result.composeProject) {
         result.success = true;
         return result;
+    }
+
+    if(result.artifactDigest.rfind("sha256:",0)!=0 || (result.deploymentPlan.get("tests_required",false).asBool() && result.testEvidence.get("status",result.testEvidence.get("tests","unrecorded")).asString()!="passed")){
+        result.error="Remote immutable build/test evidence is missing or failed";return result;
     }
 
     std::string publishedPort;
@@ -1687,16 +1684,53 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
     }
 
     injectBuildEnvironmentFiles(sourceDir, envVars, onLogLine);
+    const char* runtimeRootEnv = std::getenv("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT");
+    const std::filesystem::path runtimeRoot = runtimeRootEnv && *runtimeRootEnv ? runtimeRootEnv : "/app/deployment-runtime";
+    if (!std::filesystem::exists(runtimeRoot / "planner.py")) {
+        result.error = "Deployment runtime assets unavailable; build not admitted"; return result;
+    }
+    const int planExit = runCommandCapture(
+        "python3 " + shellQuote((runtimeRoot / "planner.py").string()) + " " + shellQuote(sourceDir.string()) +
+        " --archetype " + shellQuote(archetype.type), logFile, true, 60, onLogLine, deploymentId);
+    if (planExit != 0) { result.error = "Repository deployment contract is invalid"; result.logs = readFileBounded(logFile); return result; }
+    { std::ifstream planFile(sourceDir / ".stackpilot-plan.json"); planFile >> result.deploymentPlan; }
+    if (!result.deploymentPlan["requires_worker"].isNull()) {
+        result.error = "Native " + result.deploymentPlan["requires_worker"].asString() +
+            " worker required for real build, device tests and interactive preview; Linux web substitution refused";
+        result.logs = readFileBounded(logFile); return result;
+    }
+
     if (!envVars.empty()) {
-        appendLogLine(logFile, "Injected project environment variables into build context", nullptr);
+        appendLogLine(logFile, "Prepared public build configuration and private runtime environment", nullptr);
     }
 
     const std::filesystem::path composePath = findComposeFile(sourceDir);
     if (!composePath.empty()) {
-        const std::string composeFile = composePath.filename().string();
-        std::string composeProjectSuffix = sanitizeName(deploymentId);
-        if (composeProjectSuffix.size() > 24) {
-            composeProjectSuffix.resize(24);
+        if(!result.deploymentPlan["build_secrets"].empty()){result.error="Compose build secrets require a per-service secret adapter; refusing to discard declared private inputs";return result;}
+        const auto candidateDir=sourceDir.parent_path()/("compose-candidate-"+sanitizeTag(version));
+        std::filesystem::create_directories(candidateDir);
+        std::filesystem::permissions(candidateDir,std::filesystem::perms::owner_all,std::filesystem::perm_options::replace);
+        const auto composeSource=candidateDir/"source";
+        const char* storeEnv=std::getenv("STACKPILOT_SOURCE_STORE");
+        const auto store=storeEnv&&*storeEnv?std::filesystem::path(storeEnv):workspaceRoot_/"source-store";
+        if(runCommandCapture("python3 "+shellQuote((runtimeRoot/"source_snapshot.py").string())+" "+shellQuote(sourceDir.string())+" "+shellQuote(store.string())+" "+shellQuote(composeSource.string())+" "+shellQuote((candidateDir/"source-evidence.json").string()),logFile,true,60,onLogLine,deploymentId)!=0){result.error="Immutable Compose source snapshot failed";return result;}
+        {Json::Value record;std::ifstream input(candidateDir/"source-evidence.json");input>>record;result.sourceDigest=record["sha256"].asString();result.sourceArchive=record["archive"].asString();}
+        const std::string originalCompose = composePath.filename().string();
+        const std::string composeFile = "../compose.safe.json";
+        const std::string resolve = "umask 077; cd " + shellQuote(sourceDir.string()) +
+            " && docker compose --env-file ../runtime.env -f " + shellQuote(originalCompose) +
+            " config --format json > ../compose.resolved.json && python3 " +
+            shellQuote((runtimeRoot / "compose_policy.py").string()) + " ../compose.resolved.json " +
+            shellQuote(sourceDir.string()) + " ../compose.safe.json && python3 "+shellQuote((runtimeRoot/"compose_snapshot.py").string())+" ../compose.safe.json "+shellQuote(sourceDir.string())+" "+shellQuote(composeSource.string());
+        if (runCommandCapture(resolve, logFile, true, 60, onLogLine, deploymentId) != 0) {
+            result.error = "Compose security/capability validation failed"; result.logs = readFileBounded(logFile); return result;
+        }
+        std::filesystem::copy_file(sourceDir.parent_path()/"compose.safe.json",candidateDir/"compose.safe.json",std::filesystem::copy_options::overwrite_existing);
+        const auto attemptTag = sanitizeName(version);
+        std::string composeProjectSuffix = sanitizeName(deploymentId).substr(0,12) + "-" +
+            attemptTag.substr(attemptTag.size()>32?attemptTag.size()-32:0);
+        if (composeProjectSuffix.size() > 60) {
+            composeProjectSuffix.resize(60);
         }
         while (!composeProjectSuffix.empty() && composeProjectSuffix.back() == '-') {
             composeProjectSuffix.pop_back();
@@ -1705,13 +1739,14 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             composeProjectSuffix = "deployment";
         }
         const std::string composeProject = "stackpilot-" + composeProjectSuffix;
+        if(candidateObserver_){Json::Value record;record["compose_workdir"]=candidateDir.string();record["compose_file"]="compose.safe.json";candidateObserver_("local_compose",composeProject,record);}
         appendLogLine(logFile, "Detected Docker Compose project: " + composeFile, onLogLine);
         appendLogLine(logFile, "Starting Compose build and runtime stack: " + composeProject, onLogLine);
 
         const std::string quotedComposeFile = shellQuote(composeFile);
         const std::string quotedProject = shellQuote(composeProject);
         const std::string composeCommand =
-            "cd " + shellQuote(sourceDir.string()) + " && "
+            "set -e; cd " + shellQuote(composeSource.string()) + " && "
             "compose_cmd='docker compose'; "
             "if ! docker compose version >/dev/null 2>&1; then "
             "  if command -v docker-compose >/dev/null 2>&1; then compose_cmd='docker-compose'; "
@@ -1726,30 +1761,12 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             "echo __STACKPILOT_COMPOSE_FILE__=" + composeFile + "; "
             "echo __STACKPILOT_COMPOSE_SERVICES__=$services; "
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " pull --ignore-pull-failures || true; "
+            "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " build; " +
+            "python3 " + shellQuote((runtimeRoot/"compose_evidence.py").string()) + " " + quotedProject +
+            " ../compose.safe.json .stackpilot-plan.json ../test-evidence.json; "
             + composePortFallbackShell(quotedComposeFile, quotedProject) +
-            "runtime=''; "
-            "preferred_public_port=$(sed -n 's/^APP_PUBLIC_UI_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "domain=$(sed -n 's/^STACKPILOT_DOMAIN=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "require_https=$(sed -n 's/^STACKPILOT_REQUIRE_HTTPS=//p' .env 2>/dev/null | tail -n1 | tr '[:upper:]' '[:lower:]' | tr -d '\"' | tr -d \"'\" || true); "
-            "http_port=$(sed -n 's/^STACKPILOT_HTTP_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "https_port=$(sed -n 's/^STACKPILOT_HTTPS_PORT=//p' .env 2>/dev/null | tail -n1 | tr -d '\"' | tr -d \"'\" || true); "
-            "if [ -n \"$domain\" ]; then "
-            "  if [ \"$require_https\" = 'true' ]; then "
-            "    if [ -n \"$https_port\" ] && [ \"$https_port\" != '443' ]; then runtime=\"https://$domain:$https_port\"; else runtime=\"https://$domain\"; fi; "
-            "  else "
-            "    if [ -n \"$http_port\" ] && [ \"$http_port\" != '80' ]; then runtime=\"http://$domain:$http_port\"; else runtime=\"http://$domain\"; fi; "
-            "  fi; "
-            "fi; "
-            "if [ -z \"$runtime\" ] && [ -n \"$preferred_public_port\" ]; then runtime=\"http://localhost:$preferred_public_port\"; fi; "
-            "if [ -z \"$runtime\" ]; then "
-            "  for svc in $(cat .stackpilot-compose-services 2>/dev/null); do "
-            "    for port in 9001 15672 8222 3000 8080 8000 5000 5173 9090 3100 80 443 5432 3306 6379 27017 5672 9000 4222; do "
-            "      mapped=$($compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " port \"$svc\" \"$port\" 2>/dev/null | head -n1 | awk -F: 'NF {print $NF; exit}'); "
-            "      if [ -n \"$mapped\" ]; then scheme='http'; [ \"$port\" = '443' ] && scheme='https'; case \"$port\" in 5432|3306|6379|27017|5672|4222) scheme='tcp';; esac; runtime=\"$scheme://localhost:$mapped\"; break 2; fi; "
-            "    done; "
-            "  done; "
-            "fi; "
-            "echo __STACKPILOT_COMPOSE_URL__=$runtime; "
+            "python3 " + shellQuote((runtimeRoot / "compose_endpoint.py").string()) + " " +
+            quotedProject + " ../compose.safe.json .stackpilot-plan.json; " +
             "$compose_cmd -f " + quotedComposeFile + " -p " + quotedProject + " ps";
 
         const int composeExit = runCommandCapture(
@@ -1764,8 +1781,8 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         result.logs = readFileBounded(logFile);
         result.composeProject = true;
         result.composeProjectName = composeProject;
-        result.composeFile = composeFile;
-        result.composeWorkdir = sourceDir.string();
+        result.composeFile = "compose.safe.json";
+        result.composeWorkdir = candidateDir.string();
         result.composeServices = markerValue(result.logs, "__STACKPILOT_COMPOSE_SERVICES__");
         result.runtimeUrl = markerValue(result.logs, "__STACKPILOT_COMPOSE_URL__");
         result.runtimeProvider = "local_compose";
@@ -1784,6 +1801,13 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
             return result;
         }
 
+        {std::ifstream input(candidateDir/"test-evidence.json");input>>result.testEvidence;}
+        if(result.deploymentPlan["repository_plan"].isObject()) {
+            std::ifstream input(candidateDir/"component-runtime.json");
+            if(!input || !(input>>result.deploymentPlan["component_runtime"])) {
+                result.success=false;result.error="Component runtime identities were not collected";return result;
+            }
+        }
         result.success = true;
         return result;
     }
@@ -1799,15 +1823,42 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         return result;
     }
 
+
+    if(result.deploymentPlan.get("port",0).asInt()==0 && result.deploymentPlan.get("protocol","http").asString()!="process") {
+        if(runCommandCapture("python3 "+shellQuote((runtimeRoot/"planner.py").string())+" "+shellQuote(sourceDir.string())+" --archetype "+shellQuote(archetype.type),logFile,true,60,onLogLine,deploymentId)!=0){result.error="Final runtime contract could not be resolved";return result;}
+        std::ifstream input(sourceDir/".stackpilot-plan.json");input>>result.deploymentPlan;
+    }
+
     const std::string imageName = "stackpilot/" + sanitizeName(deploymentId) + ":" + sanitizeTag(version);
+    const char* sourceStoreEnv=std::getenv("STACKPILOT_SOURCE_STORE");
+    const auto sourceStore=sourceStoreEnv&&*sourceStoreEnv?std::filesystem::path(sourceStoreEnv):workspaceRoot_/"source-store";
+    const auto sealedSource=sourceDir.parent_path()/("candidate-source-"+sanitizeTag(version));
+    const auto sourceRecord=sourceDir.parent_path()/"source-evidence.json";
+    if(runCommandCapture("python3 "+shellQuote((runtimeRoot/"source_snapshot.py").string())+" "+shellQuote(sourceDir.string())+" "+shellQuote(sourceStore.string())+" "+shellQuote(sealedSource.string())+" "+shellQuote(sourceRecord.string()),logFile,true,60,onLogLine,deploymentId)!=0){result.error="Immutable source snapshot failed";return result;}
+    {Json::Value source;std::ifstream input(sourceRecord);input>>source;result.sourceDigest=source["sha256"].asString();result.sourceArchive=source["archive"].asString();}
     const std::string buildParallel = [] {
         const char* value = std::getenv("STACKPILOT_BACKEND_BUILD_PARALLELISM");
         return (value && *value) ? std::string(value) : std::string("1");
     }();
-    const std::string buildCmd = "docker build --pull=false --memory \"" + dockerMemoryLimit_ +
+    std::string buildCmd = "docker build --pull=false --memory \"" + dockerMemoryLimit_ +
                                  "\" --build-arg STACKPILOT_BACKEND_BUILD_PARALLELISM=" +
                                  shellQuote(buildParallel) + " -t \"" + imageName +
-                                 "\" \"" + sourceDir.string() + "\"";
+                                 "\" \"" + sealedSource.string() + "\"";
+    std::filesystem::path secretConfig;
+    if(!result.deploymentPlan["build_secrets"].empty()) {
+        Json::Value values(Json::objectValue);
+        for(const auto& name:result.deploymentPlan["build_secrets"]) {
+            auto found=std::find_if(envVars.begin(),envVars.end(),[&](const BuildEnvVar& variable){return variable.key==name.asString() && variable.secret && !variable.value.empty();});
+            if(found==envVars.end()){result.error="A declared private build credential is unavailable";return result;}
+            values[found->key]=found->value;
+        }
+        auto pattern=(sourceDir.parent_path()/"build-inputs-XXXXXX").string();std::vector<char> path(pattern.begin(),pattern.end());path.push_back('\0');
+        const auto descriptor=mkstemp(path.data());
+        if(descriptor<0){result.error="Unable to create private build credential file";return result;}
+        close(descriptor);secretConfig=path.data();
+        {Json::StreamWriterBuilder writer;writer["indentation"]="";std::ofstream output(secretConfig);output<<Json::writeString(writer,values);if(!output){std::filesystem::remove(secretConfig);result.error="Unable to write private build credentials";return result;}}
+        buildCmd="python3 "+shellQuote((runtimeRoot/"build_secrets.py").string())+" "+shellQuote(secretConfig.string())+" "+shellQuote(sealedSource.string())+" "+shellQuote(imageName)+" "+shellQuote(dockerMemoryLimit_)+" "+shellQuote(buildParallel);
+    }
 
     {
         std::string buildMsg = "Building image: " + imageName;
@@ -1817,6 +1868,7 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
     }
 
     const int buildExit = runCommandCapture(buildCmd, logFile, true, buildTimeoutSeconds_, onLogLine, deploymentId);
+    if(!secretConfig.empty()){std::error_code ignored;std::filesystem::remove(secretConfig,ignored);}
 
     result.imageName = imageName;
     result.logs = readFileBounded(logFile);
@@ -1835,6 +1887,16 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         return result;
     }
 
+    const auto digestFile = sourceDir.parent_path() / "image.digest";
+    if (runCommandCapture("docker image inspect --format '{{.Id}}' " + shellQuote(imageName), digestFile, false, 15) != 0) {
+        result.error = "Built image digest unavailable"; return result;
+    }
+    result.artifactDigest = trim(readFileBounded(digestFile));
+    const auto testFile=sourceDir.parent_path()/"test-evidence.json";
+    if(runCommandCapture("python3 "+shellQuote((runtimeRoot/"image_evidence.py").string())+" "+shellQuote(result.artifactDigest)+" "+shellQuote(testFile.string()),logFile,true,30,onLogLine,deploymentId)!=0){result.error="Build evidence inspection failed";return result;}
+    {std::ifstream input(testFile);input>>result.testEvidence;}
+    const std::string testState=result.testEvidence.get("status",result.testEvidence.get("tests","unrecorded")).asString();
+    if(result.deploymentPlan.get("tests_required",false).asBool() && testState!="passed"){result.error="Required test evidence is missing or not passed";return result;}
     result.success = true;
     return result;
 }
@@ -2439,8 +2501,8 @@ RepositoryArchetype BuildService::classifyRepositoryArchetype(const std::filesys
         arch.displayName = "Windows Desktop Executable (.exe / Win32)";
         arch.isDeployable = true;
         arch.requiresDiversion = true;
-        arch.suggestedStrategy = "wine_novnc_web_stream";
-        arch.details = "Detected a Windows executable or desktop application. StackPilot generates a containerized Wine virtual desktop with an interactive HTML5 web stream on port 3000.";
+        arch.suggestedStrategy = "windows_worker_required";
+        arch.details = "Detected a Windows desktop application. Building and streaming its actual window require an isolated Windows worker; no Wine preview is provided.";
         return arch;
     }
 
@@ -2576,11 +2638,11 @@ RepositoryArchetype BuildService::classifyRepositoryArchetype(const std::filesys
         arch.isDeployable = true;
         arch.requiresDiversion = true;
         arch.suggestedStrategy = "android_apk_download_server";
-        arch.details = "Detected a native Android application. StackPilot compiles the debug APK via Gradle and hosts an interactive download portal with a mobile install QR code on port 3000.";
+        arch.details = "Detected a native Android application. StackPilot builds and serves the actual APK. Interactive screen streaming and device tests require an emulator or device worker.";
         arch.mobileMetadata.framework = "Native Android";
-        arch.mobileMetadata.bundleId = androidBundleId.empty() ? "com.android.app" : androidBundleId;
+        arch.mobileMetadata.bundleId = androidBundleId;
         arch.mobileMetadata.appName = androidBundleId.empty() ? "Android App" : androidBundleId;
-        arch.mobileMetadata.sdkVersion = androidSdkVersion.empty() ? "API 34 (Android 14)" : androidSdkVersion;
+        arch.mobileMetadata.sdkVersion = androidSdkVersion;
         arch.mobileMetadata.previewStrategy = "android_apk_download_server";
         return arch;
     }
@@ -2645,7 +2707,7 @@ RepositoryArchetype BuildService::classifyRepositoryArchetype(const std::filesys
             auto hasDep = [](const Json::Value& deps, const std::string& name) {
                 return deps.isObject() && deps.isMember(name);
             };
-            const bool isExpo = hasDep(pkg["dependencies"], "expo") || hasDep(pkg["devDependencies"], "expo") || hasFile(sourceDir, "app.json");
+            const bool isExpo = hasDep(pkg["dependencies"], "expo") || hasDep(pkg["devDependencies"], "expo");
             const bool isReactNative = hasDep(pkg["dependencies"], "react-native") || hasDep(pkg["devDependencies"], "react-native");
 
             if (isExpo || isReactNative) {
@@ -2802,66 +2864,24 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
     std::string generated;
 
     if (archetype.type == "windows_desktop_exe") {
-        appendLogLine(logFile, "🖥️ [Archetype Engine] " + archetype.displayName + " detected.", onLogLine);
-        appendLogLine(logFile, "⚡ [Wine Streaming] Auto-generating Wine 64/32 virtual desktop with noVNC HTML5 canvas on port 3000...", onLogLine);
-        generated =
-            "FROM ubuntu:22.04\n"
-            "ENV DEBIAN_FRONTEND=noninteractive DISPLAY=:99 WINEPREFIX=/wine WINEARCH=win64 WINEDEBUG=-all\n"
-            "RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-install-recommends \\\n"
-            "    ca-certificates curl xvfb openbox x11vnc novnc websockify supervisor wine64 wine32 fonts-wine net-tools \\\n"
-            "    && rm -rf /var/lib/apt/lists/*\n"
-            "RUN mkdir -p /wine && wineboot --init || true\n"
-            "WORKDIR /app\n"
-            "COPY . /app\n"
-            "RUN mkdir -p /etc/supervisor/conf.d\n"
-            "RUN printf '[supervisord]\\nnodaemon=true\\n\\n[program:xvfb]\\ncommand=Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset\\npriority=100\\nautorestart=true\\n\\n[program:openbox]\\ncommand=openbox-session\\nenvironment=DISPLAY=\":99\"\\npriority=200\\nautorestart=true\\n\\n[program:x11vnc]\\ncommand=x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1\\npriority=300\\nautorestart=true\\n\\n[program:websockify]\\ncommand=websockify --web /usr/share/novnc 3000 localhost:5900\\npriority=400\\nautorestart=true\\n\\n[program:app]\\ncommand=/bin/bash -c \"sleep 2; exe=$(find /app -maxdepth 3 -type f -name \\'*.exe\\' | head -n1); if [ -n \\\"$exe\\\" ]; then exec wine explorer /desktop=App,1280x720 \\\"$exe\\\"; else exec sleep infinity; fi\"\\nenvironment=DISPLAY=\":99\",WINEPREFIX=\"/wine\",WINEDEBUG=\"-all\"\\npriority=500\\nautorestart=false\\n' > /etc/supervisor/conf.d/supervisord.conf\n"
-            "EXPOSE 3000\n"
-            "CMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/conf.d/supervisord.conf\"]\n";
-    } else if (archetype.type == "native_android") {
-        appendLogLine(logFile, "📱 [Archetype Engine] " + archetype.displayName + " detected.", onLogLine);
-        appendLogLine(logFile, "⚡ [Android Portal] Auto-generating APK build & mobile install QR portal on port 3000...", onLogLine);
-        generated =
-            "FROM python:3.12-alpine\n"
-            "WORKDIR /app\n"
-            "COPY . /app\n"
-            "RUN pip install --no-cache-dir qrcode pillow || true\n"
-            "RUN printf 'import http.server, socketserver, os, glob\\nPORT = 3000\\nclass H(http.server.SimpleHTTPRequestHandler):\\n    def do_GET(self):\\n        apks = glob.glob(\"/app/**/*.apk\", recursive=True)\\n        apk = apks[0] if apks else \"\"\\n        apk_name = os.path.basename(apk) if apk else \"app-debug.apk\"\\n        if self.path == \"/\" or self.path == \"/index.html\":\\n            self.send_response(200)\\n            self.send_header(\"Content-type\", \"text/html; charset=utf-8\")\\n            self.end_headers()\\n            host = self.headers.get(\"Host\", f\"localhost:{PORT}\")\\n            dl_url = f\"http://{host}/{apk_name}\"\\n            qr_api = f\"https://api.qrserver.com/v1/create-qr-code/?size=220x220&data={dl_url}&bgcolor=18181b&color=38bdf8&margin=1\"\\n            html = f\"\"\"<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Android APK Install</title><style>body{{font-family:system-ui,sans-serif;background:#09090b;color:#f4f4f5;text-align:center;padding:40px 16px;margin:0;}} .card{{background:#18181b;max-width:440px;margin:0 auto;padding:32px;border-radius:20px;border:1px solid #27272a;box-shadow:0 20px 40px rgba(0,0,0,0.6);}} h1{{font-size:22px;margin:0 0 8px;}} p{{color:#a1a1aa;font-size:13px;line-height:1.5;}} .btn{{display:inline-block;background:#38bdf8;color:#09090b;padding:12px 28px;font-weight:700;border-radius:10px;text-decoration:none;margin-top:20px;transition:0.2s;}} .qr{{background:#18181b;padding:12px;border-radius:16px;display:inline-block;margin:16px 0;border:1px solid #38bdf840;}}</style></head><body><div class=\"card\"><h1>Android Application Ready</h1><p>Scan the QR code with your physical Android phone camera to download and install this application instantly over WiFi.</p><div class=\"qr\"><img src=\"{qr_api}\" width=\"220\" height=\"220\" alt=\"QR Code\" /></div><br><a href=\"/{apk_name}\" class=\"btn\" download>Download APK ({apk_name})</a></div></body></html>\"\"\"\\n            self.wfile.write(html.encode(\"utf-8\"))\\n        else:\\n            super().do_GET()\\nwith socketserver.TCPServer((\"\", PORT), H) as s:\\n    print(f\"Android Portal serving on {PORT}\")\\n    s.serve_forever()\\n' > /app/portal.py\n"
-            "EXPOSE 3000\n"
-            "CMD [\"python\", \"/app/portal.py\"]\n";
-    } else if (archetype.type == "desktop_compose_gui") {
-        appendLogLine(logFile, "🖥️ [Archetype Engine] " + archetype.displayName + " detected.", onLogLine);
-        appendLogLine(logFile, "⚡ [Desktop Stream] Auto-generating Eclipse Temurin 21 + Xvfb HTML5 web desktop on port 3000...", onLogLine);
-        generated =
-            "FROM eclipse-temurin:21-jdk AS builder\n"
-            "WORKDIR /app\n"
-            "COPY . .\n"
-            "RUN if [ -f gradlew ]; then chmod +x gradlew && (./gradlew desktopApp:jar || ./gradlew jar || ./gradlew build -x test || ./gradlew assemble || true); fi\n\n"
-            "FROM ubuntu:22.04\n"
-            "ENV DEBIAN_FRONTEND=noninteractive DISPLAY=:99\n"
-            "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
-            "    ca-certificates curl xvfb openbox x11vnc novnc websockify supervisor openjdk-21-jre fonts-dejavu-core net-tools \\\n"
-            "    && rm -rf /var/lib/apt/lists/*\n"
-            "WORKDIR /app\n"
-            "COPY --from=builder /app /app\n"
-            "RUN mkdir -p /etc/supervisor/conf.d\n"
-            "RUN printf '[supervisord]\\nnodaemon=true\\n\\n[program:xvfb]\\ncommand=Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset\\npriority=100\\nautorestart=true\\n\\n[program:openbox]\\ncommand=openbox-session\\nenvironment=DISPLAY=\":99\"\\npriority=200\\nautorestart=true\\n\\n[program:x11vnc]\\ncommand=x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -listen 127.0.0.1\\npriority=300\\nautorestart=true\\n\\n[program:websockify]\\ncommand=websockify --web /usr/share/novnc 3000 localhost:5900\\npriority=400\\nautorestart=true\\n\\n[program:app]\\ncommand=/bin/bash -c \"sleep 3; jar=$(find /app -name \\'*.jar\\' | grep -v \\'plain\\' | head -n1); if [ -n \\\"$jar\\\" ]; then exec java -jar \\\"$jar\\\"; else exec sleep infinity; fi\"\\nenvironment=DISPLAY=\":99\"\\npriority=500\\nautorestart=false\\n' > /etc/supervisor/conf.d/supervisord.conf\n"
-            "EXPOSE 3000\n"
-            "CMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/conf.d/supervisord.conf\"]\n";
+        reason = "Native Windows build and preview require a registered isolated Windows worker; Wine placeholders are not supported";
+        return false;
+    } else if (archetype.type == "native_android" || archetype.type == "desktop_compose_gui") {
+        reason = "Native build preparation did not provide a verified build template";
+        return false;
     } else if (archetype.type == "expo_react_native") {
         appendLogLine(logFile, "📱 [Archetype Pre-Flight Check] " + archetype.displayName + " detected.", onLogLine);
         appendLogLine(logFile, "⚡ [Smart Diversion] Auto-generating Expo Web PWA container preview on port 3000...", onLogLine);
         generated =
-            "FROM node:20-alpine AS builder\n"
+            "FROM node:22-alpine AS builder\nRUN apk add --no-cache python3\n"
             "WORKDIR /app\n"
-            "COPY package*.json ./\n"
-            "RUN npm install --legacy-peer-deps || npm install\n"
             "COPY . .\n"
-            "RUN npx expo export --platform web || npx expo export:web || npm run build || true\n\n"
+            "RUN node .stackpilot-runtime/node_tasks.cjs install && python3 .stackpilot-runtime/repository_tests.py\n"
+            "COPY . .\n"
+            "RUN npx expo export --platform web\n\n"
             "FROM nginx:alpine\n"
             "COPY --from=builder /app/dist /usr/share/nginx/html\n"
-            "RUN if [ ! -d /usr/share/nginx/html ] || [ -z \"$(ls -A /usr/share/nginx/html 2>/dev/null)\" ]; then \\\n"
-            "      cp -r /app/web-build/* /usr/share/nginx/html/ 2>/dev/null || true; \\\n"
-            "    fi\n"
+            "COPY --from=builder /app/.stackpilot-tests.json /stackpilot-evidence/tests.json\n"
             "RUN printf 'server {\\n    listen 3000;\\n    server_name localhost;\\n    root /usr/share/nginx/html;\\n    index index.html;\\n    location / {\\n        try_files $uri $uri/ /index.html;\\n    }\\n}\\n' > /etc/nginx/conf.d/default.conf\n"
             "RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp && chmod -R 777 /var/cache/nginx /var/run /var/log/nginx /etc/nginx\n"
             "EXPOSE 3000\n"
@@ -2873,14 +2893,16 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
             "FROM ghcr.io/cirruslabs/flutter:stable AS build\n"
             "WORKDIR /app\n"
             "COPY . .\n"
-            "RUN flutter config --enable-web && flutter pub get && flutter build web --release\n\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends python3 && flutter config --enable-web && flutter pub get && flutter analyze && python3 .stackpilot-runtime/repository_tests.py && flutter build web --release\n\n"
             "FROM nginx:alpine\n"
             "COPY --from=build /app/build/web /usr/share/nginx/html\n"
+            "COPY --from=build /app/.stackpilot-tests.json /stackpilot-evidence/tests.json\n"
             "RUN printf 'server {\\n    listen 3000;\\n    server_name localhost;\\n    root /usr/share/nginx/html;\\n    index index.html;\\n    location / {\\n        try_files $uri $uri/ /index.html;\\n    }\\n}\\n' > /etc/nginx/conf.d/default.conf\n"
             "RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp && chmod -R 777 /var/cache/nginx /var/run /var/log/nginx /etc/nginx\n"
             "EXPOSE 3000\n"
             "CMD [\"nginx\", \"-g\", \"daemon off;\"]\n";
-    } else if (hasFile(sourceDir, "index.html") || hasFileWithExtension(sourceDir, ".html")) {
+    } else if (!hasFile(sourceDir, "package.json") &&
+               (hasFile(sourceDir, "index.html") || hasFileWithExtension(sourceDir, ".html"))) {
         appendLogLine(logFile, "🌐 [Archetype Engine] Static HTML/CSS/JS site detected. Generating Nginx container on port 3000...", onLogLine);
         generated =
             "FROM nginx:alpine\n"
@@ -2895,19 +2917,19 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
         appendLogLine(logFile, "🔷 [Archetype Engine] .NET 8 / C# application detected. Generating multi-stage SDK & ASP.NET container on port 3000...", onLogLine);
         generated =
             "FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*\n"
             "WORKDIR /src\n"
             "COPY . .\n"
-            "RUN proj=$(find . -name '*.csproj' ! -iname '*test*' | head -n1); \\\n"
-            "    if [ -z \"$proj\" ]; then proj=$(find . -name '*.csproj' | head -n1); fi; \\\n"
-            "    if [ -z \"$proj\" ]; then echo \"No .csproj found\"; exit 1; fi; \\\n"
-            "    dotnet restore \"$proj\" && dotnet publish \"$proj\" -c Release -o /app/publish /p:UseAppHost=false\n\n"
-            "FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final\n"
+            "RUN python3 .stackpilot-runtime/compiled_build.py dotnet\n"
+            "FROM mcr.microsoft.com/dotnet/aspnet:8.0\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*\n"
             "WORKDIR /app\n"
-            "COPY --from=build /app/publish .\n"
-            "ENV ASPNETCORE_URLS=http://+:3000\n"
-            "ENV PORT=3000\n"
+            "COPY --from=build /app/out /app/out\n"
+            "COPY .stackpilot-runtime .stackpilot-runtime\n"
+            "RUN python3 .stackpilot-runtime/select_entrypoint.py dotnet /app /app/.stackpilot-entry.json\n"
+            "ENV ASPNETCORE_URLS=http://+:3000 PORT=3000\n"
             "EXPOSE 3000\n"
-            "CMD [\"sh\", \"-c\", \"cfg=$(find /app -maxdepth 1 -name '*.runtimeconfig.json' ! -iname '*test*' | head -n1); if test -n \\\"$cfg\\\"; then dll=\\\"\\${cfg%.runtimeconfig.json}.dll\\\"; else dll=$(find /app -maxdepth 1 -name '*.dll' ! -name 'Microsoft.*' ! -name 'System.*' ! -name 'Azure.*' ! -iname '*test*' | head -n1); fi; exec dotnet \\\"$dll\\\"\"]\n";
+            "CMD [\"python3\",\"/app/.stackpilot-runtime/launch.py\"]\n";
     } else if (hasFile(sourceDir, "package.json")) {
         const std::filesystem::path packageJsonPath = sourceDir / "package.json";
         Json::Value packageJson;
@@ -2958,114 +2980,117 @@ bool BuildService::ensureDockerfile(const std::filesystem::path& sourceDir,
         if (isStaticSpa) {
             appendLogLine(logFile, "Detected Static SPA (Vite/React/Vue/Svelte/Astro). Generating Nginx multi-stage Dockerfile.", onLogLine);
             generated =
-                "FROM node:20-alpine AS builder\n"
+                "FROM node:22-alpine AS builder\nRUN apk add --no-cache python3\n"
                 "WORKDIR /app\n"
-                "COPY package*.json ./\n"
-                "RUN npm ci || npm install\n"
                 "COPY . .\n"
-                "RUN npm run build\n\n"
+                "RUN node .stackpilot-runtime/node_tasks.cjs install\n"
+                "COPY . .\n"
+                "RUN python3 .stackpilot-runtime/repository_tests.py && node .stackpilot-runtime/node_tasks.cjs build && mkdir -p /stackpilot-output && \\\n"
+                "    if [ -f dist/index.html ]; then cp -a dist/. /stackpilot-output/; \\\n"
+                "    elif [ -f build/index.html ]; then cp -a build/. /stackpilot-output/; \\\n"
+                "    elif [ -f out/index.html ]; then cp -a out/. /stackpilot-output/; \\\n"
+                "    else echo 'No compiled SPA index.html in dist, build or out; configure the output path explicitly.'; exit 1; fi\n\n"
                 "FROM nginx:alpine\n"
-                "COPY --from=builder /app/dist /usr/share/nginx/html\n"
-                "RUN if [ ! -d /usr/share/nginx/html ] || [ -z \"$(ls -A /usr/share/nginx/html 2>/dev/null)\" ]; then \\\n"
-                "      cp -r /app/build/* /usr/share/nginx/html/ 2>/dev/null || true; \\\n"
-                "    fi\n"
+                "COPY --from=builder /stackpilot-output/ /usr/share/nginx/html/\n"
+                "COPY --from=builder /app/.stackpilot-tests.json /stackpilot-evidence/tests.json\n"
                 "RUN printf 'server {\\n    listen 3000;\\n    server_name localhost;\\n    root /usr/share/nginx/html;\\n    index index.html;\\n    location / {\\n        try_files $uri $uri/ /index.html;\\n    }\\n}\\n' > /etc/nginx/conf.d/default.conf\n"
                 "RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache/nginx/fastcgi_temp /var/cache/nginx/uwsgi_temp /var/cache/nginx/scgi_temp && chmod -R 777 /var/cache/nginx /var/run /var/log/nginx /etc/nginx\n"
                 "EXPOSE 3000\n"
                 "CMD [\"nginx\", \"-g\", \"daemon off;\"]\n";
         } else {
             generated =
-                "FROM node:20-alpine\n"
+                "FROM node:22-alpine\nRUN apk add --no-cache python3\n"
                 "WORKDIR /app\n"
-                "COPY package*.json ./\n"
-                "RUN npm ci || npm install\n"
+                "COPY . .\n"
+                "RUN node .stackpilot-runtime/node_tasks.cjs install\n"
+                "RUN python3 .stackpilot-runtime/repository_tests.py\n"
                 "COPY . .\n";
 
             if (nextApp || hasBuildScript) {
                 generated +=
                     "RUN if [ -f next.config.js ] || [ -f next.config.mjs ] || [ -f next.config.ts ] || "
-                    "node -e \"const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));if(!(pkg.scripts&&pkg.scripts.build)) process.exit(1)\"; then npm run build; fi\n";
+                    "node -e \"const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));if(!(pkg.scripts&&pkg.scripts.build)) process.exit(1)\"; then node .stackpilot-runtime/node_tasks.cjs build; fi\n";
             }
 
             generated +=
                 "EXPOSE 3000\n"
-                "CMD [\"sh\", \"-c\", \"node -e \\\"const p=require('./package.json');process.exit(p.scripts&&p.scripts.start?0:1)\\\" && npm start || node server.js || node index.js || node app.js\"]\n";
+                "CMD [\"node\", \".stackpilot-runtime/node_tasks.cjs\", \"start\"]\n";
         }
     } else if (hasFile(sourceDir, "requirements.txt") || hasFile(sourceDir, "pyproject.toml") ||
                hasFile(sourceDir, "app.py") || hasFile(sourceDir, "main.py") || hasPythonScript(sourceDir)) {
-        if (hasFile(sourceDir, "requirements.txt")) {
-            generated =
-                "FROM python:3.12-slim\n"
-                "WORKDIR /app\n"
-                "COPY requirements.txt ./\n"
-                "RUN pip install --no-cache-dir -r requirements.txt\n"
-                "COPY . .\n"
-                "EXPOSE 3000\n"
-                "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec streamlit run \\\"$f\\\" --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); [ -n \\\"$m\\\" ] || { echo 'No Python module found'; exit 1; }; exec uvicorn \\\"${m}:app\\\" --host 0.0.0.0 --port=3000; else f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec python \\\"$f\\\"; fi\"]\n";
-        } else {
-            generated =
-                "FROM python:3.12-slim\n"
-                "WORKDIR /app\n"
-                "COPY . .\n"
-                "RUN if [ -f pyproject.toml ]; then pip install --no-cache-dir .; fi\n"
-                "EXPOSE 3000\n"
-                "CMD [\"sh\", \"-c\", \"if python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('streamlit') else 1)\\nPY\\nthen f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec streamlit run \\\"$f\\\" --server.address=0.0.0.0 --server.port=3000; elif python - <<'PY'\\nimport importlib.util,sys\\nsys.exit(0 if importlib.util.find_spec('uvicorn') else 1)\\nPY\\nthen m=$(if [ -f app.py ]; then echo app; elif [ -f main.py ]; then echo main; else ls *.py 2>/dev/null | head -n1 | sed 's/\\\\.py$//'; fi); [ -n \\\"$m\\\" ] || { echo 'No Python module found'; exit 1; }; exec uvicorn \\\"${m}:app\\\" --host 0.0.0.0 --port=3000; else f=$(if [ -f app.py ]; then echo app.py; elif [ -f main.py ]; then echo main.py; else ls *.py 2>/dev/null | head -n1; fi); [ -n \\\"$f\\\" ] || { echo 'No Python entrypoint found'; exit 1; }; exec python \\\"$f\\\"; fi\"]\n";
-        }
-    } else if (hasFile(sourceDir, "go.mod")) {
         generated =
-            "FROM golang:1.24-alpine AS build\n"
-            "WORKDIR /src\n"
-            "COPY go.mod go.sum* ./\n"
-            "RUN go mod download\n"
-            "COPY . .\n"
-            "RUN CGO_ENABLED=0 GOOS=linux go build -o /app/server .\n"
-            "FROM alpine:3.20\n"
+            "FROM python:3.12-slim\n"
             "WORKDIR /app\n"
-            "COPY --from=build /app/server ./server\n"
+            "COPY . .\n"
+            "RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; elif [ -f pyproject.toml ]; then pip install --no-cache-dir .; fi\n"
+            "RUN python3 .stackpilot-runtime/repository_tests.py && python3 .stackpilot-runtime/select_entrypoint.py python /app /app/.stackpilot-entry.json\n"
             "ENV PORT=3000\n"
             "EXPOSE 3000\n"
-            "CMD [\"./server\"]\n";
+            "CMD [\"python3\",\"/app/.stackpilot-runtime/launch.py\"]\n";
+    } else if (hasFile(sourceDir, "go.mod")) {
+        generated =
+            "FROM golang:1.24-bookworm AS build\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*\n"
+            "WORKDIR /src\n"
+            "COPY . .\n"
+            "RUN python3 .stackpilot-runtime/compiled_build.py go\n"
+            "FROM debian:bookworm-slim\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates python3 && rm -rf /var/lib/apt/lists/*\n"
+            "WORKDIR /app\n"
+            "COPY --from=build /artifacts/server /app/server\n"
+            "COPY --from=build /artifacts/.stackpilot-entry.json /app/.stackpilot-entry.json\n"
+            "COPY .stackpilot-runtime /app/.stackpilot-runtime\nCOPY .stackpilot-plan.json /app/.stackpilot-plan.json\n"
+            "COPY --from=build /artifacts/.stackpilot-tests.json /stackpilot-evidence/tests.json\n"
+            "ENV PORT=3000\n"
+            "EXPOSE 3000\n"
+            "CMD [\"python3\", \"/app/.stackpilot-runtime/launch.py\"]\n";
     } else if (hasFile(sourceDir, "CMakeLists.txt")) {
         generated =
             "FROM ubuntu:24.04\n"
-            "RUN apt-get update && apt-get install -y build-essential cmake libssl-dev zlib1g-dev uuid-dev && rm -rf /var/lib/apt/lists/*\n"
+            "RUN apt-get update && apt-get install -y build-essential cmake python3 libssl-dev zlib1g-dev uuid-dev && rm -rf /var/lib/apt/lists/*\n"
             "WORKDIR /app\n"
             "COPY . .\n"
-            "RUN cmake -S . -B build && cmake --build build --config Release\n"
+            "RUN mkdir -p build/.cmake/api/v1/query && touch build/.cmake/api/v1/query/codemodel-v2 && cmake -S . -B build && cmake --build build --config Release && python3 .stackpilot-runtime/repository_tests.py && python3 .stackpilot-runtime/select_entrypoint.py cmake /app /app/.stackpilot-entry.json\n"
             "ENV PORT=3000\n"
             "EXPOSE 3000\n"
-            "CMD [\"/bin/sh\", \"-c\", \"exe=$(find build -maxdepth 4 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No executable found after CMake build'; exit 1; }; exec \\\"$exe\\\"\"]\n";
+            "CMD [\"python3\", \"/app/.stackpilot-runtime/launch.py\"]\n";
     } else if (hasFile(sourceDir, "Cargo.toml")) {
         generated =
             "FROM rust:1-bookworm AS build\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*\n"
             "WORKDIR /src\n"
             "COPY . .\n"
-            "RUN cargo build --release\n"
+            "RUN python3 .stackpilot-runtime/compiled_build.py rust\n"
             "FROM debian:bookworm-slim\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 python3 && rm -rf /var/lib/apt/lists/*\n"
             "WORKDIR /app\n"
-            "COPY --from=build /src/target/release /app/bin\n"
+            "COPY --from=build /artifacts/server /app/server\n"
+            "COPY --from=build /artifacts/.stackpilot-entry.json /app/.stackpilot-entry.json\n"
+            "COPY .stackpilot-runtime /app/.stackpilot-runtime\nCOPY .stackpilot-plan.json /app/.stackpilot-plan.json\n"
+            "COPY --from=build /artifacts/.stackpilot-tests.json /stackpilot-evidence/tests.json\n"
             "ENV PORT=3000\n"
             "EXPOSE 3000\n"
-            "CMD [\"/bin/sh\", \"-c\", \"exe=$(find /app/bin -maxdepth 1 -type f -executable | head -n1); [ -n \\\"$exe\\\" ] || { echo 'No Rust release binary found'; exit 1; }; exec \\\"$exe\\\"\"]\n";
+            "CMD [\"python3\", \"/app/.stackpilot-runtime/launch.py\"]\n";
     } else if (hasFile(sourceDir, "pom.xml") || hasFile(sourceDir, "build.gradle") ||
                hasFile(sourceDir, "build.gradle.kts") || hasFile(sourceDir, "gradlew")) {
         generated =
             "FROM eclipse-temurin:21-jdk AS build\n"
             "WORKDIR /src\n"
             "COPY . .\n"
-            "RUN if [ -f mvnw ]; then chmod +x mvnw && ./mvnw -DskipTests package; elif [ -f pom.xml ]; then apt-get update && apt-get install -y maven && mvn -DskipTests package; elif [ -f gradlew ]; then chmod +x gradlew && (./gradlew build -x test || ./gradlew desktopApp:jar || ./gradlew jar || ./gradlew assemble || true); else apt-get update && apt-get install -y gradle && gradle build -x test; fi\n"
-            "FROM eclipse-temurin:21-jre\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends python3 && if [ -f mvnw ]; then chmod +x mvnw; elif [ -f pom.xml ]; then apt-get install -y maven; elif [ -f gradlew ]; then chmod +x gradlew; else apt-get install -y gradle; fi && python3 .stackpilot-runtime/repository_tests.py\n"
+            "FROM eclipse-temurin:21-jre\nRUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*\n"
             "WORKDIR /app\n"
             "COPY --from=build /src .\n"
+            "RUN python3 .stackpilot-runtime/select_entrypoint.py java /app /app/.stackpilot-entry.json\n"
             "ENV PORT=3000\n"
             "ENV SERVER_PORT=3000\n"
             "EXPOSE 3000\n"
-            "CMD [\"/bin/sh\", \"-c\", \"jar=$(find . -path '*/target/*.jar' -o -path '*/build/libs/*.jar' -o -name '*.jar' | grep -v plain | head -n1); [ -n \\\"$jar\\\" ] || { echo 'No runnable jar found'; exit 1; }; exec java -jar \\\"$jar\\\"\"]\n";
+            "CMD [\"python3\", \"/app/.stackpilot-runtime/launch.py\"]\n";
     } else {
         appendLogLine(logFile, "🤖 [AI Agent Auto-Detect] Project type could not be deterministically resolved. Passing project tree to AI agent...", onLogLine);
         std::string aiReason;
         if (tryGenerateDockerfileWithAi(sourceDir, logFile, aiReason, onLogLine)) {
-            appendLogLine(logFile, "✅ [AI Agent Auto-Detect] Dockerfile developed and verified by AI. Continuing deployment build...", onLogLine);
+            appendLogLine(logFile, "✅ [AI Agent Auto-Detect] Dockerfile generated by AI; build and runtime verification pending...", onLogLine);
             return true;
         }
 

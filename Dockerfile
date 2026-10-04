@@ -21,10 +21,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     pkg-config \
     libjsoncpp-dev \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python3 -m pip install --no-cache-dir tomli==2.2.1
+
 WORKDIR /app
-COPY . .
+# Keep runtime helpers, migrations, qualification output and frontend changes
+# from invalidating the expensive C++ compilation layer.
+COPY CMakeLists.txt ./
+COPY config ./config
+COPY src ./src
 
 # `auto` used to mean `--parallel` with no limit, i.e. one compile job per core.
 # Each Drogon translation unit can peak near 1.5 GB, so on an 8-core / 8 GB Docker
@@ -57,6 +64,11 @@ RUN cmake -B build -S . && \
 #   docker build --target unit-tests -t stackpilot-unit-tests .
 #   docker run --rm stackpilot-unit-tests
 FROM builder AS unit-tests
+
+COPY tests/unit/cpp ./tests/unit/cpp
+COPY deployment-runtime ./deployment-runtime
+COPY ai-service/app/repository_discovery.py ./deployment-runtime/repository_discovery.py
+COPY ai-service/app/repository_toolchains.py ./deployment-runtime/repository_toolchains.py
 
 RUN cmake -B build-tests -S . -DSTACKPILOT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug && \
     cmake --build build-tests --target stackpilot_unit_tests --parallel 2
@@ -111,7 +123,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && . /etc/os-release \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin docker-buildx-plugin \
     && apt-get purge -y gnupg \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
@@ -126,6 +138,8 @@ RUN curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 https://packages.mi
     && apt-get install -y --no-install-recommends powershell nodejs npm python3 python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python3 -m pip install --no-cache-dir tomli==2.2.1
+
 # Run as an unprivileged user instead of root. Note this does NOT neutralise the
 # mounted docker socket — see docker-compose.yml, where group_add grants access to
 # it. Dropping root still removes the ability to write system paths, install
@@ -136,8 +150,11 @@ RUN groupadd --gid 10001 stackpilot \
 WORKDIR /app
 
 COPY --from=builder --chown=10001:10001 /app/build/stackpilot-platform ./build/stackpilot-platform
-COPY --from=builder --chown=10001:10001 /app/sql ./sql
-COPY --from=builder --chown=10001:10001 /app/config.json ./config.json
+COPY --chown=10001:10001 sql ./sql
+COPY --chown=10001:10001 config.json ./config.json
+COPY --chown=10001:10001 deployment-runtime ./deployment-runtime
+COPY --chown=10001:10001 ai-service/app/repository_discovery.py ./deployment-runtime/repository_discovery.py
+COPY --chown=10001:10001 ai-service/app/repository_toolchains.py ./deployment-runtime/repository_toolchains.py
 
 # `static` is an intentionally empty document_root. Drogon serves unmatched
 # paths from it, so it must NOT be /app — that exposed uploads/builds (cloned

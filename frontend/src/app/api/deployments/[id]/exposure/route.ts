@@ -19,6 +19,9 @@ export async function POST(
     const backendBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
     const cookieHeader = request.headers.get("cookie") || "";
     const authHeader = request.headers.get("authorization") || "";
+    const originHeader = request.headers.get("origin") || "";
+    const refererHeader = request.headers.get("referer") || "";
+    const csrfHeader = request.headers.get("x-stackpilot-csrf") || "";
 
     const candidateUrls = [
       process.env.INTERNAL_API_URL,
@@ -32,7 +35,9 @@ export async function POST(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-stackpilot-CSRF": "1",
+            ...(csrfHeader ? { "X-stackpilot-CSRF": csrfHeader } : {}),
+            ...(originHeader ? { Origin: originHeader } : {}),
+            ...(refererHeader ? { Referer: refererHeader } : {}),
             ...(cookieHeader ? { Cookie: cookieHeader } : {}),
             ...(authHeader ? { Authorization: authHeader } : {}),
           },
@@ -60,9 +65,9 @@ export async function POST(
       { error: "Could not reach StackPilot backend to update deployment exposure" },
       { status: 502 }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     return NextResponse.json(
-      { error: error?.message || "Failed to update deployment exposure" },
+      { error: error instanceof Error ? error.message : "Failed to update deployment exposure" },
       { status: 500 }
     );
   }

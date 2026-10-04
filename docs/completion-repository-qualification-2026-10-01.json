@@ -1,0 +1,75 @@
+{
+  "scope": "completion_contract_real_docker_and_cli_release",
+  "model_calls": 0,
+  "run_id": "98e4f145-7eeb-40e9-a3f3-ecbf74afbea4",
+  "cases": [
+    "Original intended features imported automatically",
+    "Incomplete source fails real Docker execution and cannot release",
+    "Backend independently rejects a direct unverified release",
+    "Removing requirements cannot turn failure into success",
+    "Completed CLI passes frozen feature checks on the exact integrated revision",
+    "Verified source is built and its real interactive console passes routed runtime acceptance",
+    "A later source edit invalidates completion and blocks the next release"
+  ],
+  "deployment_id": "61178259-4478-478b-945d-069134c8e70a",
+  "job_id": "0836954c-bd20-439a-943f-92b6f613ae85",
+  "revision": "1d531609e7c044081f53d398b7aa5a30ff2e3617",
+  "feature_verification": {
+    "required": true,
+    "state": "verified",
+    "verified": true,
+    "scope": "declared_completion_contract",
+    "objective": "Complete the README arithmetic CLI and deploy its real interactive console",
+    "summary": "Finish an interactive arithmetic CLI with error recovery",
+    "workload": "cli",
+    "assumptions": [],
+    "contract_digest": "66ae413fc66fabb7b4f4f8630f035762afe0115a9812fda526f270ec0d6bd24f",
+    "revision": "1d531609e7c044081f53d398b7aa5a30ff2e3617",
+    "intent_source": "repository_contract",
+    "features": [
+      {
+        "id": "addition",
+        "description": "Add signed numbers",
+        "status": "passed",
+        "checks_passed": 1,
+        "checks_total": 1
+      },
+      {
+        "id": "subtraction",
+        "description": "Subtract numbers",
+        "status": "passed",
+        "checks_passed": 1,
+        "checks_total": 1
+      },
+      {
+        "id": "multiplication",
+        "description": "Multiply decimal numbers",
+        "status": "passed",
+        "checks_passed": 1,
+        "checks_total": 1
+      },
+      {
+        "id": "error-recovery",
+        "description": "Reject invalid input and division by zero, then continue working",
+        "status": "passed",
+        "checks_passed": 1,
+        "checks_total": 1
+      }
+    ],
+    "features_passed": 4,
+    "features_total": 4
+  },
+  "runtime_result": {
+    "deployment_id": "61178259-4478-478b-945d-069134c8e70a",
+    "elapsed_seconds": 22,
+    "job_id": "0836954c-bd20-439a-943f-92b6f613ae85",
+    "job_status": "completed",
+    "message": "This exact build completed and passed its workload contract. Undeclared business and device workflows remain unverified.",
+    "runtime_url": "http://ee59c582-433b-42ba-b322-670b8d99bec2.preview.localhost:8091",
+    "status": "running",
+    "verification_scope": "console_workflow",
+    "verified": true,
+    "next_step_hint": "This build passed the render smoke check; report its scope and remaining business tests."
+  },
+  "passed": true
+}

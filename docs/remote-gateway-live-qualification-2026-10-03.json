@@ -1,0 +1,16 @@
+{
+  "public_gateway_blocks_private_routes": true,
+  "public_pairing_and_scoped_phone_api": true,
+  "https_phone_ui_loads": true,
+  "authenticated_live_browser_frames_render": true,
+  "phone_video_no_horizontal_overflow": true,
+  "no_runtime_errors": true,
+  "transport": {
+    "secure": true,
+    "frames": 7,
+    "draws": 0,
+    "video": true,
+    "width": 390,
+    "body": 390
+  }
+}

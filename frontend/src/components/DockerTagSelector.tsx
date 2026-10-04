@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Tag, RefreshCw, Check, Search, Sparkles, ChevronDown } from "lucide-react";
+import { Tag, RefreshCw, Check, Search, Sparkles, ChevronDown } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";

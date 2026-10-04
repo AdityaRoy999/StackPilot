@@ -15,7 +15,7 @@ import {
   Trash2,
   UserMinus,
   Users,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -371,12 +371,12 @@ export default function OrganizationPage() {
                     <CardHeader className="pb-3">
                       <CardTitle className="text-base font-semibold">Invite Teammate</CardTitle>
                       <CardDescription>
-                        Invite team members by email. If they don't have an account yet, a secure invite link is generated and they will automatically join when they register.
+                        Invite team members by email. If they do not have an account yet, a secure invite link is generated and they will automatically join when they register.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex flex-wrap items-end gap-3">
-                        <div className="min-w-64 flex-1 space-y-1.5">
+                        <div className="flex min-w-64 flex-1 flex-col gap-1.5">
                           <Label htmlFor="invite-email" className="text-xs font-semibold text-muted-foreground uppercase">
                             Email Address
                           </Label>
@@ -389,7 +389,7 @@ export default function OrganizationPage() {
                             className="h-10 bg-muted/30"
                           />
                         </div>
-                        <div className="space-y-1.5 w-40">
+                        <div className="flex w-40 flex-col gap-1.5">
                           <Label htmlFor="invite-role" className="text-xs font-semibold text-muted-foreground uppercase">
                             Role
                           </Label>
@@ -397,7 +397,7 @@ export default function OrganizationPage() {
                             value={inviteRole}
                             onValueChange={(val) => setInviteRole((val || "member") as Role)}
                           >
-                            <SelectTrigger id="invite-role" className="h-10 w-full bg-muted/30 capitalize">
+                            <SelectTrigger id="invite-role" className="h-10 w-full capitalize">
                               <SelectValue placeholder="Select role" />
                             </SelectTrigger>
                             <SelectContent>

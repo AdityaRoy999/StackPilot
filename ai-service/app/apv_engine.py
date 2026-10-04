@@ -25,6 +25,9 @@ class PerceptionSnapshot:
     elements_count: int = 0
     dom_hash: str = ""
     focused_id: Optional[str] = None
+    control_state: str = ""
+    visual_state: str = ""
+    captured: bool = True
     timestamp: float = field(default_factory=time.time)
 
 
@@ -104,10 +107,19 @@ class ActionPerceptionVerification:
                 modalsCount: modals.length,
                 alerts: alerts,
                 focusedId: focusedId,
-                keyText: keyText
+                keyText: keyText + '|' + (document.body?.innerText || '').slice(0, 12000),
+                visualState: [document.documentElement.getAttribute('data-theme'),document.documentElement.className,
+                    document.body?.getAttribute('data-theme'),document.body?.className,
+                    getComputedStyle(document.documentElement).colorScheme,
+                    document.body ? getComputedStyle(document.body).backgroundColor : ''],
+                controlState: Array.from(document.querySelectorAll('input,textarea,select,[aria-selected],[aria-expanded],[aria-checked]'))
+                    .filter(isVisible).slice(0, 200).map(e => [e.getAttribute('data-sp-id') || e.id || e.name,
+                        e.type === 'password' ? '[redacted]' : e.value, e.checked,
+                        e.getAttribute('aria-selected'), e.getAttribute('aria-expanded'), e.getAttribute('aria-checked')])
             };
         })()"""
 
+        res = {}
         try:
             res = await session.send_command("Runtime.evaluate", {
                 "expression": js_probe,
@@ -117,6 +129,7 @@ class ActionPerceptionVerification:
         except Exception:
             val = {}
 
+        captured = bool(val.get("url")) and not res.get("exceptionDetails") if isinstance(res, dict) else False
         raw_live_url = val.get("url", "")
         if raw_live_url and "chrome-error://" not in raw_live_url:
             try:
@@ -157,6 +170,9 @@ class ActionPerceptionVerification:
             elements_count=len(session.interactive_elements or []),
             dom_hash=dom_hash,
             focused_id=focused_id,
+            control_state=hashlib.sha256(repr(val.get("controlState", [])).encode()).hexdigest(),
+            visual_state=hashlib.sha256(repr(val.get("visualState", [])).encode()).hexdigest(),
+            captured=captured,
             timestamp=time.time()
         )
 
@@ -169,37 +185,13 @@ class ActionPerceptionVerification:
         fast_mode: bool = False
     ) -> bool:
         """
-        Executes Two-Tier Click Dispatch:
-        - Tier 1: High-precision synthetic CDP input events at bounding box center.
-        - Tier 2: Native Blink DOM synthetic event sequence with bubbling.
+        Hit-test the current target and dispatch native CDP input exactly once.
+        The legacy method name is retained for callers; no DOM click replay occurs.
         """
         # Retrieve exact bounding box and element text
-        coords = await session.evaluate(f"""
-        (() => {{
-            const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-            if (!el) return null;
-            const r = el.getBoundingClientRect();
-            const winH = window.innerHeight || 720;
-            const winW = window.innerWidth || 1280;
-            const cx = Math.round(r.left + r.width / 2);
-            const cy = Math.round(r.top + r.height / 2);
-            // Check if element center is actually within the viewport (do NOT clamp offscreen elements)
-            const isInViewport = (r.bottom > 0 && r.top < winH && r.right > 0 && r.left < winW);
-            let isOccluded = false;
-            if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH) {{
-                const topEl = document.elementFromPoint(cx, cy);
-                isOccluded = topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el);
-            }}
-            return {{
-                x: cx,
-                y: cy,
-                text: (el.textContent || el.getAttribute('aria-label') || '').trim(),
-                is_occluded: Boolean(isOccluded),
-                is_in_viewport: isInViewport
-            }};
-        }})()
-        """)
-
+        from .browser_testing.actionability import prepare_pointer_target
+        coords = await prepare_pointer_target(session, element_id)
+        session.last_actionability = coords
         target_label = label or (coords.get("text") if coords else f"Element #{element_id}")
         clean_target = str(target_label).strip()
         while True:
@@ -216,66 +208,14 @@ class ActionPerceptionVerification:
                 break
         display_label = f"Click: {clean_target}" if clean_target else "Click"
 
-        clicked = False
-        # Tier 1: High-precision native CDP Hardware Mouse Event Sequence (if unoccluded AND in viewport)
-        if coords and coords.get("is_in_viewport") and coords.get("x") is not None and coords.get("y") is not None and not coords.get("is_occluded"):
-            click_x = coords["x"]
-            click_y = coords["y"]
-            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode, exact_coords=True)
-            clicked = True
-        elif coords and coords.get("is_in_viewport") and coords.get("x") is not None and coords.get("y") is not None:
-            # If in viewport but occluded, try hardware click then fall back to Tier 2
-            click_x = coords["x"]
-            click_y = coords["y"]
-            await session.click(click_x, click_y, label=display_label, fast_mode=fast_mode, exact_coords=True)
-            clicked = True
-        else:
-            # Element not found via JS or not in viewport — use cached center coordinates (page_x/page_y are centers now)
-            el = next((e for e in (session.interactive_elements or []) if str(e.get("id")) == str(element_id)), None)
-            if el and el.get("x") is not None and el.get("y") is not None:
-                # x/y are already viewport center coords (updated by update_element_viewport_coordinates)
-                await session.click(el["x"], el["y"], label=display_label, fast_mode=fast_mode, exact_coords=True)
-                clicked = True
-
-        # Full Synthetic Mouse Event Cycle for Combobox/Dropdown Options (Angular, React, Vue, PrimeNG)
-        try:
-            await session.evaluate(f"""
-            (() => {{
-                const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-                if (!el) return;
-                const isOption = el.getAttribute('role') === 'option' || el.tagName === 'LI' || el.closest('[role="listbox"], [role="menu"], ul.ui-autocomplete-items');
-                if (isOption) {{
-                    el.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
-                    el.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
-                    el.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
-                }}
-            }})()
-            """)
-        except Exception:
-            pass
-
-        # Tier 2: Fallback to Native DOM Click ONLY if hardware mouse click was not possible or element is occluded
-        if not clicked or (coords and coords.get("is_occluded")):
-            try:
-                await session.evaluate(f"""
-                (() => {{
-                    const el = (window.__spFast && window.__spFast.nodes.get({element_id})) || document.querySelector('[data-sp-id="{element_id}"]');
-                    if (!el) return;
-                    try {{
-                        const targetBtn = (el.tagName === 'BUTTON' || el.tagName === 'A' || el.tagName === 'INPUT') ? el : (el.querySelector('button, a, input') || el);
-                        targetBtn.dispatchEvent(new MouseEvent('mousedown', {{ bubbles: true, cancelable: true, view: window }}));
-                        targetBtn.dispatchEvent(new MouseEvent('mouseup', {{ bubbles: true, cancelable: true, view: window }}));
-                        if (typeof targetBtn.click === 'function') {{
-                            targetBtn.click();
-                        }} else {{
-                            targetBtn.dispatchEvent(new MouseEvent('click', {{ bubbles: true, cancelable: true, view: window }}));
-                        }}
-                    }} catch(e) {{}}
-                }})()
-                """)
-            except Exception:
-                pass
-
+        # A real input click already emits the complete event sequence. Never replay
+        # it with DOM events: options/checkboxes and submit handlers can fire twice.
+        if not coords or coords.get("disabled") or not coords.get("is_in_viewport") or coords.get("is_occluded"):
+            return False
+        if coords.get("x") is None or coords.get("y") is None:
+            return False
+        await session.click(coords["x"], coords["y"], label=display_label,
+                            fast_mode=True, exact_coords=True)
         return True
 
     @classmethod
@@ -290,6 +230,26 @@ class ActionPerceptionVerification:
         Computes the perceptual delta between pre and post action snapshots
         and verifies if the intended effect was achieved.
         """
+        if not pre.captured or not post.captured:
+            return ActionVerificationResult(action, target, False, "snapshot_failed",
+                                            "Could not capture reliable before/after evidence.")
+        new_alerts = [a for a in post.alerts if a not in pre.alerts]
+        # Navigation identity takes precedence over incidental form/UI changes
+        # caused by mounting the destination document.
+        if post.url != pre.url:
+            return ActionVerificationResult(action,target,True,'route_change',
+                f"Navigated to new route: '{post.url}' (from '{pre.url}')",delta_url=post.url)
+        if any(any(k in alert.lower() for k in ["required", "invalid", "error", "failed", "mandatory"])
+               for alert in new_alerts):
+            return ActionVerificationResult(action, target, False, "validation_error",
+                                            "Validation feedback: " + "; ".join(new_alerts), new_alerts=new_alerts)
+        if pre.control_state != post.control_state:
+            return ActionVerificationResult(action, target, True, "control_change",
+                                            "Observed form value or selected/expanded control state change.")
+        if pre.visual_state != post.visual_state:
+            return ActionVerificationResult(action,target,True,'visual_state_change',
+                                            'Observed document theme/style state change; visual correctness is not asserted.')
+
         # 1. Route Navigation Check
         if post.url != pre.url:
             return ActionVerificationResult(
@@ -385,9 +345,9 @@ class ActionPerceptionVerification:
         return ActionVerificationResult(
             action=action,
             target=target,
-            verified=True,  # Dispatched successfully even if purely visual/internal JS state
+            verified=False,  # Dispatch is not evidence of the intended outcome
             effect_type="no_effect",
-            description="Action executed successfully without route transition or layout displacement",
+            description="No observable effect; the intended outcome remains unverified",
             pre_snapshot=pre,
             post_snapshot=post
         )

@@ -1,11 +1,10 @@
 """
 StackPilot System 1 Fast Decision Engine
 Inspired by TypeSafe AI's Jev Model Architecture (Diogo Almeida, Sept 2026).
-Executes typed, probabilistic micro-decisions over web program state in 15-200ms,
-bypassing the slow autoregressive token generation tax of traditional LLMs.
-
-Universal, domain-agnostic design: operates across ANY website (e-commerce, SaaS,
-travel, forms, documentation, workflow portals) using perceptual and structural DOM primitives.
+Provides heuristic handlers for familiar form/search states, with an optional
+remote decision service. Confidence scores are heuristic priorities, not
+calibrated probabilities. Unfamiliar states and final outcomes require planner
+reasoning and explicit browser assertions.
 """
 
 from __future__ import annotations
@@ -35,13 +34,13 @@ class MicroDecision:
     is_terminal: bool = False
 
 
-def extract_goal_intent(prompt: str) -> Dict[str, Any]:
+def extract_goal_intent(prompt: str, reference_datetime: Optional[datetime] = None) -> Dict[str, Any]:
     """
     Universal Goal & Entity Intent Extractor.
     Extracts structured entities, key-value parameters, and goal classifications
     from natural language user prompts for ANY website (e-commerce, SaaS, travel, forms, docs).
     """
-    p_lower = prompt.lower().strip()
+    p_lower = re.sub(r"\b(?:tommorow|tommorrow|tomorow|tmrw|tomm)\b", "tomorrow", prompt.lower().strip())
     intent: Dict[str, Any] = {
         "raw_goal": prompt,
         "goal_type": "general",
@@ -54,36 +53,46 @@ def extract_goal_intent(prompt: str) -> Dict[str, Any]:
         "date_alt": None,
         "date_natural": None,
         "category": "generic",
+        "clarification_required": [],
     }
 
     # 1. Temporal entity extraction (today, tomorrow, relative dates, MM/DD/YYYY)
-    now = datetime.now()
-    if any(k in p_lower for k in ["tomm", "tomorrow", "tmrw"]):
-        target_date = now + timedelta(days=1)
-        intent["date"] = target_date.strftime("%d/%m/%Y")
-        intent["date_alt"] = target_date.strftime("%Y-%m-%d")
-        intent["date_natural"] = target_date.strftime("%d %b %Y")
-        intent["parameters"]["date"] = intent["date"]
-    elif "day after tomorrow" in p_lower:
+    now = reference_datetime or datetime.now()
+    if "day after tomorrow" in p_lower:
         target_date = now + timedelta(days=2)
+    elif re.search(r"\btomorrow\b", p_lower):
+        target_date = now + timedelta(days=1)
+    else:
+        target_date = None
+    if target_date:
         intent["date"] = target_date.strftime("%d/%m/%Y")
         intent["date_alt"] = target_date.strftime("%Y-%m-%d")
         intent["date_natural"] = target_date.strftime("%d %b %Y")
         intent["parameters"]["date"] = intent["date"]
-    elif "today" in p_lower:
+    elif re.search(r"\btoday\b", p_lower):
         intent["date"] = now.strftime("%d/%m/%Y")
         intent["date_alt"] = now.strftime("%Y-%m-%d")
         intent["date_natural"] = now.strftime("%d %b %Y")
         intent["parameters"]["date"] = intent["date"]
     else:
+        iso_match = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", p_lower)
         dm_match = re.search(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b", p_lower)
-        if dm_match:
-            d, m, y = dm_match.group(1), dm_match.group(2), dm_match.group(3)
+        if iso_match:
+            y, m, d = iso_match.groups()
+            dm_match = None
+        elif dm_match:
+            d, m, y = dm_match.groups()
+        if iso_match or dm_match:
             if len(y) == 2:
                 y = "20" + y
-            intent["date"] = f"{int(d):02d}/{int(m):02d}/{y}"
-            intent["date_alt"] = f"{y}-{int(m):02d}-{int(d):02d}"
-            intent["parameters"]["date"] = intent["date"]
+            try:
+                parsed = datetime(int(y), int(m), int(d))
+                intent["date"] = parsed.strftime("%d/%m/%Y")
+                intent["date_alt"] = parsed.strftime("%Y-%m-%d")
+                intent["date_natural"] = parsed.strftime("%d %b %Y")
+                intent["parameters"]["date"] = intent["date"]
+            except ValueError:
+                intent["clarification_required"].append("The supplied date is invalid; clarify the intended date.")
 
     # 2. Universal Contact & Form Entity Extraction
     email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", prompt)
@@ -158,14 +167,27 @@ def extract_goal_intent(prompt: str) -> Dict[str, Any]:
             intent["category"] = "travel_search"
             intent["goal_type"] = "search"
 
-    # Default Date for Travel Searches if omitted:
-    # Travel searches (trains, flights, buses) require a travel date; default to tomorrow
-    if intent["category"] == "travel_search" and not intent["date"]:
-        target_date = now + timedelta(days=1)
-        intent["date"] = target_date.strftime("%d/%m/%Y")
-        intent["date_alt"] = target_date.strftime("%Y-%m-%d")
-        intent["date_natural"] = target_date.strftime("%d %b %Y")
-        intent["parameters"]["date"] = intent["date"]
+    # Support for newer frontend chat answers (e.g. from_selection: Mumbai)
+    for line in prompt.split('\n'):
+        line_low = line.lower().strip()
+        if 'from_selection:' in line_low:
+            val = line.split(':', 1)[1].strip()
+            intent["origin"] = val
+            intent["parameters"]["from"] = val
+            intent["category"] = "travel_search"
+            intent["goal_type"] = "search"
+        elif 'to_selection:' in line_low:
+            val = line.split(':', 1)[1].strip()
+            intent["destination"] = val
+            intent["parameters"]["to"] = val
+            intent["category"] = "travel_search"
+            intent["goal_type"] = "search"
+
+    if intent["category"] == "travel_search":
+        if not intent["date"]:
+            intent["clarification_required"].append("Travel date is missing; do not silently choose tomorrow.")
+        if intent["origin"] and intent["destination"] and intent["origin"].casefold() == intent["destination"].casefold():
+            intent["clarification_required"].append("Origin and destination are identical; clarify the requested route.")
 
     # 4. Universal Search Query Extraction
     search_match = re.search(r"\b(?:search|find|query|lookup|look up|show me|filter|browse)(?:\s+for)?\s+[\"']?([^\"'.,]+)[\"']?", p_lower)
@@ -303,7 +325,6 @@ class System1DecisionEngine:
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or TYPESAFE_API_KEY
-        self.client = httpx.AsyncClient(timeout=2.0)
 
     async def decide_next_transition(
         self,
@@ -316,6 +337,8 @@ class System1DecisionEngine:
         and returns the next atomic state transition in 15-200ms.
         """
         # If TypeSafe API key is available, evaluate via remote Jev System One model
+        if goal_intent.get("clarification_required"):
+            return self._local_fast_path_evaluator(goal_intent, page_state, recent_actions)
         if self.api_key:
             try:
                 jev_res = await self._call_jev_model(goal_intent, page_state, recent_actions)
@@ -376,18 +399,19 @@ class System1DecisionEngine:
         }
 
         t0 = time.perf_counter()
-        resp = await self.client.post(
-            TYPESAFE_API_URL,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            json=payload,
-        )
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.post(
+                TYPESAFE_API_URL,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=payload,
+            )
         latency = (time.perf_counter() - t0) * 1000
         if resp.status_code == 200:
             data = resp.json().get("answers", {})
             subtask_ans = data.get("subtask", {})
             target_ans = data.get("target_id", {})
             action_ans = data.get("action_type", {})
-            
+
             subtask = subtask_ans.get("value", "escalate")
             target_id_str = target_ans.get("value")
             target_id = int(target_id_str) if target_id_str and target_id_str != "none" else None
@@ -411,10 +435,13 @@ class System1DecisionEngine:
         recent_actions: List[Dict[str, Any]],
     ) -> MicroDecision:
         """
-        Universal domain-agnostic calibrated heuristic state machine.
-        Sub-15ms execution time. Works across all web frameworks and domains.
+        Heuristic transitions for familiar DOM states. Escalate unclear intent
+        and result states; this evaluator cannot establish business correctness.
         """
         elements = page_state.get("interactive_elements", [])
+        if goal_intent.get("clarification_required"):
+            return MicroDecision("escalate", None, confidence=0.0,
+                                 reason=" ".join(goal_intent["clarification_required"]), subtask="clarify_intent")
         curr_url = (page_state.get("url") or "").lower()
         page_title = (page_state.get("title") or "").lower()
 
@@ -438,15 +465,15 @@ class System1DecisionEngine:
                 target_params[k] = v
 
         # Check what parameters have already been fulfilled
-        completed_subtasks = {a.get("subtask", "") for a in recent_actions}
+        completed_subtasks = {a.get("subtask", "") for a in recent_actions if a.get("status") == "success"}
         fulfilled_params = {
             a.get("subtask", "").replace("fill_", "")
             for a in recent_actions
-            if a.get("subtask", "").startswith("fill_") or a.get("subtask") in {"select_origin_suggestion", "select_destination_suggestion", "set_date"}
+            if a.get("status") == "success" and (a.get("subtask", "").startswith("fill_") or a.get("subtask") in {"select_origin_suggestion", "select_destination_suggestion", "set_date"})
         }
 
         # Step 2: Post-Action Verification if Submit/Search was already clicked
-        clicked_primary = any(a.get("subtask") in {"click_search", "submit_primary_action"} for a in recent_actions)
+        clicked_primary = any(a.get("status") == "success" and a.get("subtask") in {"click_search", "submit_primary_action"} for a in recent_actions)
         # If previous validation error recovery is in progress (markers set in target_params), force re-submission path
         has_validation_recovery = any(k.endswith("_invalid") for k in target_params)
         if has_validation_recovery:
@@ -502,12 +529,12 @@ class System1DecisionEngine:
             # Require BOTH listing items AND a results URL to prevent pre-existing page cards from false-triggering
             if is_results_url and (len(listing_items) > 0 or has_modify):
                 return MicroDecision(
-                    action_type="noop",
+                    action_type="escalate",
                     target_element_id=None,
                     confidence=0.98,
-                    reason=f"Action verified: {len(listing_items)} result entities loaded on page at {curr_url}",
-                    subtask="goal_achieved",
-                    is_terminal=True,
+                    reason="Result-like content is visible. Verify requested route/date/query with explicit browser_assert expectations before declaring completion.",
+                    subtask="verify_expected_outcome",
+                    is_terminal=False,
                 )
 
             # Check 4: Await transition settling (up to 4 cycles)
@@ -532,12 +559,9 @@ class System1DecisionEngine:
                             subtask="escalate",
                         )
                     return MicroDecision(
-                        action_type="noop",
-                        target_element_id=None,
-                        confidence=0.92,
-                        reason="Action response processed; reviewing final DOM state",
-                        subtask="goal_achieved",
-                        is_terminal=True,
+                        action_type="escalate", target_element_id=None, confidence=0.5,
+                        reason="Result evidence is inconclusive; planner must verify the requested outcome.",
+                        subtask="escalate",
                     )
 
         # Step 3: Active Combobox / Autocomplete Dropdown Selection & Interactive Questions
@@ -567,7 +591,7 @@ class System1DecisionEngine:
                 last_param = "from"
             elif last_param == "destination":
                 last_param = "to"
-            
+
             # Interactive Question Branch: If user permissions allow questions and multiple options exist
             allow_questions = page_state.get("allow_agent_questions", True)
             opt_count = max(len(dropdown_options), len(driver_suggestions))
@@ -784,7 +808,7 @@ class System1DecisionEngine:
                             score -= 10
                         else:
                             score -= 5
-                    
+
                     if score > best_score:
                         best_score = score
                         best_match = el

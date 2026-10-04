@@ -5,6 +5,7 @@
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
 #include "../utils/JwtHelper.h"
+#include "../services/RemoteAccess.h"
 #include <json/json.h>
 #include <pqxx/pqxx>
 #include <spdlog/spdlog.h>
@@ -92,6 +93,7 @@ void LogWebSocketController::handleNewConnection(
     std::lock_guard<std::mutex> lock(subscribersMutex_);
     subscribers_[subscriptionKey].insert(conn);
     conn->setContext(std::make_shared<std::string>(subscriptionKey));
+    if(payload.isMember("remote_device_id"))remote::watchConnection(req,conn);
 }
 
 void LogWebSocketController::handleNewMessage(

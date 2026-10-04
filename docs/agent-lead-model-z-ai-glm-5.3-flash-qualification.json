@@ -1,0 +1,103 @@
+{
+  "scope": "local_single_prompt_delivery",
+  "model": "z-ai/glm-5.3-flash",
+  "prompt": "Deploy this repository.",
+  "cases": [],
+  "trace": [
+    {
+      "agent_id": "lead",
+      "tool": "workspace_list_files"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_list_files",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    },
+    {
+      "agent_id": "lead",
+      "tool": "workspace_read_file"
+    },
+    {
+      "agent_id": "lead",
+      "tool_result": "workspace_read_file",
+      "status": null,
+      "error": "",
+      "verified": null,
+      "job_status": null
+    }
+  ],
+  "run_id": "f2f09b84-146c-46f2-92da-e6f3aa0212cf",
+  "tasks": [],
+  "passed": false,
+  "error": "AssertionError: Lead did not verify the exact deployed job: Provider stream failed. This task remains unverified; inspect any executed tools before retrying.",
+  "elapsed_seconds": 77.26,
+  "events": 19,
+  "lead_model_turns": 3,
+  "worker_model_latency_ms": [
+    38359,
+    35861
+  ]
+}

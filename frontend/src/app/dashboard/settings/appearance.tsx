@@ -3,7 +3,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
-import { Check, ChevronRight, Code, Laptop, Moon, Palette, Sparkles, Sun } from "lucide-react";
+import { Check, ChevronRight, Code, Laptop, Moon, Palette, Sparkles, Sun } from "@/lib/platform-icons";
 import api from "@/lib/api";
 
 import { Button } from "@/components/ui/button";

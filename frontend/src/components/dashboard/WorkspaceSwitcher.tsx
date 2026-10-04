@@ -2,11 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Check, ChevronsUpDown, Plus, Users } from "lucide-react";
+import { Building2, Check, ChevronsUpDown, Plus, Users } from "@/lib/platform-icons";
 import { useWorkspace } from "@/context/WorkspaceContext";
 import { Badge } from "@/components/ui/badge";
 import { AppIcon } from "@/lib/custom-icons";
-import { cn } from "@/lib/utils";
 
 export function WorkspaceSwitcher({ isCollapsed }: { isCollapsed: boolean }) {
   const router = useRouter();
@@ -118,15 +117,15 @@ export function WorkspaceSwitcher({ isCollapsed }: { isCollapsed: boolean }) {
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/70 bg-card/70 px-2.5 py-1.5 text-left text-xs transition-colors hover:border-border hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className="flex min-h-16 w-full items-center justify-between gap-2 rounded-xl border border-border/70 bg-card/70 px-3 py-2 text-left text-sm transition-colors hover:border-border hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
       >
         <div className="flex min-w-0 items-center gap-2 truncate">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent text-accent-foreground">
-            <AppIcon name="building-2" fallback={Building2} size={14} />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+            <AppIcon name="building-2" fallback={Building2} size={18} />
           </div>
           <div className="min-w-0 flex-1 truncate">
             <p className="truncate font-semibold tracking-tight text-foreground">{currentLabel}</p>
-            <p className="truncate text-[10px] text-muted-foreground">
+            <p className="truncate text-xs text-muted-foreground">
               {activeWorkspace
                 ? activeWorkspace.is_personal
                   ? "Personal Workspace"

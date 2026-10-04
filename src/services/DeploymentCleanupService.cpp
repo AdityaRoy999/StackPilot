@@ -11,6 +11,8 @@
 #include "../utils/TokenCrypto.h"
 #include "KubernetesService.h"
 #include "SshService.h"
+#include "LocalDockerRuntime.h"
+#include "AiServiceClient.h"
 
 #include <algorithm>
 #include <cctype>
@@ -117,7 +119,7 @@ bool isSafeComposeFileName(const std::string& value) {
         return cleaned.size() >= suffix.size() &&
                cleaned.compare(cleaned.size() - suffix.size(), suffix.size(), suffix) == 0;
     };
-    return endsWith(".yml") || endsWith(".yaml");
+    return endsWith(".yml") || endsWith(".yaml") || cleaned == "compose.safe.json";
 }
 
 bool isSafeComposeWorkdir(const std::string& value) {
@@ -319,10 +321,59 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
         const std::string sourcePath = jsonString(sourceSnapshot, "source_path", row["project_source_path"].is_null() ? "" : row["project_source_path"].as<std::string>());
         const std::string executionMode = jsonString(sourceSnapshot, "execution_mode", row["project_execution_mode"].is_null() ? "" : row["project_execution_mode"].as<std::string>());
         const bool hasRemoteHost = !row["remote_host"].is_null();
+        // Migration-safe guard for historical rollback aliases. Never delete a
+        // runtime still referenced by another live deployment. Shared image
+        // content is retained independently and must not block container cleanup.
+        auto owners = txn.exec_params(
+            "SELECT id FROM deployments WHERE id<>$1 AND status IN ('running','ready','deploying','paused') "
+            "AND runtime_provider=$2 AND NULLIF($3,'') IS NOT NULL AND remote_container_name=$3 LIMIT 1",
+            deploymentId, runtimeProvider, remoteContainerName);
+        if (!owners.empty()) {
+            txn.commit(); result.error = "Runtime is referenced by another live deployment; cleanup refused"; return result;
+        }
+        const bool sharedImage = !imageName.empty() && !txn.exec_params(
+            "SELECT 1 FROM deployments WHERE id<>$1 AND image_name=$2 "
+            "UNION ALL SELECT 1 FROM deployment_release_checkpoints WHERE deployment_id<>$1 AND image_digest=$2 LIMIT 1",
+            deploymentId, imageName).empty();
         txn.commit();
 
         result.runtimeProvider = runtimeProvider;
         result.imageName = imageName;
+        if ((options.deleteDatabaseRow || options.deleteRecordedRuntimes) &&
+            runtimeSnapshotJson["runtime_verification"]["native"].get("preview_available",false).asBool()) {
+            Json::Value request;request["deployment_id"]=deploymentId;
+            const auto native=AiServiceClient::instance().postWorkflow("/runtime/native-release",request);
+            result.runtimeCleanupAttempted=true;
+            if(!native.ok || !native.body.get("released",false).asBool()) {
+                result.error="Native runtime cleanup could not be confirmed; deployment records retained for retry";
+                return result;
+            }
+        }
+        if(options.deleteDatabaseRow || options.deleteRecordedRuntimes) {
+            // A deployment row names only its newest instance. The journal also
+            // retains previous attempts and recreated rollback runtimes.
+            pqxx::work candidates(*conn);
+            auto recorded=candidates.exec_params("SELECT DISTINCT c.provider,c.resource_key,c.snapshot::text FROM deployment_runtime_candidates c WHERE c.deployment_id=$1 AND c.status<>'cleaned' AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.id<>$1 AND d.remote_container_name=c.resource_key AND d.status IN ('running','ready','deploying','paused'))",deploymentId);
+            candidates.commit();
+            for(const auto& item:recorded) {
+                const auto resource=item["resource_key"].as<std::string>();
+                const auto provider=item["provider"].as<std::string>();
+                if(resource==remoteContainerName)continue;
+                bool cleaned=false;
+                if(provider=="local_docker")cleaned=LocalDockerRuntime::removeContainer(resource,"",false).success;
+                else if(provider=="local_compose") {
+                    const auto metadata=parseJsonObject(item["snapshot"].as<std::string>());
+                    const auto directory=jsonString(metadata,"compose_workdir"),file=jsonString(metadata,"compose_file");
+                    if(isValidComposeProjectName(resource) && isSafeComposeWorkdir(directory) && isSafeComposeFileName(file)) {
+                        std::string output;cleaned=runCommand("timeout 30s docker compose -p "+shellQuote(resource)+" -f "+shellQuote(directory+"/"+file)+" down --remove-orphans",output)==0;
+                        result.logs+=output;
+                    }
+                } else continue;
+                pqxx::work evidence(*conn);
+                evidence.exec_params("UPDATE deployment_runtime_candidates SET status=$3,updated_at=NOW() WHERE deployment_id=$1 AND resource_key=$2",deploymentId,resource,cleaned?"cleaned":"cleanup_failed");evidence.commit();
+                if(!cleaned){result.error="Recorded runtime cleanup failed; resource journal retained for reconciliation";return result;}
+            }
+        }
         bool composeImageHandled = false;
 
         const std::string composeProject = jsonString(runtimeSnapshotJson, "compose_project", remoteContainerName);
@@ -344,7 +395,7 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
                 "cd " + shellQuote(composeWorkdir) + " && "
                 "$compose_cmd -f " + shellQuote(composeFile) +
                 " -p " + shellQuote(composeProject) +
-                std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + "; "
+                std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + " && "
                 "echo __STACKPILOT_COMPOSE_REMOVED__";
             const auto removal = sshService.runRemoteCommand(rowToRemoteRuntimeConfig(row), "/", command, 180);
             result.logs += removal.output;
@@ -373,7 +424,7 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
                     "cd " + shellQuote(composeWorkdir) + " && "
                     "$compose_cmd -f " + shellQuote(composeFile) +
                     " -p " + shellQuote(composeProject) +
-                    std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + "; "
+                    std::string(" down --remove-orphans") + (options.deleteImage ? " --rmi local" : "") + " && "
                     "echo __STACKPILOT_COMPOSE_REMOVED__"
                 );
             std::string output;
@@ -520,7 +571,10 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
             }
         }
 
-        if (options.deleteImage && !imageName.empty() && !composeImageHandled && imageName.rfind("compose:", 0) != 0) {
+        if (options.deleteImage && sharedImage) {
+            result.logs += "Retained image referenced by another deployment or release checkpoint.\n";
+        }
+        if (options.deleteImage && !sharedImage && !imageName.empty() && !composeImageHandled && imageName.rfind("compose:", 0) != 0) {
             result.imageCleanupAttempted = true;
             SshOperationResult imageRemoval;
             if (hasRemoteHost && (runtimeProvider == "remote_docker" || runtimeProvider == "remote_kubernetes" || executionMode == "remote_host")) {
@@ -561,7 +615,7 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
         }
 
         std::error_code ec;
-        std::filesystem::remove_all(getBuildWorkspaceRoot() / deploymentId, ec);
+        if(!options.preserveWorkspace)std::filesystem::remove_all(getBuildWorkspaceRoot() / deploymentId, ec);
         if (ec) {
             spdlog::warn("Failed to clean deployment workspace {}: {}", deploymentId, ec.message());
         }

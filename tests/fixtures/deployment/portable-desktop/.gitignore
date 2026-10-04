@@ -1,0 +1,6 @@
+Dockerfile
+.stackpilot-runtime/
+.stackpilot-plan.json
+.stackpilot-tests.json
+output/
+__pycache__/

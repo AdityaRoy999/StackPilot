@@ -1,0 +1,37 @@
+{
+  "verified": true,
+  "frontend_unit_tests_passed": 10,
+  "protocol_qualification": "remote-session-qualification-2026-10-03.json",
+  "phone_ui_qualification": "remote-phone-ui-qualification-2026-10-03.json",
+  "real_https_live_video_qualification": "remote-gateway-live-qualification-2026-10-03.json",
+  "browser_revocation_qualification": "remote-browser-revocation-2026-10-03.json",
+  "physical_phone_tested": false,
+  "native_app_or_push_included": false,
+  "services": {
+    "stackpilot-backend": {
+      "image": "sha256:9a42a77a079be6464730deef917a3cbf7b1c56fc4dfb495222150752c0ec5fe8",
+      "running": true,
+      "health": "healthy"
+    },
+    "stackpilot-frontend": {
+      "image": "sha256:55c1479a63746cbd6fc8bdc92e44998eb60bcc9617b9de3d66c8ab6cc74b1d26",
+      "running": true,
+      "health": "healthy"
+    },
+    "stackpilot-ai-service": {
+      "image": "sha256:2e0726d6773ce70690b5888fc493c1d3d7571f87af66b6277a24db396d2db29a",
+      "running": true,
+      "health": "healthy"
+    },
+    "stackpilot-remote-gateway": {
+      "image": "sha256:7338d54539f6cbe73f9a2bf449e9589e3df7e4b8c6b26c208419b251f2062a00",
+      "running": true,
+      "health": null
+    },
+    "stackpilot-remote-tunnel": {
+      "image": "sha256:0002e855e2e69c08f9dfc8cce60d15af062d2a57a8bc105c9fb3f89db3551522",
+      "running": false,
+      "health": null
+    }
+  }
+}

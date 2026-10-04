@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Maximize2, Minimize2, RefreshCw, TerminalIcon } from "lucide-react";
+import { Maximize2, Minimize2, RefreshCw, TerminalIcon } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { readTerminalTheme, useCanvasThemeVersion } from "@/lib/canvas-theme";
+import { isRemotePlatform, platformSocketBase } from "@/lib/remote-platform";
 
 interface RemoteSshTerminalProps {
   connectionId: string;
@@ -17,6 +18,7 @@ interface RemoteSshTerminalProps {
 }
 
 function getTerminalWsUrl(connectionId: string, cwd: string) {
+  if(isRemotePlatform())return `${platformSocketBase()}/ws/ssh-terminal?${new URLSearchParams({connectionId,cwd})}`;
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
   const base = new URL(apiBase);
   base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
@@ -142,7 +144,7 @@ export function RemoteSshTerminal({
 
       socket.addEventListener("open", () => {
         setConnectionState("connected");
-        terminal.writeln("\x1b[90mConnected. Use this like a normal SSH terminal.\x1b[0m");
+        terminal.writeln("\x1b[90mStackPilot SSH session connected.\x1b[0m");
         terminal.scrollToBottom();
         requestAnimationFrame(() => terminal.scrollToBottom());
         sendResize();
@@ -223,34 +225,35 @@ export function RemoteSshTerminal({
     <div
       ref={rootRef}
       className={cn(
-        "flex h-full min-h-[320px] flex-col overflow-hidden rounded-md border border-zinc-800 bg-[#0c0c0c] shadow-2xl",
+        "flex h-full min-h-[320px] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl",
         // In fullscreen the element is the whole viewport, so the rounded
         // corners and border would draw a box around the screen edge.
         isFullscreen && "min-h-0 rounded-none border-0",
         className
       )}
     >
-      <div className="flex h-8 items-center justify-between border-b border-zinc-800 bg-[#18181b] px-2 select-none shrink-0">
-        <div className="flex min-w-0 items-center gap-2 text-xs text-white/90">
-          <svg className="h-3.5 w-3.5 shrink-0 text-sky-400" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M1.5 2A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 14.5 2h-13zm0 1h13a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-13a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5z"/>
-            <path d="m3.854 5.146 2.5 2.5a.5.5 0 0 1 0 .708l-2.5 2.5a.5.5 0 0 1-.708-.708L5.293 8 3.146 5.854a.5.5 0 1 1 .708-.708zm3 5.5a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1h-4a.5.5 0 0 1-.5-.5z"/>
-          </svg>
-          <span className="font-normal font-sans text-xs text-white/90 truncate">
-            Windows PowerShell{connectedInfo ? ` - ${connectedInfo}` : title ? ` - ${title}` : ""}
+      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-muted/30 px-3 select-none">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-background text-primary shadow-sm">
+            <AppIcon name="terminal" fallback={TerminalIcon} className="size-4" />
           </span>
-          {connectionState !== "connected" && (
-            <span className="text-[11px] text-amber-300 font-normal">
-              ({connectionState})
-            </span>
-          )}
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-xs font-semibold">StackPilot Terminal</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              {connectedInfo || title || cwd}
+            </div>
+          </div>
+          <span className={cn(
+            "ml-1 size-1.5 shrink-0 rounded-full",
+            connectionState === "connected" ? "bg-emerald-500" : connectionState === "connecting" ? "bg-amber-500 animate-pulse" : "bg-destructive"
+          )} aria-label={`Terminal ${connectionState}`} />
         </div>
-        <div className="flex shrink-0 items-center h-full">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             type="button"
             size="sm"
             variant="ghost"
-            className="h-full rounded-none px-2.5 text-xs font-normal text-white/70 hover:bg-white/10 hover:text-white"
+            className="h-8 gap-1.5 rounded-md px-2.5 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => setSessionKey((value) => value + 1)}
             title="Reconnect session"
           >
@@ -261,15 +264,15 @@ export function RemoteSshTerminal({
             type="button"
             size="icon"
             variant="ghost"
-            className="h-full w-10 rounded-none text-white/70 hover:bg-white/10 hover:text-white"
+            className="h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
             onClick={toggleFullscreen}
             title={isFullscreen ? "Restore" : "Maximize"}
             aria-label={isFullscreen ? "Restore" : "Maximize"}
           >
             {isFullscreen ? (
-              <span className="text-xs font-mono select-none">❐</span>
+              <AppIcon name="minimize-2" fallback={Minimize2} className="size-3.5" />
             ) : (
-              <span className="text-xs font-mono select-none">□</span>
+              <AppIcon name="maximize-2" fallback={Maximize2} className="size-3.5" />
             )}
           </Button>
           {onClose && (
@@ -277,19 +280,19 @@ export function RemoteSshTerminal({
               type="button"
               size="icon"
               variant="ghost"
-              className="h-full w-10 rounded-none text-white/70 hover:bg-[#e81123] hover:text-white transition-colors"
+              className="h-8 w-8 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
               onClick={onClose}
               title="Close"
               aria-label="Close"
             >
-              <span className="text-xs font-mono select-none">✕</span>
+              <span className="text-sm leading-none" aria-hidden="true">×</span>
             </Button>
           )}
         </div>
       </div>
       <div
         ref={containerRef}
-        className="ssh-terminal-surface min-h-0 flex-1 overflow-hidden bg-[#0c0c0c] p-1.5 [&_.xterm-screen]:min-h-full [&_.xterm-viewport]:!overflow-y-auto [&_.xterm]:h-full"
+        className="ssh-terminal-surface min-h-0 flex-1 overflow-hidden bg-background p-1.5 [&_.xterm-screen]:min-h-full [&_.xterm-viewport]:!overflow-y-auto [&_.xterm]:h-full"
       />
     </div>
   );

@@ -485,6 +485,18 @@ ComposeKubernetesPlan ComposeKubernetesPlanner::build(const Json::Value& compose
     int placeholderIndex = 0;
     for (const auto& serviceName : serviceNames) {
         const Json::Value& service = services[serviceName];
+        for(const auto& key:{"depends_on","network_mode","healthcheck","devices","security_opt","cap_add"}) {
+            if(service.isMember(key)) {
+                plan.error="Compose service '"+serviceName+"' uses '"+key+"', whose semantics are not preserved by this Kubernetes converter; supply a native Kubernetes deployment";
+                return plan;
+            }
+        }
+        if(service.get("privileged",false).asBool()) {plan.error="Privileged Compose execution is not admitted to shared Kubernetes workers";return plan;}
+        for(const auto& mount:service["volumes"]) {
+            if(!mount.isObject() || mount.get("type","").asString()!="volume") {
+                plan.error="Compose mounts must be portable named volumes for Kubernetes; silently omitted mounts are forbidden";return plan;
+            }
+        }
         ServiceDetails detail;
         detail.service.serviceName = serviceName;
         detail.service.deploymentName = sanitizeDnsLabel(plan.stackName + "-" + serviceName, 58);

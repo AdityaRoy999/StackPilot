@@ -2,7 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { Loader2 } from "lucide-react";
+import { Loader2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 

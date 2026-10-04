@@ -1,3 +1,5 @@
+import { isRemotePlatform, remoteHeaders } from "./remote-platform";
+import { followRemoteRun } from "./remote-agent";
 /**
  * Reads the agent's Server-Sent Events stream.
  *
@@ -7,18 +9,27 @@
  * reply can run for minutes and the user may well change their mind.
  */
 
-export type AgentStreamEvent =
+export type AgentStreamEvent = (
   | { type: "start"; trace_id?: string; model?: string; provider?: string; session_id?: string }
   | { type: "reasoning"; delta: string }
   | { type: "content"; delta: string }
   | { type: "tool_call"; name: string; arguments: Record<string, unknown>; id?: string }
   | { type: "tool_result"; name: string; result: Record<string, unknown>; id?: string }
+  | { type: "tool_step"; name: string; arguments: Record<string, unknown>; result: Record<string, unknown>; id: string; parent_id: string }
+  | { type: "agent_run"; run_id?: string; state: string; error?: string }
+  | { type: "agent_message"; id: string; recipient: string; content: string }
+  | { type: "agent_task_update"; id: string; status: string; result?: string }
+  | { type: "model_timing"; elapsed_ms: number; usage?: Record<string, number> }
+  | { type: "provider_retry"; retry: number; reason: string }
   | {
       type: "permission_request";
       tool_name: string;
       arguments: Record<string, unknown>;
       risk_level?: string;
       token?: string;
+      id?: string;
+      description?: string;
+      browser_step?: { url: string; label: string; action: string; reason: string; step_index: number };
     }
   | {
       type: "agent_question";
@@ -48,7 +59,7 @@ export type AgentStreamEvent =
       result?: string;
       status?: string;
     }
-  | { type: "error"; error: string }
+  | { type: "error"; error?: string; message?: string }
   | {
       type: "done";
       trace_id?: string;
@@ -59,7 +70,12 @@ export type AgentStreamEvent =
       latency_ms?: number;
       token_usage?: Record<string, number>;
       session_id?: string;
-    };
+      agent_run_id?: string;
+      team_tasks?: Array<{id: string; state: string}>;
+      status?: string;
+      verified?: boolean;
+      stopped?: boolean;
+    }) & {agent_id?: string; run_id?: string; sequence?: number};
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
 
@@ -77,9 +93,11 @@ export interface StreamAgentOptions {
   agentAccessMode?: "ask" | "auto_review" | "full_access";
   remoteTerminal?: "ask" | "allow";
   allowAgentQuestions?: boolean;
+  approvalToken?: string;
+  continuation?: boolean;
   images?: string[];
   customUrl?: string;
-  sandboxMode?: "local" | "remote";
+  sandboxMode?: "local" | "remote" | "host";
   signal?: AbortSignal;
   onEvent: (event: AgentStreamEvent) => void;
 }
@@ -98,21 +116,26 @@ export async function streamAgentReply({
   agentAccessMode,
   remoteTerminal,
   allowAgentQuestions = true,
+  approvalToken,
+  continuation,
   images,
   customUrl,
   sandboxMode,
   signal,
   onEvent,
 }: StreamAgentOptions): Promise<void> {
-  const response = await fetch(`${API_BASE}/ai/chat/stream`, {
+  const remote = isRemotePlatform();
+  const response = await fetch(`${remote ? "/api/v1" : API_BASE}/ai/chat/stream`, {
     method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
       "X-stackpilot-CSRF": "1",
+      ...remoteHeaders(),
     },
     body: JSON.stringify({
       message,
+      ...(remote ? { background: true, request_id: crypto.randomUUID() } : {}),
       model_mode: modelMode,
       ...(sessionId ? { session_id: sessionId } : {}),
       ...(projectId ? { project_id: projectId } : {}),
@@ -127,8 +150,11 @@ export async function streamAgentReply({
       ...(agentAccessMode ? { agent_access_mode: agentAccessMode } : {}),
       ...(remoteTerminal ? { remote_terminal: remoteTerminal } : {}),
       allow_agent_questions: allowAgentQuestions !== false,
+      ...(approvalToken ? {approval_token: approvalToken} : {}),
+      ...(continuation ? {continuation: true} : {}),
       ...(images && images.length > 0 ? { images } : {}),
       runtime: {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         ...(customUrl ? { url: customUrl, custom_url: customUrl } : {}),
         permissions: {
           agent_access_mode: agentAccessMode || "ask",
@@ -150,6 +176,13 @@ export async function streamAgentReply({
       // Keep the status line.
     }
     throw new Error(detail);
+  }
+  if (remote) {
+    const accepted = await response.json();
+    if (!accepted.run_id) throw new Error("The host did not confirm this request. Check chat history before retrying.");
+    onEvent({ type: "start", session_id: accepted.session_id });
+    await followRemoteRun(accepted.run_id, onEvent, signal);
+    return;
   }
   if (!response.body) {
     throw new Error("This browser did not provide a readable response stream.");

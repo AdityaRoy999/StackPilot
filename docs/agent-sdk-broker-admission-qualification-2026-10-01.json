@@ -1,0 +1,25 @@
+{
+  "scope": "live_sdk_broker_and_real_docker_lease",
+  "model_calls": 0,
+  "cases": [
+    "Real task lease authorized source-only SDK build and observed immutable owned digest",
+    "Actual scoped SDK command returned42 with no host/socket/platform environment and no source changes"
+  ],
+  "passed": false,
+  "image_id": "sha256:964b5755052f8b6fd1fdcfd39a66e7e87b6c280d7e8a615b74cb6337631d361b",
+  "run_id": "4aeb72b1-b36d-4585-a55e-07070858021f",
+  "labels": {
+    "stackpilot.agent-run": "4aeb72b1-b36d-4585-a55e-07070858021f",
+    "stackpilot.agent-sdk": "true",
+    "stackpilot.agent-task": "93926632-a7d6-4c14-8bd6-34f660b09e1a"
+  },
+  "command": {
+    "status": "completed",
+    "exit_code": 0,
+    "output": "42\n",
+    "image_id": "sha256:964b5755052f8b6fd1fdcfd39a66e7e87b6c280d7e8a615b74cb6337631d361b",
+    "verified": false,
+    "scope": "command_execution"
+  },
+  "error": "RuntimeError: Required sandbox capability is unavailable"
+}

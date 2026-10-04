@@ -1,0 +1,41 @@
+# Standalone CPU worker on a Linux server. Access these loopback ports over SSH.
+name: stackpilot-browser-worker
+services:
+  browser-sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: stackpilot/browser-sandbox:cpu
+    container_name: stackpilot-remote-browser
+    restart: unless-stopped
+    init: true
+    shm_size: 2gb
+    mem_limit: 4gb
+    cpus: 2
+    pids_limit: 512
+    environment:
+      DISPLAY: ':99'
+      BROWSER_RENDERER: software
+      STREAM_ENCODER: software
+      STREAM_FPS: '${STREAM_FPS:-30}'
+      STREAM_MAX_FPS: '${STREAM_MAX_FPS:-30}'
+      STREAM_IDLE_FPS: '${STREAM_IDLE_FPS:-8}'
+      STREAM_WIDTH: 1280
+      STREAM_HEIGHT: 720
+      STREAM_BITRATE: '${STREAM_BITRATE:-2500k}'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    ports:
+      - '127.0.0.1:9222:9222'
+      - '127.0.0.1:8099:8099'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:9222/json/version']
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

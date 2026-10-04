@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "model": "nvidia/nemotron-3-super-120b-a12b",
+  "transport": "deterministic fixture; not a model capability benchmark",
+  "cases": [
+    "multiple encrypted provider connections",
+    "single active connection",
+    "no secrets in settings responses",
+    "saved-key decryption for model and stream requests",
+    "blank key preserves credential",
+    "provider activation changes route",
+    "tenant isolation",
+    "private endpoint rejection",
+    "partial settings preserve permissions",
+    "stream saves and reloads memory",
+    "preferences survive recent history window",
+    "current message is not duplicated",
+    "interrupted turn does not become successful memory",
+    "history records the serving connection",
+    "model edits preserve the fallback provider configuration",
+    "saved servers and clusters exposed to builder",
+    "managed worker cannot be prepared as a standalone control plane",
+    "worker cannot join two clusters",
+    "control plane cannot join itself",
+    "failed host probe remains visible after reload"
+  ]
+}

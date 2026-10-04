@@ -1,0 +1,688 @@
+{
+  "mode": "host",
+  "scope": "Production viewer and real agent tools; fixture APIs; no provider calls",
+  "phases": {
+    "idle": {
+      "presented": 237,
+      "fps": 19.291348196700113,
+      "p95_gap_ms": 100.09999999999854,
+      "max_gap_ms": 250.09999999999854,
+      "capture_tail": [
+        {
+          "h264_active": false,
+          "h264_capture_demand": false,
+          "jpeg_streaming": true,
+          "h264_connections": 0,
+          "h264_connection_errors": 0,
+          "h264_tcp_buffered_bytes": 0,
+          "h264_source_fps": 0,
+          "jpeg_screencast_fps": 51.91,
+          "last_jpeg_age_ms": 22,
+          "viewer_codecs": {
+            "h264": 0,
+            "jpeg": 2
+          }
+        },
+        {
+          "h264_active": false,
+          "h264_capture_demand": false,
+          "jpeg_streaming": true,
+          "h264_connections": 0,
+          "h264_connection_errors": 0,
+          "h264_tcp_buffered_bytes": 0,
+          "h264_source_fps": 0,
+          "jpeg_screencast_fps": 56.25,
+          "last_jpeg_age_ms": 11,
+          "viewer_codecs": {
+            "h264": 0,
+            "jpeg": 2
+          }
+        }
+      ],
+      "health_tail": [
+        {
+          "at": 22234.69999998808,
+          "capture": {
+            "h264_active": false,
+            "h264_capture_demand": false,
+            "jpeg_streaming": true,
+            "h264_connections": 0,
+            "h264_connection_errors": 0,
+            "h264_tcp_buffered_bytes": 0,
+            "h264_source_fps": 0,
+            "jpeg_screencast_fps": 51.91,
+            "last_jpeg_age_ms": 22,
+            "viewer_codecs": {
+              "h264": 0,
+              "jpeg": 2
+            }
+          },
+          "rtc_sender": {
+            "encoded": false,
+            "received_frames": 779,
+            "submitted_frames": 299,
+            "last_source_seq": 905,
+            "last_source_received_age_ms": 9.14,
+            "max_source_received_age_ms": 166.16,
+            "last_submitted_age_ms": 13.03,
+            "queue": {
+              "queued_frames": 0,
+              "waiting_for_keyframe": true,
+              "keyframe_wait_ms": 18492.27,
+              "max_keyframe_wait_ms": 0,
+              "received_frames": 779,
+              "emitted_frames": 299,
+              "discarded_frames": 480,
+              "rejected_deltas": 0,
+              "overflow_resets": 0,
+              "manual_resets": 0,
+              "keyframe_flushes": 0,
+              "last_residence_ms": 5.17,
+              "max_residence_ms": 160.22
+            }
+          },
+          "websocket_queue": {
+            "queued_frames": 0,
+            "waiting_for_keyframe": true,
+            "keyframe_wait_ms": 20017.18,
+            "max_keyframe_wait_ms": 0,
+            "received_frames": 89,
+            "emitted_frames": 74,
+            "discarded_frames": 15,
+            "rejected_deltas": 0,
+            "overflow_resets": 0,
+            "manual_resets": 2,
+            "keyframe_flushes": 0,
+            "last_residence_ms": 0.58,
+            "max_residence_ms": 9.7
+          }
+        },
+        {
+          "at": 23275.799999952316,
+          "capture": {
+            "h264_active": false,
+            "h264_capture_demand": false,
+            "jpeg_streaming": true,
+            "h264_connections": 0,
+            "h264_connection_errors": 0,
+            "h264_tcp_buffered_bytes": 0,
+            "h264_source_fps": 0,
+            "jpeg_screencast_fps": 56.25,
+            "last_jpeg_age_ms": 11,
+            "viewer_codecs": {
+              "h264": 0,
+              "jpeg": 2
+            }
+          },
+          "rtc_sender": {
+            "encoded": false,
+            "received_frames": 836,
+            "submitted_frames": 328,
+            "last_source_seq": 960,
+            "last_source_received_age_ms": 5.37,
+            "max_source_received_age_ms": 166.16,
+            "last_submitted_age_ms": 25.04,
+            "queue": {
+              "queued_frames": 1,
+              "waiting_for_keyframe": true,
+              "keyframe_wait_ms": 19539.17,
+              "max_keyframe_wait_ms": 0,
+              "received_frames": 836,
+              "emitted_frames": 328,
+              "discarded_frames": 507,
+              "rejected_deltas": 0,
+              "overflow_resets": 0,
+              "manual_resets": 0,
+              "keyframe_flushes": 0,
+              "last_residence_ms": 0.98,
+              "max_residence_ms": 160.22
+            }
+          },
+          "websocket_queue": {
+            "queued_frames": 0,
+            "waiting_for_keyframe": true,
+            "keyframe_wait_ms": 21064.09,
+            "max_keyframe_wait_ms": 0,
+            "received_frames": 89,
+            "emitted_frames": 74,
+            "discarded_frames": 15,
+            "rejected_deltas": 0,
+            "overflow_resets": 0,
+            "manual_resets": 2,
+            "keyframe_flushes": 0,
+            "last_residence_ms": 0.58,
+            "max_residence_ms": 9.7
+          }
+        }
+      ],
+      "video_visible": true,
+      "source_draws": 735,
+      "observation_attribute_writes": 0,
+      "clicks": 0,
+      "source_cpu_seconds": {
+        "TaskDuration": 1.1977,
+        "ScriptDuration": 0.3289,
+        "LayoutDuration": 0,
+        "RecalcStyleDuration": 0
+      },
+      "elapsed_seconds": 12.256,
+      "actions": [],
+      "action_count": 0,
+      "action_median_seconds": null
+    },
+    "agent_dom": {
+      "presented": 181,
+      "fps": 14.251519637136651,
+      "p95_gap_ms": 166.60000000000218,
+      "max_gap_ms": 283.40000000000146,
+      "capture_tail": [
+        {
+          "h264_active": false,
+          "h264_capture_demand": false,
+          "jpeg_streaming": true,
+          "h264_connections": 0,
+          "h264_connection_errors": 0,
+          "h264_tcp_buffered_bytes": 0,
+          "h264_source_fps": 0,
+          "jpeg_screencast_fps": 22.89,
+          "last_jpeg_age_ms": 106,
+          "viewer_codecs": {
+            "h264": 0,
+            "jpeg": 2
+          }
+        },
+        {
+          "h264_active": false,
+          "h264_capture_demand": false,
+          "jpeg_streaming": true,
+          "h264_connections": 0,
+          "h264_connection_errors": 0,
+          "h264_tcp_buffered_bytes": 0,
+          "h264_source_fps": 0,
+          "jpeg_screencast_fps": 24.11,
+          "last_jpeg_age_ms": 44,
+          "viewer_codecs": {
+            "h264": 0,
+            "jpeg": 2
+          }
+        }
+      ],
+      "health_tail": [
+        {
+          "at": 34796.799999952316,
+          "capture": {
+            "h264_active": false,
+            "h264_capture_demand": false,
+            "jpeg_streaming": true,
+            "h264_connections": 0,
+            "h264_connection_errors": 0,
+            "h264_tcp_buffered_bytes": 0,
+            "h264_source_fps": 0,
+            "jpeg_screencast_fps": 22.89,
+            "last_jpeg_age_ms": 106,
+            "viewer_codecs": {
+              "h264": 0,
+              "jpeg": 2
+            }
+          },
+          "rtc_sender": {
+            "encoded": false,
+            "received_frames": 1273,
+            "submitted_frames": 514,
+            "last_source_seq": 1397,
+            "last_source_received_age_ms": 61.2,
+            "max_source_received_age_ms": 166.16,
+            "last_submitted_age_ms": 51.09,
+            "queue": {
+              "queued_frames": 1,
+              "waiting_for_keyframe": true,
+              "keyframe_wait_ms": 31028.32,
+              "max_keyframe_wait_ms": 0,
+              "received_frames": 1273,
+              "emitted_frames": 514,
+              "discarded_frames": 758,
+              "rejected_deltas": 0,
+              "overflow_resets": 0,
+              "manual_resets": 0,
+              "keyframe_flushes": 0,
+              "last_residence_ms": 3.79,
+              "max_residence_ms": 160.22
+            }
+          },
+          "websocket_queue": {
+            "queued_frames": 0,
+            "waiting_for_keyframe": true,
+            "keyframe_wait_ms": 32553.24,
+            "max_keyframe_wait_ms": 0,
+            "received_frames": 89,
+            "emitted_frames": 74,
+            "discarded_frames": 15,
+            "rejected_deltas": 0,
+            "overflow_resets": 0,
+            "manual_resets": 2,
+            "keyframe_flushes": 0,
+            "last_residence_ms": 0.58,
+            "max_residence_ms": 9.7
+          }
+        },
+        {
+          "at": 35862.299999952316,
+          "capture": {
+            "h264_active": false,
+            "h264_capture_demand": false,
+            "jpeg_streaming": true,
+            "h264_connections": 0,
+            "h264_connection_errors": 0,
+            "h264_tcp_buffered_bytes": 0,
+            "h264_source_fps": 0,
+            "jpeg_screencast_fps": 24.11,
+            "last_jpeg_age_ms": 44,
+            "viewer_codecs": {
+              "h264": 0,
+              "jpeg": 2
+            }
+          },
+          "rtc_sender": {
+            "encoded": false,
+            "received_frames": 1299,
+            "submitted_frames": 523,
+            "last_source_seq": 1424,
+            "last_source_received_age_ms": 23.1,
+            "max_source_received_age_ms": 166.16,
+            "last_submitted_age_ms": 39.49,
+            "queue": {
+              "queued_frames": 1,
+              "waiting_for_keyframe": true,
+              "keyframe_wait_ms": 32127.04,
+              "max_keyframe_wait_ms": 0,
+              "received_frames": 1299,
+              "emitted_frames": 523,
+              "discarded_frames": 775,
+              "rejected_deltas": 0,
+              "overflow_resets": 0,
+              "manual_resets": 0,
+              "keyframe_flushes": 0,
+              "last_residence_ms": 17.64,
+              "max_residence_ms": 160.22
+            }
+          },
+          "websocket_queue": {
+            "queued_frames": 0,
+            "waiting_for_keyframe": true,
+            "keyframe_wait_ms": 33651.96,
+            "max_keyframe_wait_ms": 0,
+            "received_frames": 89,
+            "emitted_frames": 74,
+            "discarded_frames": 15,
+            "rejected_deltas": 0,
+            "overflow_resets": 0,
+            "manual_resets": 2,
+            "keyframe_flushes": 0,
+            "last_residence_ms": 0.58,
+            "max_residence_ms": 9.7
+          }
+        }
+      ],
+      "video_visible": true,
+      "source_draws": 747,
+      "observation_attribute_writes": 6534,
+      "clicks": 6,
+      "source_cpu_seconds": {
+        "TaskDuration": 2.7427,
+        "ScriptDuration": 0.2264,
+        "LayoutDuration": 0.007,
+        "RecalcStyleDuration": 0.0068
+      },
+      "elapsed_seconds": 12.732,
+      "actions": [
+        {
+          "action": "click",
+          "seconds": 0.464,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.399,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.593,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.477,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.704,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.543,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.39,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.479,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.513,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.584,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.424,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.481,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.639,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.967,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.948,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 1.098,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 1.091,
+          "status": "passed",
+          "error": null
+        }
+      ],
+      "action_count": 17,
+      "action_median_seconds": 0.543
+    },
+    "agent_vision": {
+      "presented": 191,
+      "fps": 15.166192888549858,
+      "p95_gap_ms": 133.1999999999971,
+      "max_gap_ms": 200,
+      "capture_tail": [
+        {
+          "h264_active": false,
+          "h264_capture_demand": false,
+          "jpeg_streaming": true,
+          "h264_connections": 0,
+          "h264_connection_errors": 0,
+          "h264_tcp_buffered_bytes": 0,
+          "h264_source_fps": 0,
+          "jpeg_screencast_fps": 28.25,
+          "last_jpeg_age_ms": 2,
+          "viewer_codecs": {
+            "h264": 0,
+            "jpeg": 2
+          }
+        },
+        {
+          "h264_active": false,
+          "h264_capture_demand": false,
+          "jpeg_streaming": true,
+          "h264_connections": 0,
+          "h264_connection_errors": 0,
+          "h264_tcp_buffered_bytes": 0,
+          "h264_source_fps": 0,
+          "jpeg_screencast_fps": 28.44,
+          "last_jpeg_age_ms": 30,
+          "viewer_codecs": {
+            "h264": 0,
+            "jpeg": 2
+          }
+        }
+      ],
+      "health_tail": [
+        {
+          "at": 47317.59999996424,
+          "capture": {
+            "h264_active": false,
+            "h264_capture_demand": false,
+            "jpeg_streaming": true,
+            "h264_connections": 0,
+            "h264_connection_errors": 0,
+            "h264_tcp_buffered_bytes": 0,
+            "h264_source_fps": 0,
+            "jpeg_screencast_fps": 28.25,
+            "last_jpeg_age_ms": 2,
+            "viewer_codecs": {
+              "h264": 0,
+              "jpeg": 2
+            }
+          },
+          "rtc_sender": {
+            "encoded": false,
+            "received_frames": 1614,
+            "submitted_frames": 695,
+            "last_source_seq": 1739,
+            "last_source_received_age_ms": 5.96,
+            "max_source_received_age_ms": 166.16,
+            "last_submitted_age_ms": 13.66,
+            "queue": {
+              "queued_frames": 1,
+              "waiting_for_keyframe": true,
+              "keyframe_wait_ms": 43586.6,
+              "max_keyframe_wait_ms": 0,
+              "received_frames": 1614,
+              "emitted_frames": 695,
+              "discarded_frames": 918,
+              "rejected_deltas": 0,
+              "overflow_resets": 0,
+              "manual_resets": 0,
+              "keyframe_flushes": 0,
+              "last_residence_ms": 0.28,
+              "max_residence_ms": 160.22
+            }
+          },
+          "websocket_queue": {
+            "queued_frames": 0,
+            "waiting_for_keyframe": true,
+            "keyframe_wait_ms": 45111.52,
+            "max_keyframe_wait_ms": 0,
+            "received_frames": 89,
+            "emitted_frames": 74,
+            "discarded_frames": 15,
+            "rejected_deltas": 0,
+            "overflow_resets": 0,
+            "manual_resets": 2,
+            "keyframe_flushes": 0,
+            "last_residence_ms": 0.58,
+            "max_residence_ms": 9.7
+          }
+        },
+        {
+          "at": 48332.5,
+          "capture": {
+            "h264_active": false,
+            "h264_capture_demand": false,
+            "jpeg_streaming": true,
+            "h264_connections": 0,
+            "h264_connection_errors": 0,
+            "h264_tcp_buffered_bytes": 0,
+            "h264_source_fps": 0,
+            "jpeg_screencast_fps": 28.44,
+            "last_jpeg_age_ms": 30,
+            "viewer_codecs": {
+              "h264": 0,
+              "jpeg": 2
+            }
+          },
+          "rtc_sender": {
+            "encoded": false,
+            "received_frames": 1644,
+            "submitted_frames": 716,
+            "last_source_seq": 1770,
+            "last_source_received_age_ms": 17.86,
+            "max_source_received_age_ms": 166.16,
+            "last_submitted_age_ms": 12.2,
+            "queue": {
+              "queued_frames": 0,
+              "waiting_for_keyframe": true,
+              "keyframe_wait_ms": 44602.49,
+              "max_keyframe_wait_ms": 0,
+              "received_frames": 1644,
+              "emitted_frames": 716,
+              "discarded_frames": 928,
+              "rejected_deltas": 0,
+              "overflow_resets": 0,
+              "manual_resets": 0,
+              "keyframe_flushes": 0,
+              "last_residence_ms": 5.44,
+              "max_residence_ms": 160.22
+            }
+          },
+          "websocket_queue": {
+            "queued_frames": 0,
+            "waiting_for_keyframe": true,
+            "keyframe_wait_ms": 46127.4,
+            "max_keyframe_wait_ms": 0,
+            "received_frames": 89,
+            "emitted_frames": 74,
+            "discarded_frames": 15,
+            "rejected_deltas": 0,
+            "overflow_resets": 0,
+            "manual_resets": 2,
+            "keyframe_flushes": 0,
+            "last_residence_ms": 0.58,
+            "max_residence_ms": 9.7
+          }
+        }
+      ],
+      "video_visible": true,
+      "source_draws": 742,
+      "observation_attribute_writes": 4840,
+      "clicks": 10,
+      "source_cpu_seconds": {
+        "TaskDuration": 2.2998,
+        "ScriptDuration": 0.2397,
+        "LayoutDuration": 0.0035,
+        "RecalcStyleDuration": 0.0068
+      },
+      "elapsed_seconds": 12.475,
+      "actions": [
+        {
+          "action": "click",
+          "seconds": 1.289,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.879,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 1.021,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.938,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 1.218,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.939,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.847,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.747,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 1.102,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "click",
+          "seconds": 0.695,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "type",
+          "seconds": 0.772,
+          "status": "passed",
+          "error": null
+        },
+        {
+          "action": "scroll",
+          "seconds": 0.708,
+          "status": "passed",
+          "error": null
+        }
+      ],
+      "action_count": 12,
+      "action_median_seconds": 0.908
+    }
+  },
+  "page_errors": [],
+  "owned_contexts_cleaned": true
+}

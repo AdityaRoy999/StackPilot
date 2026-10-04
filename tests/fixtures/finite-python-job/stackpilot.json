@@ -1,0 +1,7 @@
+{
+  "workload":"job",
+  "entrypoint":["python","-u","job.py"],
+  "tests_required":true,
+  "tests":[["python","test_job.py"]],
+  "checks":[{"path":"/healthz","text_contains":"RESULT sum=55 count=4"}]
+}

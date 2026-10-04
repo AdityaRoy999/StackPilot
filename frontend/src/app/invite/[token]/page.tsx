@@ -4,7 +4,7 @@ import { use } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Building2, CheckCircle2, Loader2, LogIn, ShieldAlert, UserPlus } from "lucide-react";
+import { Building2, CheckCircle2, Loader2, LogIn, ShieldAlert, UserPlus } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 

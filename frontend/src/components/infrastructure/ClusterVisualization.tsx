@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { type PointerEvent, type WheelEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type PointerEvent, type WheelEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
 
 import { readCanvasTheme, useCanvasThemeVersion } from "@/lib/canvas-theme";
 import {
@@ -28,7 +29,7 @@ import {
   Sparkles,
   Square,
   type LucideIcon,
-} from "lucide-react";
+} from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 
@@ -59,6 +60,9 @@ interface DockerContainer extends BaseResource {
   image: string;
   status: string;
   ports: string;
+  compose_project?: string;
+  compose_service?: string;
+  networks?: string;
 }
 
 interface DockerStats {
@@ -292,10 +296,15 @@ const KIND_COLORS: Record<GraphKind, string> = {
   cluster: "#e5e7eb",
   node: "#22c55e",
   pod: "#38bdf8",
-  deployment: "#a78bfa",
+  deployment: "#60a5fa",
   service: "#f59e0b",
   container: "#fb7185",
 };
+
+function apiErrorMessage(error: unknown, fallback: string): string {
+  if (isAxiosError<{ error?: string }>(error)) return error.response?.data?.error || fallback;
+  return fallback;
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -348,8 +357,8 @@ function resourceSubtitle(resource?: GraphResource) {
 
 function statusTone(status: string) {
   const normalized = status.toLowerCase();
-  if (["ready", "running", "active", "ok", "true"].some((item) => normalized.includes(item))) return "text-emerald-400";
-  if (["fail", "error", "crash", "pending", "unknown", "degraded"].some((item) => normalized.includes(item))) return "text-red-400";
+  if (["ready", "running", "active", "ok", "true", "healthy"].includes(normalized)) return "text-emerald-400";
+  if (["not_ready", "failed", "error", "crashed", "pending", "unknown", "degraded", "exited"].includes(normalized)) return "text-red-400";
   return "text-muted-foreground";
 }
 
@@ -381,12 +390,20 @@ function colorWithAlpha(hex: string, alpha: number) {
 }
 
 function claimPayload(resource: GraphResource) {
-  return {
+  const payload: Record<string, unknown> = {
     claim_id: resource.claim_id,
     provider_type: resource.provider_type,
     resource_type: resource.resource_type,
     resource_key: resource.resource_key,
+    name: resource.name,
   };
+  if ("namespace" in resource) payload.namespace = resource.namespace;
+  if (resource.provider_type === "docker") {
+    payload.external_id = resource.id;
+    payload.image = resource.image;
+    payload.status = resource.status;
+  }
+  return payload;
 }
 
 function kubernetesYamlPayload(resource: GraphResource) {
@@ -423,6 +440,10 @@ export function ClusterVisualization() {
   const [canvasSize, setCanvasSize] = useState({ width: 1180, height: 640 });
   const [view, setView] = useState({ x: 80, y: 40, scale: 0.78 });
   const [drag, setDrag] = useState<{ pointerId: number; x: number; y: number; originX: number; originY: number; moved: boolean } | null>(null);
+  const pendingPanViewRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+  const panFrameRef = useRef<number | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [resourceSearch, setResourceSearch] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("cluster");
   const [replicaDraft, setReplicaDraft] = useState("1");
   const [yamlDraft, setYamlDraft] = useState("");
@@ -457,7 +478,6 @@ export function ClusterVisualization() {
     },
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
-    placeholderData: (previous) => previous,
   });
 
   const inventory = inventoryQuery.data;
@@ -483,8 +503,21 @@ export function ClusterVisualization() {
     // Tidy left-to-right tree. Every node is placed relative to its parent and
     // each subtree owns a vertical band, so edges stay short and never cross.
     // Columns are fixed depths; only the vertical cursor advances as we lay out.
-    const COL = { cluster: 0, group: 330, leaf: 640 };
-    const ROW_GAP = 12;
+    const compact = canvasSize.width < 720;
+    const medium = canvasSize.width < 1160;
+    const COL = compact
+      ? { cluster: 0, group: 190, leaf: 390 }
+      : medium
+        ? { cluster: 0, group: 220, leaf: 390 }
+        : { cluster: 0, group: 310, leaf: 620 };
+    const LEAF_COLUMNS = compact
+      ? 2
+      : medium
+        ? canvasSize.width >= 840 ? 3 : 2
+        : canvasSize.width >= 1210 ? 3 : 2;
+    const LEAF_WIDTH = compact ? 164 : medium ? 180 : 210;
+    const LEAF_COLUMN_GAP = compact ? 185 : medium ? 180 : 240;
+    const LEAF_ROW_GAP = 12;
     const GROUP_GAP = 44;
 
     const nodes: GraphNode[] = [];
@@ -502,31 +535,36 @@ export function ClusterVisualization() {
     const addBranch = (
       anchor: { id: string; label: string; sublabel: string; status: string; color: string; kind: GraphKind; resource?: GraphResource },
       leaves: Array<{ id: string; label: string; sublabel: string; status: string; color: string; kind: GraphKind; resource?: GraphResource }>,
-      edgeColor: string
+      edgeColor: string,
+      collapsed = false
     ) => {
       const leafH = 42;
       const startY = cursorY;
+      const visibleLeaves = collapsed ? [] : leaves;
+      const rowCount = Math.ceil(visibleLeaves.length / LEAF_COLUMNS);
 
-      leaves.forEach((leaf, index) => {
+      visibleLeaves.forEach((leaf, index) => {
+        const column = index % LEAF_COLUMNS;
+        const row = Math.floor(index / LEAF_COLUMNS);
         nodes.push({
           ...leaf,
-          x: COL.leaf,
-          y: startY + index * (leafH + ROW_GAP),
-          width: 210,
+          x: COL.leaf + column * LEAF_COLUMN_GAP,
+          y: startY + row * (leafH + LEAF_ROW_GAP),
+          width: LEAF_WIDTH,
           height: leafH,
         });
       });
 
-      const span = leaves.length > 0 ? (leaves.length - 1) * (leafH + ROW_GAP) : 0;
+      const span = rowCount > 0 ? (rowCount - 1) * (leafH + LEAF_ROW_GAP) : 0;
       const anchorY = startY + span / 2;
-      nodes.push({ ...anchor, x: COL.group, y: anchorY, width: 190, height: 54 });
+      nodes.push({ ...anchor, sublabel: `${leaves.length} resources - ${collapsed ? "click to expand" : "click to collapse"}`, x: COL.group, y: anchorY, width: compact ? 154 : medium ? 170 : 190, height: 54 });
 
-      for (const leaf of leaves) {
+      for (const leaf of visibleLeaves) {
         edges.push({ from: anchor.id, to: leaf.id, color: edgeColor });
       }
       edges.push({ from: "cluster", to: anchor.id, color: "rgba(148,163,184,0.30)" });
 
-      cursorY = startY + Math.max(span, 54) + GROUP_GAP;
+      cursorY = startY + Math.max(span + leafH, 54) + GROUP_GAP;
       return anchorY;
     };
 
@@ -545,7 +583,7 @@ export function ClusterVisualization() {
           ? `CPU ${formatNumber(metric.cpu_percent, "%")}`
           : resource.allocatable?.cpu || "CPU -";
 
-      const hostPods = (podsByNode.get(resource.name) || []).slice(0, 14).map((pod) => {
+      const hostPods = (podsByNode.get(resource.name) || []).map((pod) => {
         const podMetric = podMetricsByKey.get(`${pod.namespace}/${pod.name}`);
         return {
           id: `pod:${pod.namespace}/${pod.name}`,
@@ -569,7 +607,8 @@ export function ClusterVisualization() {
           resource,
         },
         hostPods,
-        "rgba(56,189,248,0.30)"
+        "rgba(56,189,248,0.30)",
+        collapsedGroups.has(`node:${resource.name}`)
       );
     });
 
@@ -583,7 +622,7 @@ export function ClusterVisualization() {
           status: "ready",
           color: KIND_COLORS.deployment,
         },
-        deployments.slice(0, 24).map((resource) => ({
+        deployments.map((resource) => ({
           id: `deployment:${resource.namespace}/${resource.name}`,
           kind: "deployment" as GraphKind,
           label: resource.name,
@@ -592,7 +631,8 @@ export function ClusterVisualization() {
           color: resource.ready_replicas >= resource.desired_replicas ? KIND_COLORS.deployment : "#f97316",
           resource: resource as GraphResource,
         })),
-        "rgba(167,139,250,0.30)"
+        "rgba(96,165,250,0.30)",
+        collapsedGroups.has("group:deployments")
       );
     }
 
@@ -606,7 +646,7 @@ export function ClusterVisualization() {
           status: "ready",
           color: KIND_COLORS.service,
         },
-        services.slice(0, 24).map((resource) => ({
+        services.map((resource) => ({
           id: `service:${resource.namespace}/${resource.name}`,
           kind: "service" as GraphKind,
           label: resource.name,
@@ -615,7 +655,8 @@ export function ClusterVisualization() {
           color: KIND_COLORS.service,
           resource: resource as GraphResource,
         })),
-        "rgba(245,158,11,0.30)"
+        "rgba(245,158,11,0.30)",
+        collapsedGroups.has("group:services")
       );
     }
 
@@ -630,20 +671,21 @@ export function ClusterVisualization() {
           status: running === containers.length ? "ready" : "degraded",
           color: KIND_COLORS.container,
         },
-        containers.slice(0, 24).map((resource) => {
+        containers.map((resource) => {
           const metric = dockerStatsByName.get(resource.name);
           const isUp = resource.status.toLowerCase().includes("up");
           return {
             id: `container:${resource.name || resource.id}`,
             kind: "container" as GraphKind,
             label: resource.name,
-            sublabel: metric?.cpu ? `CPU ${metric.cpu}` : resource.status,
+            sublabel: [resource.compose_service, metric?.cpu ? `CPU ${metric.cpu}` : resource.status, resource.networks].filter(Boolean).join(" | "),
             status: resource.status,
             color: isUp ? KIND_COLORS.container : "#64748b",
             resource: resource as GraphResource,
           };
         }),
-        "rgba(251,113,133,0.30)"
+        "rgba(251,113,133,0.30)",
+        collapsedGroups.has("group:docker")
       );
     }
 
@@ -657,13 +699,13 @@ export function ClusterVisualization() {
       status: inventory?.kubernetes.available ? "ready" : "observed",
       x: COL.cluster,
       y: totalHeight / 2,
-      width: 200,
+      width: compact ? 150 : medium ? 180 : 200,
       height: 64,
       color: KIND_COLORS.cluster,
     });
 
     return { nodes, edges };
-  }, [dockerStatsByName, inventory, nodeMetricsByName, podMetricsByKey]);
+  }, [canvasSize.width, collapsedGroups, dockerStatsByName, inventory, nodeMetricsByName, podMetricsByKey]);
 
   const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) || graph.nodes[0];
   const selectedResource = selectedNode?.resource;
@@ -676,13 +718,16 @@ export function ClusterVisualization() {
   // Frames the whole topology instead of jumping to an arbitrary fixed offset.
   // Takes explicit dimensions so callers holding fresher measurements than the
   // canvasSize state (the ResizeObserver) can fit without waiting for a render.
+  useLayoutEffect(() => { graphNodesRef.current = graph.nodes; }, [graph.nodes]);
+
   const fitToSize = useCallback((viewportWidth: number, viewportHeight: number) => {
-    if (graph.nodes.length === 0 || viewportWidth === 0) return;
+    const currentNodes = graphNodesRef.current;
+    if (currentNodes.length === 0 || viewportWidth === 0) return;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const node of graph.nodes) {
+    for (const node of currentNodes) {
       minX = Math.min(minX, node.x - node.width / 2);
       maxX = Math.max(maxX, node.x + node.width / 2);
       minY = Math.min(minY, node.y - node.height / 2);
@@ -701,7 +746,7 @@ export function ClusterVisualization() {
       y: viewportHeight / 2 - ((minY + maxY) / 2) * scale,
       scale,
     });
-  }, [graph.nodes]);
+  }, []);
 
   const fitToContent = useCallback(
     () => fitToSize(canvasSize.width, canvasSize.height),
@@ -714,13 +759,12 @@ export function ClusterVisualization() {
     const update = () => {
       const rect = shell.getBoundingClientRect();
       // Read fullscreen at call time so this observer never holds a stale value.
-      // Fullscreen drops the 760px cap and the 720px floor so the graph truly fills the screen.
       const fullscreen = document.fullscreenElement !== null;
-      const width = fullscreen ? Math.floor(rect.width) : Math.max(720, Math.floor(rect.width));
+      const width = Math.max(320, Math.floor(rect.width));
       const height = fullscreen
         ? Math.max(320, Math.floor(rect.height))
-        : Math.max(540, Math.min(760, Math.floor(window.innerHeight - 230)));
-      setCanvasSize({ width, height });
+        : Math.max(420, Math.min(760, Math.floor(window.innerHeight - 230)));
+      setCanvasSize((current) => current.width === width && current.height === height ? current : { width, height });
       // Re-frame only after a fullscreen transition — a plain window resize must
       // not yank the viewport while the user is inspecting something.
       if (pendingFullscreenFitRef.current) {
@@ -750,11 +794,13 @@ export function ClusterVisualization() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = canvasSize.width * dpr;
-    canvas.height = canvasSize.height * dpr;
-    canvas.style.width = `${canvasSize.width}px`;
-    canvas.style.height = `${canvasSize.height}px`;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const pixelWidth = Math.round(canvasSize.width * dpr);
+    const pixelHeight = Math.round(canvasSize.height * dpr);
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    if (canvas.style.width !== `${canvasSize.width}px`) canvas.style.width = `${canvasSize.width}px`;
+    if (canvas.style.height !== `${canvasSize.height}px`) canvas.style.height = `${canvasSize.height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Resolved from the live CSS variables, so every theme is handled rather
@@ -793,10 +839,13 @@ export function ClusterVisualization() {
     // the child's left edge with a horizontal bezier, so lines read as branches
     // instead of crossing through the boxes they connect.
     const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+    const viewportWorld = { left: -view.x / view.scale, top: -view.y / view.scale, right: (canvasSize.width - view.x) / view.scale, bottom: (canvasSize.height - view.y) / view.scale };
+    const visibleNodes = graph.nodes.filter((node) => node.x + node.width / 2 >= viewportWorld.left && node.x - node.width / 2 <= viewportWorld.right && node.y + node.height / 2 >= viewportWorld.top && node.y - node.height / 2 <= viewportWorld.bottom);
+    const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
     for (const edge of graph.edges) {
       const from = nodeById.get(edge.from);
       const to = nodeById.get(edge.to);
-      if (!from || !to) continue;
+      if (!from || !to || (!visibleNodeIds.has(edge.from) && !visibleNodeIds.has(edge.to))) continue;
       const startX = from.x + from.width / 2;
       const endX = to.x - to.width / 2;
       const control = Math.max(28, (endX - startX) / 2);
@@ -808,7 +857,7 @@ export function ClusterVisualization() {
       ctx.stroke();
     }
 
-    for (const node of graph.nodes) {
+    for (const node of visibleNodes) {
       const selected = node.id === selectedNodeId;
       const x = node.x - node.width / 2;
       const y = node.y - node.height / 2;
@@ -840,7 +889,8 @@ export function ClusterVisualization() {
   }, [canvasSize.height, canvasSize.width, graph.edges, graph.nodes, selectedNodeId, themeVersion, view]);
 
   useEffect(() => {
-    draw();
+    const frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
   }, [draw]);
 
   const resetView = fitToContent;
@@ -877,7 +927,7 @@ export function ClusterVisualization() {
 
   // Re-frame only when the set of resources changes. Metric-only refreshes must
   // not yank the viewport while the user is inspecting something.
-  const topologySignature = useMemo(() => graph.nodes.map((node) => node.id).join("|"), [graph.nodes]);
+  const topologySignature = useMemo(() => graph.nodes.map((node) => `${node.id}:${node.x}:${node.y}`).join("|"), [graph.nodes]);
   const lastFitSignatureRef = useRef<string>("");
   useEffect(() => {
     if (canvasSize.width === 0 || graph.nodes.length === 0) return;
@@ -923,9 +973,15 @@ export function ClusterVisualization() {
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 5;
-    setDrag({ ...drag, moved });
+    if (moved && !drag.moved) setDrag({ ...drag, moved: true });
     if (moved) {
-      setView((current) => ({ ...current, x: drag.originX + dx, y: drag.originY + dy }));
+      pendingPanViewRef.current = { ...view, x: drag.originX + dx, y: drag.originY + dy };
+      if (panFrameRef.current === null) {
+        panFrameRef.current = requestAnimationFrame(() => {
+          panFrameRef.current = null;
+          if (pendingPanViewRef.current) setView(pendingPanViewRef.current);
+        });
+      }
     }
   };
 
@@ -947,10 +1003,14 @@ export function ClusterVisualization() {
       return;
     }
     setSelectedNodeId(hit.id);
+    if (hit.id.startsWith("group:") || hit.id.startsWith("node:")) {
+      setCollapsedGroups((current) => { const next = new Set(current); if (next.has(hit.id)) next.delete(hit.id); else next.add(hit.id); return next; });
+    }
     setYamlDraft("");
     setYamlResourceKey("");
     setActionOutput("");
     setReplicaDraft(hit.resource?.resource_type === "deployment" ? String((hit.resource as KubernetesDeployment).desired_replicas || 1) : "1");
+    if (hit.resource) inspectMutation.mutate(hit.resource);
   };
 
   const yamlResourceMutation = useMutation({
@@ -963,7 +1023,7 @@ export function ClusterVisualization() {
       setYamlResourceKey(resource.resource_key);
       setActionOutput("");
     },
-    onError: (error: any) => toast.error(error.response?.data?.error || "Failed to load Kubernetes YAML"),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "Failed to load Kubernetes YAML")),
   });
 
   const inspectMutation = useMutation({
@@ -972,7 +1032,7 @@ export function ClusterVisualization() {
       return response.data;
     },
     onSuccess: (data) => setActionOutput(data.output || JSON.stringify(data, null, 2)),
-    onError: (error: any) => toast.error(error.response?.data?.error || "Inspect failed. Claim the resource first."),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "Inspect failed. Claim the resource first.")),
   });
 
   const restartMutation = useMutation({
@@ -989,7 +1049,7 @@ export function ClusterVisualization() {
       setActionOutput(data.output || data.status || "Restart requested");
       inventoryQuery.refetch();
     },
-    onError: (error: any) => toast.error(error.response?.data?.error || "Restart failed. Claim the resource first."),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "Restart failed. Claim the resource first.")),
   });
 
   const scaleMutation = useMutation({
@@ -1007,7 +1067,7 @@ export function ClusterVisualization() {
       setActionOutput(data.output || data.status || "Scale operation completed");
       inventoryQuery.refetch();
     },
-    onError: (error: any) => toast.error(error.response?.data?.error || "Scale failed. Claim the deployment first."),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "Scale failed. Claim the deployment first.")),
   });
 
   const dockerStateMutation = useMutation({
@@ -1025,7 +1085,7 @@ export function ClusterVisualization() {
       setActionOutput(data.output || data.status || "Docker action completed");
       inventoryQuery.refetch();
     },
-    onError: (error: any) => toast.error(error.response?.data?.error || "Docker action failed. Claim the container first."),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "Docker action failed. Claim the container first.")),
   });
 
   const nodeControlMutation = useMutation({
@@ -1044,7 +1104,7 @@ export function ClusterVisualization() {
       setActionOutput(data.output || data.status || "Node action completed");
       inventoryQuery.refetch();
     },
-    onError: (error: any) => toast.error(error.response?.data?.error || "Node action failed. Claim the node first."),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "Node action failed. Claim the node first.")),
   });
 
   const applyYamlMutation = useMutation({
@@ -1064,7 +1124,7 @@ export function ClusterVisualization() {
       setActionOutput([data.output, data.restart_output].filter(Boolean).join("\n\n"));
       inventoryQuery.refetch();
     },
-    onError: (error: any) => toast.error(error.response?.data?.error || "YAML apply failed. Claim the resource first and check the manifest."),
+    onError: (error: unknown) => toast.error(apiErrorMessage(error, "YAML apply failed. Claim the resource first and check the manifest.")),
   });
 
   const generateYamlMutation = useMutation({
@@ -1155,7 +1215,7 @@ export function ClusterVisualization() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground">
             <AppIcon name="activity" fallback={Activity} className="h-3.5 w-3.5"  />
@@ -1163,10 +1223,10 @@ export function ClusterVisualization() {
           </div>
           <h1 className="text-4xl font-extrabold tracking-tight">Visualization Layer</h1>
           <p className="max-w-3xl text-muted-foreground">
-            Pan, zoom, and click live Docker or Kubernetes resources. Claimed resources can be inspected, edited, restarted, or updated from YAML.
+            Pan, zoom, and inspect live Docker or Kubernetes resources. Observed resources are read-only; claimed resources can be changed from here.
           </p>
         </div>
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 xl:shrink-0">
           <Select value={targetConnectionId} onValueChange={(value) => setTargetConnectionId(value || "local")}>
             <SelectTrigger className="h-10 w-[200px] sm:w-[240px] md:w-[260px] shrink-0 justify-between">
               <SelectValue placeholder="Select infrastructure target" />
@@ -1210,7 +1270,7 @@ export function ClusterVisualization() {
             "overflow-hidden gap-0 py-0",
             // The fullscreen element gets no page background of its own, so set one
             // and let the canvas shell take the remaining height.
-            isFullscreen && "h-screen w-screen rounded-none bg-background py-0"
+            isFullscreen && "flex h-screen w-screen flex-col rounded-none bg-background py-0"
           )}
         >
           <CardHeader className="border-b border-border py-3.5 px-4 sm:px-6">
@@ -1242,9 +1302,9 @@ export function ClusterVisualization() {
                     </span>
                     {inventoryQuery.isError ? "Disconnected" : "Live"}
                   </span>
-                  <span>{graph.nodes.length} resources</span>
+                  <span>{graph.nodes.filter((node) => node.resource).length} resources</span>
                   <span aria-hidden="true">|</span>
-                  <span>Drag to pan, wheel to zoom, click to inspect.</span>
+                  <span>Drag to pan, wheel to zoom, click a group to expand or a resource to inspect.</span>
                 </CardDescription>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1276,17 +1336,18 @@ export function ClusterVisualization() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className={cn("p-0", isFullscreen && "min-h-0 flex-1")}>
+          <CardContent className={cn("min-h-0 p-0", isFullscreen && "flex-1 overflow-auto")}>
             <div
               ref={shellRef}
               className={cn(
                 "relative w-full overflow-hidden",
-                isFullscreen ? "h-full" : "min-h-[540px]"
+                isFullscreen ? "min-h-0 h-full" : "min-h-[420px]"
               )}
             >
               <canvas
                 ref={canvasRef}
-                className={cn("block touch-none", drag?.moved ? "cursor-grabbing" : "cursor-grab")}
+                className={cn("block max-w-full touch-none", drag?.moved ? "cursor-grabbing" : "cursor-grab")}
+                aria-label="Infrastructure topology graph. Use the resource picker below the inspector to select containers, pods, services, and other resources."
                 width={canvasSize.width}
                 height={canvasSize.height}
                 onPointerDown={handlePointerDown}
@@ -1317,7 +1378,24 @@ export function ClusterVisualization() {
               Actions are outside the canvas so the graph stays readable.
             </CardDescription>
           </CardHeader>
-          <CardContent className="max-h-[calc(100vh-12rem)] space-y-4 overflow-auto p-4">
+          <CardContent className="flex max-h-[calc(100dvh-12rem)] min-h-0 flex-col overflow-hidden p-0">
+            <div className="shrink-0 space-y-2 border-b border-border p-4">
+              <Label htmlFor="infrastructure-resource-search">Find any resource</Label>
+              <Input id="infrastructure-resource-search" value={resourceSearch} onChange={(event) => setResourceSearch(event.target.value)} placeholder="Search containers, pods, services" />
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {graph.nodes.filter((node) => !node.resource && node.id !== "cluster").map((group) => (
+                  <Button key={group.id} size="sm" variant="outline" aria-expanded={!collapsedGroups.has(group.id)} onClick={() => { setCollapsedGroups((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; }); setSelectedNodeId(group.id); }}>
+                    {collapsedGroups.has(group.id) ? "Expand" : "Collapse"} {group.label}
+                  </Button>
+                ))}
+              </div>
+              <div className="max-h-44 space-y-1 overflow-y-auto overscroll-contain" role="listbox" aria-label="Infrastructure resources">
+                {graph.nodes.filter((node) => node.resource && (!resourceSearch.trim() || `${node.label} ${node.sublabel} ${node.resource.resource_key}`.toLowerCase().includes(resourceSearch.trim().toLowerCase()))).map((node) => (
+                  <button key={node.id} type="button" role="option" aria-selected={node.id === selectedNodeId} onClick={() => { setSelectedNodeId(node.id); setYamlDraft(""); setYamlResourceKey(""); setActionOutput(""); if (node.resource) inspectMutation.mutate(node.resource); setCollapsedGroups((current) => { const next = new Set(current); if (node.kind === "container") next.delete("group:docker"); if (node.kind === "deployment") next.delete("group:deployments"); if (node.kind === "service") next.delete("group:services"); if (node.kind === "pod" && node.resource && "node" in node.resource) next.delete(`node:${node.resource.node}`); return next; }); }} className={cn("flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-muted", node.id === selectedNodeId && "bg-muted")}><span className="min-w-0 truncate">{node.label}</span><span className="shrink-0 text-xs text-muted-foreground">{node.kind}</span></button>
+                ))}
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
             <div className="rounded-xl border border-border bg-muted/20 p-4">
               <div className="min-w-0">
                 <div className="truncate text-lg font-semibold text-foreground">{selectedNode?.label || "StackPilot Cluster"}</div>
@@ -1336,7 +1414,7 @@ export function ClusterVisualization() {
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
-              {selectedMetricRows.slice(0, 8).map(([label, value]) => (
+              {selectedMetricRows.map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   <div className="text-xs text-muted-foreground">{label}</div>
                   <div className="mt-1 truncate font-medium text-foreground">{value}</div>
@@ -1349,10 +1427,10 @@ export function ClusterVisualization() {
                 <AppIcon name="network" fallback={Network} className="h-4 w-4"  />
                 {selectedResource && !selectedResource.claimed_by_StackPilot ? "Claim resource" : "Open monitor"}
               </Link>
-              {selectedResource?.claimed_by_StackPilot ? (
+              {selectedResource ? (
                 <Button size="sm" variant="outline" onClick={() => inspectMutation.mutate(selectedResource)} disabled={inspectMutation.isPending}>
                   {inspectMutation.isPending ? <AppIcon name="loader2" fallback={Loader2} className="h-4 w-4 animate-spin"  /> : <AppIcon name="eye" fallback={Eye} className="h-4 w-4"  />}
-                  Inspect
+                  Inspect runtime
                 </Button>
               ) : null}
               {canUseYaml && selectedResource ? (
@@ -1458,6 +1536,7 @@ export function ClusterVisualization() {
                 ))}
               </div>
             ) : null}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -1511,6 +1590,9 @@ function resourceRows(
     rows.push(["Image", resource.image]);
     rows.push(["CPU", metric?.cpu || "-"]);
     rows.push(["Memory", metric?.memory || "-"]);
+    rows.push(["Compose project", resource.compose_project || "-"]);
+    rows.push(["Compose service", resource.compose_service || "-"]);
+    rows.push(["Networks", resource.networks || "-"]);
   } else if (resource.resource_type === "node") {
     const node = resource as KubernetesNode;
     const metric = nodeMetricsByName.get(node.name);

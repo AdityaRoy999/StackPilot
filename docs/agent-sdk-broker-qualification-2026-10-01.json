@@ -1,0 +1,39 @@
+{
+  "scope": "live_sdk_broker_and_real_docker_lease",
+  "model_calls": 0,
+  "cases": [
+    "Real task lease authorized source-only SDK build and observed immutable owned digest",
+    "Actual scoped SDK command returned42 with no host/socket/platform environment and no source changes",
+    "Same digest rejected for a different live run before worker creation",
+    "Backend independently rejected revoked task lease",
+    "Working run cannot invoke terminal SDK cleanup",
+    "Canceled owned run released unused SDK image through the gated broker"
+  ],
+  "passed": true,
+  "image_id": "sha256:3c7f1d29975a7d7e8d30a9f61968eb0fb649b44edff0f8ca6e064ab720dde71c",
+  "run_id": "a137e705-48fd-4ced-ae39-57f0f137cc7f",
+  "labels": {
+    "stackpilot.agent-run": "a137e705-48fd-4ced-ae39-57f0f137cc7f",
+    "stackpilot.agent-sdk": "true",
+    "stackpilot.agent-task": "f46f0113-d685-4f9c-962e-fa3a6d06b81d"
+  },
+  "command": {
+    "status": "completed",
+    "exit_code": 0,
+    "output": "42\n",
+    "image_id": "sha256:3c7f1d29975a7d7e8d30a9f61968eb0fb649b44edff0f8ca6e064ab720dde71c",
+    "verified": false,
+    "scope": "command_execution"
+  },
+  "foreign_task_id": "0d16caa1-6f9d-4dc7-8c02-c4e2baf9dc42",
+  "cleanup": {
+    "removed": [
+      "sha256:3c7f1d29975a7d7e8d30a9f61968eb0fb649b44edff0f8ca6e064ab720dde71c"
+    ],
+    "retained": [],
+    "run_id": "a137e705-48fd-4ced-ae39-57f0f137cc7f",
+    "scope": "sdk_image_cleanup",
+    "status": "completed",
+    "verified": false
+  }
+}

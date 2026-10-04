@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "next dev",
+    "dev:docker": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -20,6 +21,7 @@
     "axios": "^1.15.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "echarts": "^6.1.0",
     "flowtoken": "^1.0.40",
     "js-cookie": "^3.0.5",
     "jwt-decode": "^4.0.0",
@@ -30,7 +32,6 @@
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
     "react-qr-code": "^2.2.0",
-    "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "shadcn": "^4.3.1",
     "sonner": "^2.0.7",
@@ -39,6 +40,12 @@
     "tw-animate-css": "^1.4.0"
   },
   "devDependencies": {
+    "@iconify-json/carbon": "^1.2.28",
+    "@iconify-json/fluent": "^1.2.59",
+    "@iconify-json/iconoir": "^1.2.11",
+    "@iconify-json/ph": "^1.2.2",
+    "@iconify-json/solar": "^1.2.13",
+    "@lobehub/icons-static-svg": "^1.95.1",
     "@tailwindcss/postcss": "^4",
     "@types/js-cookie": "^3.0.6",
     "@types/node": "^20",

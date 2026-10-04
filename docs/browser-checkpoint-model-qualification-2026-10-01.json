@@ -1,0 +1,30 @@
+{
+  "scenario": "checkbox_and_email",
+  "elapsed_seconds": 33.71,
+  "independent_outcome": {
+    "checked": false,
+    "email": ""
+  },
+  "success": false,
+  "error": "Provider response timed out. This task remains unverified; no automatic replay was attempted.",
+  "trace": [
+    {
+      "type": "browser_timing",
+      "phase": "planner",
+      "iteration": 0,
+      "elapsed_ms": 3452,
+      "model": "openai/gpt-oss-20b",
+      "first_delta_ms": 801,
+      "finish_reason": "tool_calls",
+      "tool_count": 1,
+      "content_chars": 0,
+      "reasoning_chars": 97
+    },
+    {
+      "tool_result": "browser_interact_batch",
+      "status": "failed",
+      "error": "Invalid tool arguments: send a valid JSON object matching the tool schema. No action was executed.",
+      "completion_verified": null
+    }
+  ]
+}
