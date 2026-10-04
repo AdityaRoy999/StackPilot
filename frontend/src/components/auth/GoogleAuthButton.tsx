@@ -9,6 +9,7 @@ import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 
 import api from "@/lib/api";
+import { destinationAfterLogin } from "@/lib/onboarding";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -81,9 +82,9 @@ export function GoogleAuthButton({ mode, clientId, className }: GoogleAuthButton
       const response = await api.post("/auth/google", { credential });
       return response.data;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success(mode === "signup" ? "Google account connected" : "Signed in with Google");
-      router.push("/dashboard");
+      router.push(await destinationAfterLogin());
     },
     onError: (error: unknown) => {
       const message =

@@ -21,6 +21,7 @@ import {
   Gauge,
   KeyRound,
   Smartphone,
+  Check,
 } from "@/lib/platform-icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +52,7 @@ const navigation = [
   { name: "Secrets", href: "/dashboard/secrets", icon: KeyRound, iconName: "key-round" },
   { name: "Organization", href: "/dashboard/organization", icon: Building2, iconName: "building-2" },
   { name: "Remote", href: "/dashboard/remote", icon: Smartphone, iconName: "smartphone" },
+  { name: "Setup guide", href: "/dashboard/setup", icon: Check, iconName: "check" },
   { name: "Settings", href: "/dashboard/settings", icon: Settings, iconName: "settings" },
 ];
 

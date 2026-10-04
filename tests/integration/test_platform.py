@@ -179,6 +179,8 @@ def test_authentication_required() -> None:
     for path in ("/api/v1/auth/me", "/api/v1/secrets", "/api/v1/projects", "/api/v1/deployments"):
         status, _ = request("GET", BACKEND + path)
         check(f"{path} rejects anonymous", status == 401, f"got {status}")
+    status, _ = request("POST", f"{BACKEND}/api/v1/ai/connection-test", {"model": "fixture-model"})
+    check("AI connection test rejects anonymous", status == 401, f"got {status}")
 
 
 def test_static_files_not_served() -> None:
@@ -546,6 +548,9 @@ def test_ai_settings_can_be_saved() -> None:
     try:
         token = mint_mcp_token(["deploy", "read"], label)
         headers = {"Authorization": f"Bearer {token}", "X-stackpilot-MCP": "1"}
+
+        status, _ = request("POST", f"{BACKEND}/api/v1/ai/connection-test", {}, headers=headers)
+        check("AI connection test requires an explicit model", status == 400, f"got {status}")
 
         status, body = request(
             "PUT", f"{BACKEND}/api/v1/ai/settings",

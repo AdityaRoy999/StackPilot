@@ -3,6 +3,7 @@
 | Guide | Contents |
 | --- | --- |
 | [Quickstart](quickstart.md) | Local installation, service profiles and first account |
+| [Guided setup](guided-setup.md) | Downloadable launchers, first launch, real AI connection test, and conservative local updates |
 | [Configuration](configuration.md) | Generated secrets, AI configuration and advanced settings |
 | [Architecture](architecture.md) | Control plane, data storage and runtime services |
 | [Deployment workflows](deployment-workflows.md) | Project sources, builds and runtime delivery |

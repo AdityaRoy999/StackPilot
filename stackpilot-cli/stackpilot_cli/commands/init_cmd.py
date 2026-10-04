@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 from typing import Optional
 import typer
 from rich.prompt import Prompt
@@ -49,6 +50,7 @@ def run_init(
         if domain:
             config.update(backend_url=f"https://{domain}", frontend_url=f"https://{domain}")
         save_config(config)
+        (root / ".stackpilot-install.json").write_text(json.dumps({"profile": profile, "production": bool(domain)}), encoding="utf-8")
     except (OSError, ValueError) as error:
         print_error(str(error))
         raise typer.Exit(1)

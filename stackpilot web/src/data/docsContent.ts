@@ -1,5 +1,6 @@
 import overview from '../../../README.md?raw';
 import quickstart from '../../../docs/quickstart.md?raw';
+import guidedSetup from '../../../docs/guided-setup.md?raw';
 import configuration from '../../../docs/configuration.md?raw';
 import architecture from '../../../docs/architecture.md?raw';
 import deployment from '../../../docs/deployment-workflows.md?raw';
@@ -24,7 +25,7 @@ const section = (id: string, title: string, content: string, source: string): Do
 export const DOCS_CONTENT: Record<string, DocSection> = {
   overview: section('overview', 'Platform overview', overview, 'README.md'),
   quickstart: section('quickstart', 'Quickstart', quickstart, 'docs/quickstart.md'),
-  install: section('install', 'Installation and configuration', configuration, 'docs/configuration.md'),
+  install: section('install', 'Guided installation and updates', guidedSetup, 'docs/guided-setup.md'),
   architecture: section('architecture', 'Architecture', architecture, 'docs/architecture.md'),
   templates: section('templates', 'Applications and deployment workflows', deployment, 'docs/deployment-workflows.md'),
   'ai-agent': section('ai-agent', 'AI agent', ai, 'docs/ai-agent.md'),

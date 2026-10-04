@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
+import { destinationAfterLogin } from "@/lib/onboarding";
 
 function backendGitHubCallbackUrl(code: string, state: string) {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
@@ -37,7 +38,7 @@ export default function GitHubCallbackPage() {
 
     if (status === "success") {
       toast.success(message || "Signed in with GitHub");
-      router.replace("/dashboard");
+      void destinationAfterLogin().then(destination => router.replace(destination));
       return;
     }
 

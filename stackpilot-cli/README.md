@@ -1,6 +1,6 @@
 # StackPilot CLI
 
-Version 1.1.0. Configure a StackPilot installation, manage containers and deployments, and use authenticated AI workflows from your terminal.
+Version 1.2.0. Configure a StackPilot installation, manage containers and deployments, and use authenticated AI workflows from your terminal.
 
 ```bash
 python -m pip install ./stackpilot-cli
@@ -15,6 +15,9 @@ Python 3.10+ with venv support is required. Use a virtual environment; `scripts/
 | --- | --- |
 | `init [--yes] [--profile core]` | Generate private secrets and configure the checkout; preserve existing `.env` |
 | `init --domain HOST --email EMAIL` | Configure a fresh HTTPS server installation |
+| `setup [--no-browser]` | Reopen the local installation and update wizard |
+| `update --check` | Fetch the official main branch and report available updates |
+| `update` | Back up configuration and PostgreSQL, fast-forward, rebuild, and check health |
 | `doctor` | Inspect Docker, services and host resources |
 | `up --profile base/core/full/monitoring --build` | Build and start selected services |
 | `down` | Stop services while preserving volumes |
@@ -33,6 +36,8 @@ AI requests use the authenticated backend, not an administrator service token re
 Profiles map to actual Compose profiles: `base` has no extra profiles, `core` enables `ai` and `browser`, `full` enables `full`, and `monitoring` enables `full` plus `monitoring`. Production Compose uses the same feature profiles and keeps monitoring optional.
 
 Configure AI credentials in dashboard Settings, or use interactive `init` for a fresh installation. Config and authentication live under `~/.stackpilot/`. `down --volumes` deletes persistent data and is intended for disposable environments.
+
+The dashboard first-launch guide tests a real response from your selected model. Local updates preserve the recorded service profile, require the official origin and a clean main branch, and stop if PostgreSQL cannot be backed up. `.stackpilot-backups/` contains private recovery files. See [guided setup](../docs/guided-setup.md) for platform launchers, prerequisites, and update limitations.
 
 Run deterministic tests without Docker or external services:
 

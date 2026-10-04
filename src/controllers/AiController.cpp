@@ -950,6 +950,42 @@ void AiController::listModels(const drogon::HttpRequestPtr& req,
     });
 }
 
+void AiController::testConnection(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+    BlockingTaskRunner::run([this, req, callback = std::move(callback)]() mutable {
+        const std::string userId = extractUserId(req);
+        if (userId.empty()) {
+            sendError(callback, drogon::k401Unauthorized, "Unauthorized");
+            return;
+        }
+        const auto body = req->getJsonObject();
+        if (!body || !(*body)["model"].isString() || (*body)["model"].asString().empty() ||
+            (*body)["model"].asString().size() > 200) {
+            sendError(callback, drogon::k400BadRequest, "Enter a model identifier to test.");
+            return;
+        }
+        try {
+            auto conn = Database::getInstance().getConnection();
+            pqxx::work txn(*conn);
+            const auto prefs = loadPreferences(txn, userId);
+            txn.commit();
+            Json::Value request(Json::objectValue);
+            request["provider"] = prefs["provider"];
+            request["model"] = (*body)["model"];
+            request["provider_overrides"] = providerOverrides(prefs);
+            // Only saved, owned credentials are accepted; no browser-supplied key or endpoint.
+            const auto result = AiServiceClient::instance().postWorkflow("/providers/test", request);
+            if (!result.ok) {
+                sendError(callback, drogon::k503ServiceUnavailable, "AI service unavailable. Start the AI service profile and retry.");
+                return;
+            }
+            sendJson(callback, result.body);
+        } catch (const std::exception&) {
+            sendError(callback, drogon::k503ServiceUnavailable, "Could not test the AI connection. Check service health and retry.");
+        }
+    });
+}
+
 void AiController::chatAgent(const drogon::HttpRequestPtr& req,
                              std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
     // Runs off the event loop: this handler performs a synchronous call to

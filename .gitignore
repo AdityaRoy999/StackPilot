@@ -117,6 +117,11 @@ native-browser/.venv/
 /tests/artifacts/
 *.egg-info/
 .stackpilot-venv/
+.stackpilot-install.json
+.stackpilot-backups/
+.stackpilot-update.lock
+/stackpilot web/public/stackpilot-setup-*.zip
+/stackpilot web/public/stackpilot-setup-checksums.txt
 /me_after_logout.json
 /register-flow.json
 /register-payload.json

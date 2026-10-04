@@ -6,10 +6,11 @@ param(
     [switch]$ConfigureOnly
 )
 $ErrorActionPreference = 'Stop'
-foreach ($tool in @('git', 'docker', 'python')) {
+$PythonRunner = if ($env:STACKPILOT_SETUP_PYTHON) { $env:STACKPILOT_SETUP_PYTHON } else { 'python' }
+foreach ($tool in @('git', 'docker', $PythonRunner)) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "Install $tool before running this installer." }
 }
-python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'
+& $PythonRunner -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.10+ is required.' }
 docker info --format '{{.ServerVersion}}'
 if ($LASTEXITCODE -ne 0) { throw 'Start Docker Desktop before running this installer.' }
@@ -23,7 +24,7 @@ if (-not (Test-Path -LiteralPath $Directory)) {
 Push-Location -LiteralPath $Directory
 try {
     if (-not (Test-Path -LiteralPath 'docker-compose.yml') -or -not (Test-Path -LiteralPath 'stackpilot-cli')) { throw 'Destination is not a StackPilot checkout.' }
-    python -m venv .stackpilot-venv
+    & $PythonRunner -m venv .stackpilot-venv
     if ($LASTEXITCODE -ne 0) { throw 'Could not create CLI environment.' }
     & ./.stackpilot-venv/Scripts/python.exe -m pip install --disable-pip-version-check ./stackpilot-cli
     if ($LASTEXITCODE -ne 0) { throw 'CLI installation failed.' }

@@ -51,6 +51,30 @@ app.command("logs", help="Stream container logs in real time")(logs_command)
 app.command("chat", help="Launch interactive terminal AI co-pilot")(run_chat)
 app.command("test", help="Run autonomous browser QA crawl against any target website")(run_test)
 
+
+@app.command("setup", help="Open the local guided setup and update wizard")
+def setup_command(no_browser: bool = typer.Option(False, "--no-browser", help="Print the setup link without opening a browser")):
+    from .setup_server import launch
+    from .services.docker_service import get_workspace_root
+    launch(get_workspace_root(), open_browser=not no_browser)
+
+
+@app.command("update", help="Check or apply official updates with a database backup")
+def update_command(check: bool = typer.Option(False, "--check", help="Check for updates without applying them")):
+    from .lifecycle import update, update_status
+    from .services.docker_service import get_workspace_root
+    from .config import load_config
+    try:
+        root = get_workspace_root()
+        if check:
+            result = update_status(root)
+            typer.echo(f"{result['commits']} update commits available." if result["available"] else "Already up to date.")
+        else:
+            update(root, load_config().get("default_profile", "core"), typer.echo)
+    except (OSError, RuntimeError, ValueError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(1)
+
 # Sub-command groups
 app.add_typer(auth_app, name="auth")
 app.add_typer(project_app, name="project")

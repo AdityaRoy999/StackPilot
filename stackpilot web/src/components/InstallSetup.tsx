@@ -8,13 +8,21 @@ export default function InstallSetup() {
   const [domain, setDomain] = useState('');
   const [email, setEmail] = useState('');
   const [notice, setNotice] = useState('');
+  const [downloadPlatform, setDownloadPlatform] = useState('windows');
   const host = window.location.origin;
   const valid = !production || (/^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z0-9.-]+$/.test(domain) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
   const command = installCommand(platform, profile, host, production ? domain : '', production ? email : '');
   const controlClass = 'w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-3 text-sm text-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400';
   return <section aria-labelledby="setup-heading" className="mx-auto my-10 max-w-4xl rounded-2xl border border-zinc-800 bg-zinc-950 p-5 sm:p-8">
     <h2 id="setup-heading" className="text-2xl font-semibold">Install your StackPilot</h2>
-    <p className="mt-2 text-sm text-zinc-400">Choose your setup. The installer creates private secrets on your computer; configure AI in dashboard Settings.</p>
+    <p className="mt-2 text-sm text-zinc-400">Download a guided launcher. It checks your computer, starts StackPilot, and takes you through connecting AI. Secrets are generated on your own computer.</p>
+    <div className="mt-6 grid items-end gap-4 sm:grid-cols-2">
+      <label className="text-sm">Download for<select className={`${controlClass} mt-2`} value={downloadPlatform} onChange={event => setDownloadPlatform(event.target.value)}><option value="windows">Windows</option><option value="macos">macOS</option><option value="linux">Linux</option></select></label>
+      <a className="min-h-11 rounded-xl bg-zinc-100 px-4 py-3 text-center text-sm font-medium text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400" href={`/stackpilot-setup-${downloadPlatform}.zip`} download>Download guided setup</a>
+    </div>
+    <p className="mt-4 text-sm text-zinc-400">Extract the ZIP, then open {downloadPlatform === 'windows' ? 'Start StackPilot.cmd' : downloadPlatform === 'macos' ? 'Start StackPilot.command' : 'Start StackPilot.sh (with bash)'}. Python 3.10+ opens the wizard; missing Git or Docker gets an installation link. System installation may require approval or a restart.</p>
+    <p className="mt-3 text-xs text-zinc-500">No manual .env editing for local setup. Configure your provider and model after signing in. Check and apply future updates from the same launcher. <a href="/stackpilot-setup-checksums.txt" className="underline">Download checksums</a></p>
+    <details className="mt-6"><summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">Advanced: terminal installation / HTTPS server</summary>
     <div className="mt-6 grid gap-4 sm:grid-cols-3">
       <label className="text-sm">Operating system<select className={`${controlClass} mt-2`} value={platform} onChange={event => setPlatform(event.target.value as InstallPlatform)}>
         <option value="bash">Linux / macOS</option><option value="powershell">Windows PowerShell</option>
@@ -35,7 +43,7 @@ export default function InstallSetup() {
     <pre className="mt-4 overflow-x-auto whitespace-pre-wrap break-all rounded-xl border border-zinc-800 bg-black p-4 text-xs leading-6 text-zinc-300"><code>{command}</code></pre>
     <div className="mt-4 flex flex-wrap items-center gap-3">
       <button type="button" disabled={!valid} onClick={async () => { try { await navigator.clipboard.writeText(command); setNotice('Copied installer command.'); } catch { setNotice('Select and copy the command above.'); } }} className="min-h-11 rounded-xl bg-zinc-100 px-4 text-sm font-medium text-black disabled:opacity-40">Copy command</button>
-      <a className="min-h-11 rounded-xl border border-zinc-700 px-4 py-3 text-sm" href={platform === 'bash' ? '/install.sh' : '/install.ps1'} download>Download installer</a>
+      <a className="min-h-11 rounded-xl border border-zinc-700 px-4 py-3 text-sm" href={platform === 'bash' ? '/install.sh' : '/install.ps1'} download>Download terminal installer</a>
       <a className="text-sm text-zinc-400 underline" href="https://github.com/AdityaRoy999/StackPilot/archive/refs/heads/main.zip">Download source ZIP</a>
       <span role="status" className="text-sm text-zinc-400">{notice}</span>
     </div>
@@ -44,7 +52,8 @@ export default function InstallSetup() {
     <ol className="mt-6 list-decimal space-y-2 pl-5 text-sm text-zinc-400">
       <li>Run the installer on your computer or server. Existing credentials are preserved.</li>
       <li>Open {production && domain ? `https://${domain}` : 'http://localhost:3000'} and create your account.</li>
-      <li>In Settings, connect an AI provider and select a model. API keys stay in your own installation.</li>
+      <li>Follow the first-launch setup guide to connect AI and test its response. API keys stay in your own installation.</li>
     </ol>
+    </details>
   </section>;
 }

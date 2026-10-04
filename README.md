@@ -6,6 +6,8 @@ Self-hosted application delivery and browser testing. Build repositories, deploy
 
 ## Get started
 
+Prefer guided installation? Download the platform setup ZIP from the website, extract it, and open **Start StackPilot**. The local wizard checks prerequisites, starts services, and provides updates with a database backup. See the [guided setup instructions](docs/guided-setup.md). Python is needed to open the wizard; Git and Docker are checked before installation.
+
 Install **Git, Docker with Compose v2, and Python 3.10+ with venv support** (Ubuntu/Debian: `python3-venv`). Docker Desktop is suitable for Windows and macOS; Linux can use Docker Engine. The first installation builds images and may take several minutes. A GPU is optional.
 
 ```bash
@@ -22,7 +24,7 @@ Set-Location StackPilot
 ./scripts/install.ps1 -Profile core
 ```
 
-Open **http://localhost:3000**, create your account, then connect your AI provider in **Settings**. Required database, encryption, authentication and service secrets are generated on your own computer. The installer preserves an existing `.env`.
+Open **http://localhost:3000**, create your account, then follow the first-launch **Setup guide** to connect and test your AI provider, or skip AI. Required database, encryption, authentication and service secrets are generated on your own computer. The installer preserves an existing `.env`.
 
 Prefer manual Docker setup? No Python packages are needed for configuration:
 

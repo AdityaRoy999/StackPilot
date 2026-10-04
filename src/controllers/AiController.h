@@ -11,6 +11,7 @@ public:
     ADD_METHOD_TO(AiController::getSettings, "/api/v1/ai/settings", drogon::Get);
     ADD_METHOD_TO(AiController::updateSettings, "/api/v1/ai/settings", drogon::Put);
     ADD_METHOD_TO(AiController::listModels, "/api/v1/ai/models", drogon::Get, drogon::Post);
+    ADD_METHOD_TO(AiController::testConnection, "/api/v1/ai/connection-test", drogon::Post);
     ADD_METHOD_TO(AiController::chatAgent, "/api/v1/ai/chat", drogon::Post);
     ADD_METHOD_TO(AiController::chatAgentStream, "/api/v1/ai/chat/stream", drogon::Post);
     ADD_METHOD_TO(AiController::stopAgentStream, "/api/v1/ai/chat/stop", drogon::Post);
@@ -40,6 +41,8 @@ public:
                         std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void listModels(const drogon::HttpRequestPtr& req,
                     std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+    void testConnection(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     /// Server-Sent Events: forwards reasoning and content as the model
     /// produces them, instead of waiting for the whole reply.
     void chatAgentStream(const drogon::HttpRequestPtr& req,

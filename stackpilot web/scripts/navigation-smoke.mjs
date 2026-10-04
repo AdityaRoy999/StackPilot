@@ -56,6 +56,20 @@ try {
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
   socket.addEventListener('message', event => {
     const data = JSON.parse(event.data);
+    if (data.method === 'Fetch.requestPaused') {
+      const route = new URL(data.params.request.url).pathname;
+      const body = route.endsWith('/auth/me') ? { user: { id: 'setup-fixture', email: 'fixture@example.test', full_name: 'Setup fixture', preferences: { color_mode: 'dark' } } }
+        : route.endsWith('/ai/settings') ? { provider: 'nvidia_nim', model: 'fixture-model', provider_connections: [] }
+        : route.endsWith('/ai/models') ? { source: 'provider', models: [{ id: 'fixture-model' }] }
+        : { status: 'ok', organizations: [], workspaces: [], projects: [] };
+      void command('Fetch.fulfillRequest', { requestId: data.params.requestId, responseCode: 200,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json' },
+          { name: 'Access-Control-Allow-Origin', value: process.env.STACKPILOT_FRONTEND_SETUP_URL || '' },
+          { name: 'Access-Control-Allow-Credentials', value: 'true' },
+          { name: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, OPTIONS' },
+          { name: 'Access-Control-Allow-Headers', value: 'content-type,x-stackpilot-csrf,authorization' }],
+        body: Buffer.from(JSON.stringify(body)).toString('base64') }).catch(error => exceptions.push(error.message));
+    }
     if (data.method === 'Runtime.exceptionThrown') exceptions.push(data.params.exceptionDetails.text);
     const request = pending.get(data.id);
     if (!request) return;
@@ -101,6 +115,40 @@ try {
     await writeFile(path.join(artifacts, `website-${width}.png`), Buffer.from(screenshot.data, 'base64'));
     const installer = await fetch(`${base}/install.ps1`);
     assert(installer.ok && (await installer.text()).includes('ConfigureOnly'), 'Canonical installer download is missing');
+    for (const platform of ['windows', 'macos', 'linux']) {
+      const download = await fetch(`${base}/stackpilot-setup-${platform}.zip`);
+      assert(download.ok, `${platform} setup download is missing`);
+      assert.equal(Buffer.from(await download.arrayBuffer()).readUInt32LE(0), 0x04034b50, 'Setup download must be a ZIP');
+    }
+  }
+  if (process.env.STACKPILOT_SETUP_URL) {
+    for (const width of [375, 1280]) {
+      await command('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width < 600 });
+      await command('Page.navigate', { url: process.env.STACKPILOT_SETUP_URL });
+      await until(`document.querySelector('#checks')?.children.length >= 5`);
+      assert(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), `Setup wizard overflows at ${width}px`);
+      assert(await evaluate(`!document.querySelector('#error').textContent`), 'Wizard session failed');
+      await command('Page.reload');
+      await until(`document.querySelector('#checks')?.children.length >= 5`);
+      assert(await evaluate(`!document.querySelector('#error').textContent`), 'Wizard lost its session on reload');
+      const screenshot = await command('Page.captureScreenshot', { format: 'png' });
+      await writeFile(path.join(artifacts, `setup-wizard-${width}.png`), Buffer.from(screenshot.data, 'base64'));
+    }
+  }
+  if (process.env.STACKPILOT_FRONTEND_SETUP_URL) {
+    // This isolated preview uses fixture responses; no real account or provider is accessed.
+    await command('Fetch.enable', { patterns: [{ urlPattern: '*/api/v1/*' }] });
+    for (const width of [375, 1280]) {
+      await command('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width < 600 });
+      await command('Page.navigate', { url: `${process.env.STACKPILOT_FRONTEND_SETUP_URL}/dashboard/setup` });
+      await until(`document.body.textContent.includes('Backend responding')`);
+      await evaluate(`Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Continue').click()`);
+      await until(`!!document.querySelector('#setup-model')`);
+      assert(await evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), `Dashboard setup overflows at ${width}px`);
+      const screenshot = await command('Page.captureScreenshot', { format: 'png' });
+      await writeFile(path.join(artifacts, `dashboard-setup-${width}.png`), Buffer.from(screenshot.data, 'base64'));
+    }
+    await command('Fetch.disable');
   }
   assert.equal(exceptions.length, 0, `Website JavaScript exceptions: ${exceptions.join(', ')}`);
   const result = { verified: true, measurements, exceptions, note: 'Local headless Chrome, two-frame route paint check; not a cross-device performance guarantee.' };

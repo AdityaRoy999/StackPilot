@@ -2562,6 +2562,20 @@ async def embeddings(request: EmbeddingRequest) -> Dict[str, Any]:
     return await provider_embeddings(request)
 
 
+@app.post("/providers/test")
+async def provider_connection_test(request: AgentRequest) -> Dict[str, Any]:
+    from app.connection_test import test_provider
+    if not request.model or len(request.model) > 200:
+        return {"ok": False, "error": "Enter a model identifier to test."}
+    try:
+        provider, base_url, api_key, model = provider_config(request.provider, request.model, "fast", request.provider_overrides)
+        payload = chat_payload(model, prompt="Reply with OK only.", model_mode="fast", max_tokens=256)
+        payload["stream"] = False
+        return await test_provider(provider, base_url, api_key, model, payload)
+    except (ValueError, HTTPException):
+        return {"ok": False, "error": "Provider endpoint is invalid or is not allowed. Check the saved connection."}
+
+
 @app.post("/analyze/project", response_model=AgentResponse)
 async def analyze_project(request: AgentRequest) -> AgentResponse:
     return await run_workflow("analyze_project", request)

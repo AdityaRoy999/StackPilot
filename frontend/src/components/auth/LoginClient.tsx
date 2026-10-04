@@ -8,6 +8,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 
 import api from "@/lib/api";
+import { destinationAfterLogin } from "@/lib/onboarding";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,9 +35,9 @@ export function LoginClient({
       const response = await api.post("/auth/login", { email, password });
       return response.data;
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("Login successful!");
-      router.push("/dashboard");
+      router.push(await destinationAfterLogin());
     },
     onError: (error: unknown) => {
       const message =

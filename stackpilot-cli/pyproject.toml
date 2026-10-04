@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stackpilot-cli"
-version = "1.1.0"
+version = "1.2.0"
 description = "StackPilot setup, deployments, authenticated AI workflows and container management"
 readme = "README.md"
 authors = [{ name = "StackPilot Team" }]
@@ -27,3 +27,6 @@ stackpilot = "stackpilot_cli.cli:app"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["stackpilot_cli*"]
+
+[tool.setuptools.package-data]
+stackpilot_cli = ["setup.html"]
