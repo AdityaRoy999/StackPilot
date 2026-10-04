@@ -473,6 +473,7 @@ services:
       start_period: 10s
 
   browser-sandbox:
+    entrypoint: ["bash", "/entrypoint.sh"]
     build:
       context: ./browser-sandbox
       dockerfile: Dockerfile

@@ -89,6 +89,7 @@ if(STACKPILOT_BUILD_TESTS)
         src/services/LocalDockerRuntime.cpp
         src/services/DeploymentJournal.cpp
         src/services/RemoteAccess.cpp
+        src/utils/BlockingTaskRunner.cpp
         src/services/SshService.cpp
         src/controllers/LogWebSocketController.cpp
         src/utils/TokenCrypto.cpp

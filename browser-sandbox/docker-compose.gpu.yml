@@ -2,6 +2,7 @@ name: stackpilot
 
 services:
   browser-sandbox:
+    entrypoint: ["bash", "/entrypoint.sh"]
     build:
       context: .
       dockerfile: Dockerfile.gpu

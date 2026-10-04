@@ -80,7 +80,7 @@ export default defineConfig(({ mode }) => {
                   res.end(
                     JSON.stringify({
                       error:
-                        'BREVO_API_KEY is not set in stackpilot-web/.env.local. Please add your Brevo API key to test sending.',
+                        'BREVO_API_KEY is not set in stackpilot web/.env.local. Please add your Brevo API key to test sending.',
                     })
                   );
                   return;

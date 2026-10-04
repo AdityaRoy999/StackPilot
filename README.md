@@ -62,7 +62,7 @@ Repository completion, native workers and advanced runtime combinations require 
 | `browser-sandbox/`, `native-browser/`, `native-worker/` | Browser capture and optional host/native workers |
 | `runtime-gateway/`, `remote-gateway/` | Preview routing and paired remote access |
 | `stackpilot-cli/` | Python CLI and shared configuration generator |
-| `stackpilot-web/` | Public website, installation choices and documentation |
+| `stackpilot web/` | Public website, installation choices and documentation |
 | `mcp-server/`, `observability/` | IDE integration and monitoring |
 | `scripts/`, `tests/`, `.github/` | Installers, regression tests and CI |
 | `docs/` | Current architecture, configuration and operational guides |

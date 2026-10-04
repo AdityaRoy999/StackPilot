@@ -14,7 +14,7 @@ docs/
 
 # Separate services not needed for backend C++ compilation
 frontend/
-stackpilot-web/
+stackpilot web/
 stackpilot-cli/
 ai-service/**
 !ai-service/app/

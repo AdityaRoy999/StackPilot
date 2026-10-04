@@ -4,7 +4,7 @@ Start from a current checkout and keep each change focused. Describe the problem
 
 ## Development
 
-Run `python scripts/configure.py` for local configuration. Use `docker compose --profile ai --profile browser up -d --build` for the application, or `docker-compose.dev.yml` for dashboard development. The public website is a separate Vite project in `stackpilot-web/`.
+Run `python scripts/configure.py` for local configuration. Use `docker compose --profile ai --profile browser up -d --build` for the application, or `docker-compose.dev.yml` for dashboard development. The public website is a separate Vite project in `stackpilot web/`.
 
 ```bash
 cd frontend
@@ -15,7 +15,7 @@ npm run build
 ```
 
 ```bash
-cd stackpilot-web
+cd "stackpilot web"
 npm ci
 npm test
 npm run build
