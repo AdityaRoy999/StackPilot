@@ -47,4 +47,4 @@ independent keyframes. Compose accepts `BROWSER_HOST_MEDIA_FPS` (5–60) and
 `BROWSER_HOST_MEDIA_BITRATE` (128000–8000000) from the root environment; changing
 them requires recreating ai-service. A 60 FPS cap does not prove 60 FPS capture or
 visible presentation. See the measured interaction results in
-`docs/browser-interaction-fps-fixes-2026-10-03.md`.
+[browser streaming validation](../docs/browser-streaming-validation.md).

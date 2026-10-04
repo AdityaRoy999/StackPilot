@@ -10,6 +10,7 @@
 
 #include "../../../src/services/LocalDockerRuntime.h"
 #include "../../../src/services/ComponentRuntimeVerification.h"
+#include <cstdlib>
 
 using namespace stackpilot;
 
@@ -59,6 +60,22 @@ TEST(RunCommand, CarriesHealthRouteAndRejectsAmbiguousPorts) {
     const auto cmd=LocalDockerRuntime::makeRunCommand("candidate","image:1",0,{},"http","/ready");
     EXPECT_CONTAINS(cmd,"health_path='/ready'");EXPECT_CONTAINS(cmd,"EXPOSE is missing or ambiguous");
 }
+
+#ifndef _WIN32
+TEST(RunCommand, LinuxReadinessUsesPrivateNetworkWhileHostPortStaysLoopback) {
+    const char* prior = std::getenv("STACKPILOT_RUNTIME_NETWORK");
+    const std::string saved = prior ? prior : "";
+    setenv("STACKPILOT_RUNTIME_NETWORK", "stackpilot-runtime", 1);
+    const auto cmd = LocalDockerRuntime::makeRunCommand("candidate", "image:1", 3000, {}, "http", "/ready");
+    if(prior)setenv("STACKPILOT_RUNTIME_NETWORK",saved.c_str(),1);
+    else unsetenv("STACKPILOT_RUNTIME_NETWORK");
+    EXPECT_CONTAINS(cmd,"--network 'stackpilot-runtime'");
+    EXPECT_CONTAINS(cmd,"probe_host='candidate'; probe_port=$container_port");
+    EXPECT_CONTAINS(cmd,"-p 127.0.0.1::");
+    EXPECT_CONTAINS(cmd,"runtime_internal_url='http://candidate':$container_port");
+    EXPECT_TRUE(cmd.find("-p 0.0.0.0") == std::string::npos);
+}
+#endif
 
 namespace {
 

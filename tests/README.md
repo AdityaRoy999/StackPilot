@@ -17,8 +17,8 @@ docker build -f tests/deployment/Dockerfile.qualification -t stackpilot-instance
 docker run --rm stackpilot-instance-deployment-tests
 ```
 
-See `docs/docker-instance-provisioning-2026-10-01.md` for resource defaults,
-recovery behavior and qualification boundaries.
+See [the completion plan](../docs/stackpilot-completion-plan.md) for current
+boundaries and links to historical qualification reports.
 
 ## Incomplete repository completion
 
@@ -27,7 +27,7 @@ CLI through frozen feature acceptance, actual Docker worker failures and passes,
 an independent C++ release rejection and a verified interactive deployment. It
 uses a known fixture repair and makes no model calls. All project/account/source
 fixtures are disposable. See
-`docs/repository-completion-2026-10-01.md` for the contract and qualification scope.
+[the completion plan](../docs/stackpilot-completion-plan.md) for the contract and qualification scope.
 
 `python tests/integration/completion_repository_smoke.py --model MODEL` opts in to
 provider calls and requires the production agent to implement the unfinished CLI
@@ -52,7 +52,7 @@ The following suites run in CI
 |---|---|---|
 | C++ unit | `docker build --target unit-tests -t stackpilot-unit-tests . && docker run --rm stackpilot-unit-tests` | Docker |
 | Frontend unit | `cd frontend && npm test` | Node 22 |
-| Website and installers | `cd stackpilot-web && npm test && npm run build` | Node 22 |
+| Website and installers | `cd "stackpilot web" && npm test && npm run build` | Node 22 |
 | CLI configuration and permissions | `PYTHONPATH=stackpilot-cli python -m unittest discover -s stackpilot-cli/tests` | Python 3.10+, CLI dependencies |
 | AI regressions | `PYTHONPATH=ai-service python -m unittest discover -s ai-service/tests` | Python 3.12+, AI dependencies |
 | Integration | `python tests/integration/test_platform.py` | A running stack |
@@ -74,10 +74,8 @@ gtest-shaped so the swap is mechanical if the suite ever outgrows it.
 | `jwt_helper_test.cpp` | The MCP scope gate. `read` cannot mutate, `deploy` cannot delete, unknown scopes grant nothing, and a token with no `permissions` degrades to read-only rather than full access. |
 | `compose_planner_test.cpp` | `sanitizeDnsLabel` output is always a valid RFC 1123 label, including after truncation. Plus the plan-time refusals: HTTPS without Ingress, multi-service stacks with no published port. |
 
-Two of these caught nothing in the product and everything in my assumptions:
-the planner deliberately falls back to a default port for a *lone* service, and
-deliberately downgrades an unsatisfiable `ingress` request to `nodeport`. Both
-behaviours are now pinned, because they read like bugs and are not.
+Planner tests also cover the default port for a single service and the explicit
+fallback behavior of an ingress request without ingress configuration.
 
 ## Frontend unit tests — `frontend/`
 
@@ -89,13 +87,9 @@ Logic that runs without a server or a browser. Vitest + jsdom.
 | `src/lib/utils.test.ts` | `cn()` — the last conflicting Tailwind utility wins. Every component's variant override depends on it. |
 | `tests/query-keys.test.ts` | Static scan: no React Query key maps to two different endpoints, and no `invalidateQueries` targets a key no query uses. |
 
-That last one exists because of a real crash. The infrastructure page died with
-`(ej.data || []).map is not a function` because `["ssh-connections"]` was shared
-by one query returning `SshConnection[]` and another returning
-`{ connections: SshConnection[] }`. Last writer wins in the cache. TypeScript
-cannot see it — each call site is individually well-typed. Only a cross-file
-check finds it. The mirror-image bug, an `invalidateQueries` with a key no query
-uses, never errors either; the UI just silently keeps showing stale data.
+Query-key tests guard against incompatible cache response shapes and stale
+views caused by invalidating a key without a corresponding query. Component
+tests also exercise chat rendering, approvals, browser media and navigation.
 
 ## Integration regression suite — `tests/integration/test_platform.py`
 
@@ -118,24 +112,18 @@ Every test corresponds to a defect that actually shipped:
 | Secrets | A secrets store that returns plaintext on list is just an env var |
 | Migration ledger | All migrations re-ran on every boot, replaying destructive backfills |
 
-The common thread: in each case **the code looked correct and did nothing**.
-Reading the source did not catch any of them. Only firing a real request did.
-Two of these were introduced *while fixing something else* — the SSRF guard
-initially covered the chat route but left the embeddings route as a complete
-bypass, and dropping the backend to a non-root user silently broke every
-application build until the workspace ownership was fixed.
-
-That is the argument for this suite existing: not coverage for its own sake, but
-a fast check that the controls still fire.
+These tests send real requests through the running services. Release fixtures
+also cover builds, stable preview routing, rollback, build-secret redaction and
+cleanup, including the unprivileged backend's Docker access on Linux.
 
 ### Adding a test
 
 Follow the existing shape — one function per area, `check(name, passed, detail)`
 per assertion. Tests that need authentication use `mint_mcp_token(scopes, label)`
-and must clean up in a `finally` block; the suite is designed to leave no
-artifacts behind and is safe to run against a stack with real data.
+and must clean up in a `finally` block. Run qualification on a disposable stack:
+some suites restart services and retain failed fixtures for diagnosis.
 
-## Not covered yet
+## Qualification limits
 
 AI service regressions now live in `ai-service/tests/`. Run them with
 `PYTHONPATH=ai-service python -m unittest discover -s ai-service/tests -p 'test_*.py' -v`.
@@ -144,10 +132,10 @@ the opt-in disposable Chromium fixture suite. See
 [`docs/ai-agent.md`](../docs/ai-agent.md) for findings,
 live-test commands, measured action latency, and remaining coverage limits.
 
-- React component rendering (no `@testing-library/react` wired up); the unit
-  tests cover logic modules, not JSX
-- A real deployment lifecycle (build → run → teardown); this needs either a
-  disposable project fixture or a dedicated test database
+- Live external model quality, provider availability and hardware-specific
+  behavior require separately configured qualification.
+- Stateful multi-provider releases and the broader repository support backlog
+  remain in [the completion plan](../docs/stackpilot-completion-plan.md).
 - The C++ controllers themselves. They are covered end-to-end by the
   integration suite, but not in isolation — splitting
   `DeploymentController.cpp` into testable services is the prerequisite.

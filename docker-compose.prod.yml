@@ -116,6 +116,7 @@ services:
     restart: "no"
 
   backend:
+    networks: [default, runtime]
     build:
       context: .
       dockerfile: Dockerfile
@@ -125,6 +126,7 @@ services:
     logging: *stackpilot-logging
     environment:
       - STACKPILOT_ENV=production
+      - STACKPILOT_RUNTIME_NETWORK=${STACKPILOT_RUNTIME_NETWORK:-stackpilot-runtime}
       - STACKPILOT_REQUIRE_HTTPS=${STACKPILOT_REQUIRE_HTTPS:-true}
       - STACKPILOT_TRUST_PROXY_HEADERS=true
       - STACKPILOT_API_RATE_LIMIT_PER_MINUTE=${STACKPILOT_API_RATE_LIMIT_PER_MINUTE:-240}
@@ -290,6 +292,7 @@ services:
       start_period: 30s
 
   ai-service:
+    networks: [default, runtime]
     profiles: ["ai", "full"]
     build:
       context: ./ai-service
@@ -389,6 +392,7 @@ services:
       start_period: 20s
 
   browser-sandbox:
+    networks: [default, runtime]
     profiles: ["browser", "full"]
     build:
       context: ./browser-sandbox
@@ -526,6 +530,10 @@ services:
     depends_on:
       - prometheus
       - loki
+
+networks:
+  runtime:
+    name: ${STACKPILOT_RUNTIME_NETWORK:-stackpilot-runtime}
 
 volumes:
   agent_workspaces:

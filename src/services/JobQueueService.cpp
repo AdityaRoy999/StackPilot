@@ -1532,6 +1532,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             } else {
                 buildResult.runtimeProvider = "local_docker";
                 buildResult.runtimeUrl = valueFromKeyValueOutput(dockerOutput, "runtime_url");
+                const auto internalUrl = valueFromKeyValueOutput(dockerOutput, "runtime_internal_url");
+                if(!internalUrl.empty())buildResult.deploymentPlan["runtime_internal_url"]=internalUrl;
                 if(buildResult.deploymentPlan.get("protocol","http").asString()!="process")buildResult.deploymentPlan["port"]=std::stoi(valueFromKeyValueOutput(dockerOutput,"container_port"));
                 buildResult.remoteContainerName = containerName;
                 logSink("Runtime URL: " + buildResult.runtimeUrl);

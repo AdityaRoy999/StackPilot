@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# StackPilot dashboard
 
-## Getting Started
+The Next.js application for projects, deployments, AI testing, runtime viewers, infrastructure and paired phone access. The public installation website is a separate project in `stackpilot web/`.
 
-First, run the development server:
+## Development
+
+Use Node 22 and npm. Start the backend and selected worker services with the root Compose setup, then run:
 
 ```bash
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The dashboard listens on http://localhost:3000. Configure the backend URL through the root setup; see [configuration](../docs/configuration.md). Provider keys belong in the backend's settings, never in public `NEXT_PUBLIC_*` variables.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Validation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm test
+npm run build
+```
 
-## Learn More
+Lint rejects new errors against the reviewed legacy baseline in `eslint-baseline.json`. `npm run lint:strict` reports all existing debt; update the baseline only after review. Unit tests use Vitest and Testing Library. Live browser and deployment checks require a running stack; see [the test guide](../tests/README.md).
 
-To learn more about Next.js, take a look at the following resources:
+The Dockerfile creates a standalone production build and runs the dashboard as an unprivileged user. Deploy it with the root production Compose topology and controlled reverse proxy; see [production self-hosting](../docs/production-self-host.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Before changing Next.js code, follow [AGENTS.md](AGENTS.md) and read the installed version's relevant guides. The copied CSS variants and their license are documented in [third-party notices](../THIRD_PARTY_NOTICES.md).

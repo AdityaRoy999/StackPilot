@@ -104,6 +104,9 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
 
     const std::string container = shellQuote(containerName);
     const std::string image = shellQuote(imageName);
+    const char* network = std::getenv("STACKPILOT_RUNTIME_NETWORK");
+    const bool internalNetwork = network && *network;
+    const std::string networkArgs = internalNetwork ? " --network " + shellQuote(network) : "";
     if (protocol == "process") {
         return "set -e; docker image inspect " + image + " >/dev/null; "
             "if docker inspect " + container + " >/dev/null 2>&1; then echo 'Existing runtime requires a separate candidate identity'; exit 14; fi; "
@@ -128,10 +131,11 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
         "container=" + container + "; "
         "if docker inspect " + container + " >/dev/null 2>&1; then echo 'Existing runtime requires a separate candidate identity; replacement refused'; exit 14; fi; "
         "docker run -d --restart unless-stopped --cpus 2 --memory 2g --pids-limit 256 --cap-drop ALL --cap-add NET_BIND_SERVICE --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --label stackpilot.managed=true --name " + container + envArgs +
-        " -p 127.0.0.1::$container_port " + image + " >/tmp/stackpilot-local-container-id; "
+        networkArgs + " -p 127.0.0.1::$container_port " + image + " >/tmp/stackpilot-local-container-id; "
         "echo __STACKPILOT_CANDIDATE_CREATED__; "
         "host_port=$(docker port " + container + " $container_port/tcp 2>/dev/null | awk -F: 'NF {print $NF; exit}'); "
         "[ -n \"$host_port\" ] || { echo __STACKPILOT_PORT_MISSING__; docker logs --tail 80 " + container + " || true; exit 13; }; "
+        + (internalNetwork ? "probe_host=" + container + "; probe_port=$container_port; " : "probe_host=127.0.0.1; probe_port=$host_port; ") +
         "ready=0; "
         "for i in $(seq 1 45); do "
         "status=$(docker inspect --format '{{.State.Status}}' \"$container\" 2>/dev/null || echo \"exited\"); "
@@ -142,9 +146,9 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
         "fi; "
         "if [ -n \"$host_port\" ]; then "
         + (protocol == "tcp" ?
-        "if python3 -c 'import socket,sys; socket.create_connection((\"host.docker.internal\",int(sys.argv[1])),2).close()' \"$host_port\" >/dev/null 2>&1 || python3 -c 'import socket,sys; socket.create_connection((\"127.0.0.1\",int(sys.argv[1])),2).close()' \"$host_port\" >/dev/null 2>&1; then ready=1; break; fi; " : "") +
+        "if python3 -c 'import socket,sys; socket.create_connection((sys.argv[1],int(sys.argv[2])),2).close()' \"$probe_host\" \"$probe_port\" >/dev/null 2>&1 || python3 -c 'import socket,sys; socket.create_connection((\"host.docker.internal\",int(sys.argv[1])),2).close()' \"$host_port\" >/dev/null 2>&1; then ready=1; break; fi; " : "") +
         "health_path=" + shellQuote(healthPath) + "; "
-        "code=$(curl -s -o /dev/null -w \"%{http_code}\" --max-time 3 \"http://127.0.0.1:$host_port$health_path\" 2>/dev/null || true); "
+        "code=$(curl -s -o /dev/null -w \"%{http_code}\" --max-time 3 \"http://$probe_host:$probe_port$health_path\" 2>/dev/null || true); "
         "case \"$code\" in "
         "  2*|3*|401|403|404) ready=1; break ;; "
         "  5*) echo \"Container HTTP server returned fatal error code: $code\"; docker logs --tail 60 \"$container\" 2>&1; exit 1 ;; "
@@ -179,6 +183,7 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
         "echo container_port=$container_port; "
         "echo host_port=$host_port; "
         "echo runtime_url=" + (protocol == "tcp" ? std::string("tcp") : std::string("http")) + "://localhost:$host_port; "
+        + (internalNetwork ? "echo runtime_internal_url=" + shellQuote((protocol == "tcp" ? std::string("tcp") : std::string("http")) + "://" + containerName) + ":$container_port; " : "") +
         "echo status=$status; "
         "echo running=$running; "
         "echo image=" + imageName + "; "

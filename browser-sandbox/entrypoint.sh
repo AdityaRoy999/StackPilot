@@ -34,7 +34,10 @@ WM_PID=$!
 sleep 0.3
 
 echo "[Entrypoint] Starting Chromium on DISPLAY=:99 (port 9223)..."
-PREVIEW_GATEWAY_IP=$(getent ahostsv4 host.docker.internal | awk 'NR==1 {print $1}')
+PREVIEW_GATEWAY_IP=$(getent ahostsv4 runtime-gateway | awk 'NR==1 {print $1}')
+if [ -z "$PREVIEW_GATEWAY_IP" ]; then
+  PREVIEW_GATEWAY_IP=$(getent ahostsv4 host.docker.internal | awk 'NR==1 {print $1}')
+fi
 # Keep page rasterization on CPU when no graphics device is exposed. Running
 # the entire GPU compositor through SwiftShader competes with video encoding;
 # swiftshader-webgl preserves WebGL while avoiding that extra page-render cost.

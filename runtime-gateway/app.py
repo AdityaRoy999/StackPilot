@@ -30,12 +30,20 @@ def route(identity):
         user=os.environ['DB_USER'],password=os.environ['DB_PASSWORD'],dbname=os.environ['DB_NAME'],connect_timeout=3)
     try:
         with connection.cursor() as cursor:
-            cursor.execute("SELECT upstream_url,generation FROM environment_runtime_routes WHERE environment_id=%s AND verification->>'verified'='true'",(identity,))
+            cursor.execute("SELECT r.upstream_url,r.generation,d.remote_container_name,d.runtime_snapshot,d.runtime_provider FROM environment_runtime_routes r JOIN deployments d ON d.id=r.deployment_id WHERE r.environment_id=%s AND r.verification->>'verified'='true'",(identity,))
             result=cursor.fetchone()
         if not result:return None
         parts=urlsplit(result[0])
         # The local lane may route only allocated loopback HTTP runtimes.
         if parts.scheme not in {'http','https'} or parts.hostname not in {'localhost','127.0.0.1','host.docker.internal'} or not parts.port or parts.username:return None
+        snapshot=result[3] or {}
+        plan=snapshot.get('deployment_plan') or {}
+        internal=plan.get('runtime_internal_url')
+        if internal:
+            endpoint=urlsplit(internal)
+            # Only the verified deployment's recorded Docker container may be routed.
+            if result[4]!='local_docker' or endpoint.scheme!='http' or endpoint.hostname!=result[2] or endpoint.port!=plan.get('port') or endpoint.username or endpoint.path or endpoint.query or endpoint.fragment:return None
+            return (internal,result[1])
         return (urlunsplit((parts.scheme,'host.docker.internal:'+str(parts.port),'','','')),result[1])
     finally:connection.close()
 

@@ -1,11 +1,29 @@
 import unittest
 import hashlib
 import httpx
+import os
 from unittest.mock import patch
-from app.runtime_verification import request_url,verify_contract
+from app.runtime_verification import request_url,verify_contract,verify_runtime
 
 
 class RuntimeContracts(unittest.IsolatedAsyncioTestCase):
+    async def test_linux_candidate_and_stable_route_use_distinct_verified_paths(self):
+        observed=[]
+        def respond(request):
+            observed.append((request.url.host,request.headers['host']))
+            return httpx.Response(200 if request.url.host.startswith('stackpilot-local-') else 503)
+        original=httpx.AsyncClient
+        contract={'workload':'api','verification_scope':'http_contract',
+                  'runtime_internal_url':'http://stackpilot-local-fixture:3000'}
+        with patch.dict(os.environ,{'STACKPILOT_RUNTIME_GATEWAY_URL':'http://runtime-gateway:8091'}), \
+             patch('app.runtime_verification.httpx.AsyncClient',side_effect=lambda **kwargs:original(transport=httpx.MockTransport(respond),**kwargs)):
+            candidate=await verify_runtime('http://localhost:54321',contract)
+            routed=await verify_runtime('http://fixture.preview.localhost:8091',contract)
+        self.assertTrue(candidate['verified'])
+        self.assertFalse(routed['verified'])
+        self.assertEqual(observed,[('stackpilot-local-fixture','stackpilot-local-fixture:3000'),
+                                   ('runtime-gateway','fixture.preview.localhost:8091')])
+
     async def test_agent_cannot_read_internal_provider_credentials(self):
         from app.tools import execute_tool_call
         result=await execute_tool_call('_internal_repair_settings',{},'fixture-user')

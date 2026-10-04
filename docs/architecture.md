@@ -50,4 +50,4 @@ Deployment cleanup is shared by project delete and deployment delete. The cleanu
 
 ## Current interfaces
 
-The `stackpilot-web/` Vite website provides installation choices and imports the canonical Markdown guides. The `stackpilot-cli/` Python client generates local secrets, maps service profiles to Compose, and uses authenticated backend chat APIs. The Next.js dashboard supports paired phone access through `remote-gateway/`; runtime previews are routed by `runtime-gateway/`. Browser, task and native workers remain separate configured trust boundaries.
+The `stackpilot web/` Vite website provides installation choices and imports the canonical Markdown guides. The `stackpilot-cli/` Python client generates local secrets, maps service profiles to Compose, and uses authenticated backend chat APIs. The Next.js dashboard supports paired phone access through `remote-gateway/`; runtime previews are routed by `runtime-gateway/`. Browser, task and native workers remain separate configured trust boundaries.

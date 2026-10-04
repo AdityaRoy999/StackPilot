@@ -11,9 +11,8 @@
 // injection with the platform's own privileges, and the only thing standing in
 // the way is quoting that was previously unreachable from a test.
 //
-// The command builders are pure: given the same inputs they return the same
-// string and touch nothing. Only run(), removeContainer() and removeImage()
-// actually execute anything.
+// Builders do not execute commands. makeRunCommand also reads the configured
+// runtime network. Only run(), removeContainer() and removeImage() execute.
 
 #pragma once
 

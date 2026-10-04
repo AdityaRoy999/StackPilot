@@ -55,6 +55,7 @@ services:
     restart: "no"
   runtime-gateway:
     build: ./runtime-gateway
+    networks: [default, runtime]
     container_name: stackpilot-runtime-gateway
     restart: unless-stopped
     logging: *stackpilot-logging
@@ -150,6 +151,7 @@ services:
     restart: "no"
 
   backend:
+    networks: [default, runtime]
     build:
       context: .
       dockerfile: Dockerfile
@@ -176,6 +178,7 @@ services:
       - STACKPILOT_REDIS_QUEUE=${STACKPILOT_REDIS_QUEUE:-stackpilot:jobs:deployment}
       - STACKPILOT_JOB_WORKERS=${STACKPILOT_JOB_WORKERS:-2}
       - STACKPILOT_LOCAL_PREVIEW_SUFFIX=.preview.localhost:8091
+      - STACKPILOT_RUNTIME_NETWORK=${STACKPILOT_RUNTIME_NETWORK:-stackpilot-runtime}
       - STACKPILOT_BLOCKING_WORKERS=${STACKPILOT_BLOCKING_WORKERS:-4}
       - STACKPILOT_JOB_MAX_ATTEMPTS=${STACKPILOT_JOB_MAX_ATTEMPTS:-3}
       - PROMETHEUS_PUBLIC_URL=${PROMETHEUS_PUBLIC_URL:-http://localhost:9090}
@@ -334,6 +337,7 @@ services:
       start_period: 30s
 
   ai-service:
+    networks: [default, runtime]
     init: true
     build:
       context: ./ai-service
@@ -394,6 +398,7 @@ services:
       - STACKPILOT_AI_EMBEDDING_FALLBACK=${STACKPILOT_AI_EMBEDDING_FALLBACK:-true}
       - SEARXNG_URL=${SEARXNG_URL:-http://searxng:8080}
       - BROWSER_SANDBOX_URL=${BROWSER_SANDBOX_URL:-http://browser-sandbox:9222}
+      - STACKPILOT_RUNTIME_GATEWAY_URL=http://runtime-gateway:8091
       - BROWSER_STREAM_HOST=${BROWSER_STREAM_HOST:-browser-sandbox}
       - BROWSER_STREAM_PORT=${BROWSER_STREAM_PORT:-8099}
       - REMOTE_BROWSER_SANDBOX_URL=${REMOTE_BROWSER_SANDBOX_URL:-}
@@ -471,6 +476,7 @@ services:
       start_period: 10s
 
   browser-sandbox:
+    networks: [default, runtime]
     entrypoint: ["bash", "/entrypoint.sh"]
     build:
       context: ./browser-sandbox
@@ -672,6 +678,10 @@ services:
     depends_on:
       - prometheus
       - loki
+
+networks:
+  runtime:
+    name: ${STACKPILOT_RUNTIME_NETWORK:-stackpilot-runtime}
 
 volumes:
   remote_browser_ssh:

@@ -48,6 +48,10 @@ def judge_render(state):
 
 async def verify_runtime(url, contract=None, *, deployment_id=None):
     contract = contract or {}
+    # This endpoint receives server-generated contracts through service auth.
+    # A stable preview must still traverse the gateway to qualify route publication.
+    if urlsplit(url).hostname in {'localhost', '127.0.0.1', '::1'} and contract.get('runtime_internal_url'):
+        url = contract['runtime_internal_url']
     if contract.get('repository_plan'):
         components=contract['repository_plan'].get('components') or []
         if len(components)==1 and components[0].get('root','.')=='.' and not contract.get('component_runtime'):
@@ -215,7 +219,10 @@ def request_url(base, path):
         raise ValueError('Check paths must remain on the deployment origin')
     parts=urlsplit(base)
     host=parts.hostname
-    if host in {'localhost','127.0.0.1','::1'} or (host and host.endswith('.localhost')):
+    gateway=os.getenv('STACKPILOT_RUNTIME_GATEWAY_URL','')
+    if host and host.endswith('.preview.localhost') and gateway:
+        netloc=urlsplit(gateway).netloc
+    elif host in {'localhost','127.0.0.1','::1'} or (host and host.endswith('.localhost')):
         netloc='host.docker.internal'+(':'+str(parts.port) if parts.port else '')
     else:
         netloc=parts.netloc

@@ -45,11 +45,11 @@ def run():
                 command(['docker','build','-q','-t',identity,str(source)])
                 command(['docker','run','-d','--rm','--name',identity,'--read-only','--tmpfs','/tmp:rw,nosuid,size=64m',
                          '--memory','256m','--cpus','1','--pids-limit','128','--cap-drop','ALL',
-                         '--security-opt','no-new-privileges:true','-p','127.0.0.1::3000',identity],capture_output=True)
+                         '--security-opt','no-new-privileges:true','--network','stackpilot-runtime','-p','127.0.0.1::3000',identity],capture_output=True)
                 created=True
                 published=command(['docker','port',identity,'3000'],capture_output=True,text=True).stdout.strip()
                 time.sleep(.5)
-                result=verify('http://'+published,contract)
+                result=verify('http://'+identity+':3000',contract)
                 if result.get('verified') is not True:
                     raise RuntimeError(fixture+': '+json.dumps(result))
                 if contract['workload']=='cli' and result.get('workflow_verified') is not True:

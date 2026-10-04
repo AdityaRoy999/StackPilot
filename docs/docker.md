@@ -28,7 +28,7 @@ Only run this on trusted infrastructure.
 
 The setup generator detects the socket's numeric group on Linux. For an existing configuration with direct Compose commands, run `export DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)` before starting the backend. Keep the process unprivileged; do not make the Docker socket world-writable.
 
-For local Docker deployments, StackPilot starts a container from the built image, publishes the configured container port on an ephemeral localhost port, stores the runtime as `local_docker`, and returns a browser-previewable URL such as `http://localhost:60806`. Runtime health for this mode is based on Docker container state so it works even when the backend itself is running inside a container.
+Local Docker deployments publish an ephemeral loopback port and join the dedicated `stackpilot-runtime` network. The backend, verifier, browser and preview gateway use the recorded container endpoint internally; application ports stay private on the host. Databases and monitoring remain on the platform network. Readiness and declared workload checks must pass before promotion; container state alone is insufficient for web/API release. The local gateway provides a stable `.preview.localhost:8091` origin when enabled. This shared development network is not a hostile-tenant isolation boundary.
 
 ## Compose to Kubernetes
 

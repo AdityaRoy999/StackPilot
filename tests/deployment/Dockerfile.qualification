@@ -7,6 +7,7 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY tests/deployment /qualification/tests/deployment
 COPY tests/fixtures /qualification/tests/fixtures
 COPY deployment-runtime /qualification/deployment-runtime
+COPY runtime-gateway /qualification/runtime-gateway
 COPY ai-service/app /qualification/ai-service/app
 ENV PYTHONPATH=/qualification/ai-service
 WORKDIR /qualification

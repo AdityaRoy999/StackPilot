@@ -35,7 +35,7 @@ Json::Value ReleaseCheckpointService::rollbackLocal(const std::string& deploymen
     Json::Value snapshot,config;Json::CharReaderBuilder reader;std::string errors;
     std::istringstream saved(row["runtime_snapshot"].as<std::string>()),env(TokenCrypto::decrypt(row["runtime_config_encrypted"].as<std::string>()));
     if(!Json::parseFromStream(reader,saved,&snapshot,&errors)||!Json::parseFromStream(reader,env,&config,&errors)||!config.isArray())throw std::runtime_error("Checkpoint configuration is invalid");
-    const auto plan=snapshot["deployment_plan"];const auto image=row["image_digest"].as<std::string>();
+    auto plan=snapshot["deployment_plan"];const auto image=row["image_digest"].as<std::string>();
     if(plan["repository_plan"]["components"].isArray() && plan["repository_plan"]["components"].size()>1)
         throw std::runtime_error("A Compose graph checkpoint requires a component-aware recovery executor; single-image rollback refused");
     if(image.rfind("sha256:",0)!=0)throw std::runtime_error("Checkpoint lacks immutable image identity");
@@ -45,6 +45,10 @@ Json::Value ReleaseCheckpointService::rollbackLocal(const std::string& deploymen
     std::string output;const auto cmd=LocalDockerRuntime::makeRunCommand(name,image,plan.get("port",snapshot.get("container_port",0)).asInt(),vars,plan.get("protocol","http").asString(),plan.get("health_path","/").asString());
     if(LocalDockerRuntime::run("timeout 120s sh -lc "+strings::shellQuote(cmd),output)!=0){LocalDockerRuntime::removeContainer(name,"",false);throw std::runtime_error("Checkpoint runtime failed to start");}
     const auto url=LocalDockerRuntime::markerValue(output,"runtime_url");
+    const auto internalUrl=LocalDockerRuntime::markerValue(output,"runtime_internal_url");
+    plan.removeMember("runtime_internal_url");
+    if(!internalUrl.empty())plan["runtime_internal_url"]=internalUrl;
+    snapshot["deployment_plan"]=plan;
     Json::Value proof;
     if(plan.get("protocol","http").asString()=="process"){
         std::string state;proof["verified"]=LocalDockerRuntime::run("timeout 8s docker inspect --format '{{.State.Running}} {{.RestartCount}}' "+strings::shellQuote(name),state)==0 && strings::trim(state)=="true 0";proof["scope"]="process";
