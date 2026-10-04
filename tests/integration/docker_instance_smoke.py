@@ -3,7 +3,6 @@
 Requires the local stack. Creates a disposable account/project and exercises
 the production broker, real task leases and Linux distribution containers.
 """
-from stackpilot_test_artifacts import artifact_path
 import asyncio
 import contextlib
 import json
@@ -127,6 +126,7 @@ async def inside(user, project, session, resume_file):
 
 
 def main():
+    from stackpilot_test_artifacts import artifact_path
     from release_pipeline_smoke import api, ROOT
     name = uuid.uuid4().hex[:12]
     base = (ROOT/'local-projects/docker-instance-qualification').resolve()

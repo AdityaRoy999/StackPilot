@@ -3,7 +3,6 @@
 Creates a disposable local project. It never edits an existing user's project.
 Model accuracy is a measured result, not assumed by the deterministic unit tests.
 """
-from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 from pathlib import Path
@@ -158,6 +157,7 @@ async def inside_lead(user, project, session, model=''):
 
 
 def host():
+    from stackpilot_test_artifacts import artifact_path
     import secrets
     import subprocess
     from release_pipeline_smoke import api,ROOT,cookies

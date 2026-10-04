@@ -4,7 +4,6 @@ By default uses a known fixture repair to qualify completion/release gates.
 --model MODEL instead gives the mostly empty source to the production agent.
 Only disposable fixture accounts/projects are changed. Provider calls are opt-in.
 """
-from stackpilot_test_artifacts import artifact_path
 import asyncio
 import json
 from pathlib import Path
@@ -190,6 +189,7 @@ async def inside_model(user, project, session, model):
 
 def main():
     import argparse
+    from stackpilot_test_artifacts import artifact_path
     from release_pipeline_smoke import api, ROOT
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', help='Opt in to live production-agent completion with this model')

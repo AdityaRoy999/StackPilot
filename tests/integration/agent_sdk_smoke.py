@@ -3,7 +3,6 @@
 Creates only a disposable account/project and controlled non-model task rows.
 Uses the production SDK/command tools, backend and real lease HTTP endpoint.
 """
-from stackpilot_test_artifacts import artifact_path
 import asyncio
 import contextlib
 import json
@@ -90,6 +89,7 @@ async def inside(user,project,session):
 
 
 def main():
+    from stackpilot_test_artifacts import artifact_path
     from release_pipeline_smoke import api,ROOT
     name=uuid.uuid4().hex[:12];base=(ROOT/'local-projects/sdk-broker-qualification').resolve();source=base/name
     assert source.parent==base and source!=base
