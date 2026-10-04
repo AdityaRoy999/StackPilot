@@ -26,7 +26,10 @@ if [ -f docker-compose.yml ] && [ -d stackpilot-cli ]; then DIRECTORY="$PWD"; fi
 if [ ! -d "$DIRECTORY" ]; then git clone https://github.com/AdityaRoy999/StackPilot.git "$DIRECTORY"; fi
 cd "$DIRECTORY"
 [ -f docker-compose.yml ] && [ -d stackpilot-cli ] || { echo 'Destination is not a StackPilot checkout.' >&2; exit 1; }
-python3 -m venv .stackpilot-venv
+if ! python3 -m venv .stackpilot-venv; then
+  echo 'Could not create the CLI environment. On Ubuntu/Debian, install python3-venv for your Python version, then run this installer again.' >&2
+  exit 1
+fi
 .stackpilot-venv/bin/python -m pip install --disable-pip-version-check ./stackpilot-cli
 ARGS=(init --yes --workspace "$PWD" --profile "$PROFILE")
 if [ -n "$DOMAIN" ]; then ARGS+=(--domain "$DOMAIN" --email "$EMAIL"); fi

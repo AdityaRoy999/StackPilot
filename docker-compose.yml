@@ -478,6 +478,9 @@ services:
   browser-sandbox:
     networks: [default, runtime]
     entrypoint: ["bash", "/entrypoint.sh"]
+    depends_on:
+      runtime-gateway:
+        condition: service_started
     build:
       context: ./browser-sandbox
       dockerfile: Dockerfile

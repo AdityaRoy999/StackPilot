@@ -56,6 +56,19 @@ std::string LocalDockerRuntime::sanitizeContainerName(const std::string& raw) {
     return cleaned.empty() ? "deployment" : cleaned;
 }
 
+std::string LocalDockerRuntime::candidateContainerName(const std::string& jobId, int attempt) {
+    std::string identity;
+    for (const char c : jobId) {
+        if (c == '-') continue;
+        if (!std::isxdigit(static_cast<unsigned char>(c)))
+            throw std::invalid_argument("Candidate job identity must be a UUID");
+        identity.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (identity.size() != 32 || attempt < 1)
+        throw std::invalid_argument("Candidate job identity or attempt is invalid");
+    return "stackpilot-local-" + identity + "-a" + std::to_string(attempt);
+}
+
 bool LocalDockerRuntime::isValidRuntimeEnvKey(const std::string& key) {
     if (key.empty()) {
         return false;
@@ -172,6 +185,7 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
         "fi; "
         "if [ \"$ready\" -ne 1 ]; then "
         "echo \"Container readiness probe failed or timed out:\"; "
+        "echo \"Readiness target: $probe_host:$probe_port; last HTTP status: $code\"; "
         "docker logs --tail 50 \"$container\" 2>&1 || true; "
         "exit 1; "
         "fi; "

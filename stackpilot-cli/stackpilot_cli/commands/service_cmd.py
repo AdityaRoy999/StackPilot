@@ -14,7 +14,7 @@ from ..services.docker_service import (
 )
 
 def up_command(
-    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Profile to run: core, full, monitoring, or all"),
+    profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Profile to run: base, core, full, or monitoring"),
     detach: bool = typer.Option(True, "--detach/--no-detach", "-d", help="Run containers in the background"),
     build: bool = typer.Option(False, "--build", "-b", help="Rebuild container images before starting")
 ):

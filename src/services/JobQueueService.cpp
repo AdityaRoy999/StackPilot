@@ -358,25 +358,6 @@ std::string logTailFromLocalDockerOutput(const std::string& output) {
     return trim(output.substr(pos + marker.size()));
 }
 
-std::string sanitizeDockerContainerName(const std::string& raw) {
-    std::string cleaned;
-    cleaned.reserve(std::min<size_t>(raw.size(), 96));
-    for (char c : raw) {
-        const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
-        cleaned.push_back(ok ? static_cast<char>(std::tolower(static_cast<unsigned char>(c))) : '-');
-        if (cleaned.size() >= 96) {
-            break;
-        }
-    }
-    while (!cleaned.empty() && cleaned.front() == '-') {
-        cleaned.erase(cleaned.begin());
-    }
-    while (!cleaned.empty() && cleaned.back() == '-') {
-        cleaned.pop_back();
-    }
-    return cleaned.empty() ? "deployment" : cleaned;
-}
-
 bool isValidRuntimeEnvKey(const std::string& key) {
     if (key.empty()) {
         return false;
@@ -1501,9 +1482,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         if(buildResult.success && runtimeOptions.isMember("resource_preset"))buildResult.deploymentPlan["resource_preset"]=runtimeOptions["resource_preset"];
 
         if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "docker" && !buildResult.composeProject) {
-            const std::string containerName =
-                "stackpilot-local-" + sanitizeDockerContainerName(projectName) + "-" +
-                sanitizeDockerContainerName(job.id).substr(0, 12) + "-a" + std::to_string(job.attempts);
+            const std::string containerName = LocalDockerRuntime::candidateContainerName(job.id, job.attempts);
             candidateObserver("local_docker",containerName,Json::Value(Json::objectValue));
             logSink("Deploying image to local Docker...");
             std::string dockerOutput;

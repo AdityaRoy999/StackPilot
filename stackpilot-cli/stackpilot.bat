@@ -1,2 +1,3 @@
 @echo off
-python -m stackpilot_cli.cli %*
+call "%~dp0..\stackpilot.bat" %*
+exit /b %errorlevel%

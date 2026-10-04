@@ -36,6 +36,10 @@ public:
     /// Never returns empty — falls back to "deployment".
     static std::string sanitizeContainerName(const std::string& raw);
 
+    /// Candidate identities retain the full job UUID and attempt while fitting
+    /// Docker DNS's 63-character label limit, regardless of project name.
+    static std::string candidateContainerName(const std::string& jobId, int attempt);
+
     /// True for a POSIX-shaped environment variable name. Keys that fail this
     /// are dropped rather than escaped: a key is not a value, and there is no
     /// safe way to quote `FOO=bar; rm -rf /` as a variable name.

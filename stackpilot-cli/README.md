@@ -9,7 +9,7 @@ stackpilot up --profile core --build
 stackpilot auth login
 ```
 
-Python 3.10+ is required. Use a virtual environment; `scripts/install.sh` and `scripts/install.ps1` create one automatically. Run from a StackPilot checkout, or pass `stackpilot init --workspace /path/to/StackPilot`. The checkout is remembered for later lifecycle commands.
+Python 3.10+ with venv support is required. Use a virtual environment; `scripts/install.sh` and `scripts/install.ps1` create `.stackpilot-venv` automatically. On Ubuntu/Debian, install `python3-venv`. After using the installer, activate `.stackpilot-venv/bin/activate` on Linux/macOS or `.stackpilot-venv/Scripts/Activate.ps1` on Windows. Windows users can also run `./stackpilot.ps1` or `stackpilot.bat` from the checkout without activation; both use the installed CLI environment. Run from a StackPilot checkout, or pass `stackpilot init --workspace /path/to/StackPilot`. The checkout is remembered for later lifecycle commands.
 
 | Command | Purpose |
 | --- | --- |

@@ -11,8 +11,18 @@
 #include "../../../src/services/LocalDockerRuntime.h"
 #include "../../../src/services/ComponentRuntimeVerification.h"
 #include <cstdlib>
+#include <limits>
 
 using namespace stackpilot;
+
+TEST(CandidateName, RetainsFullJobIdentityWithinTheDnsLabelLimit) {
+    const auto name=LocalDockerRuntime::candidateContainerName("d16c0247-cb31-4012-b7b0-357bde712345",std::numeric_limits<int>::max());
+    EXPECT_TRUE(name.size() <= 63);
+    EXPECT_CONTAINS(name,"d16c0247cb314012b7b0357bde712345");
+    EXPECT_TRUE(name != LocalDockerRuntime::candidateContainerName("d16c0247-cb31-4012-b7b0-357bde712346",std::numeric_limits<int>::max()));
+    EXPECT_TRUE(LocalDockerRuntime::candidateContainerName("d16c0247-cb31-4012-b7b0-357bde712345",1) !=
+                LocalDockerRuntime::candidateContainerName("d16c0247-cb31-4012-b7b0-357bde712345",2));
+}
 
 TEST(ComponentObservation, IsReadOnlyAndQuotesEveryBrokerPath) {
     const auto command=LocalDockerRuntime::makeComposeObservationCommand("/runtime's", "project", "/model file", "/plan file", "/output file");

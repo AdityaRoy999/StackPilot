@@ -1,2 +1,4 @@
-﻿param([Parameter(ValueFromRemainingArguments = True)])
-python -m stackpilot_cli.cli @RemainingArgs
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+
+& (Join-Path (Split-Path -Parent $PSScriptRoot) 'stackpilot.ps1') @Arguments
+exit $LASTEXITCODE

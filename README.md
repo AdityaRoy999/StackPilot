@@ -6,7 +6,7 @@ Self-hosted application delivery and browser testing. Build repositories, deploy
 
 ## Get started
 
-Install **Git, Docker with Compose v2, and Python 3.10+**. Docker Desktop is suitable for Windows and macOS; Linux can use Docker Engine. The first installation builds images and may take several minutes. A GPU is optional.
+Install **Git, Docker with Compose v2, and Python 3.10+ with venv support** (Ubuntu/Debian: `python3-venv`). Docker Desktop is suitable for Windows and macOS; Linux can use Docker Engine. The first installation builds images and may take several minutes. A GPU is optional.
 
 ```bash
 git clone https://github.com/AdityaRoy999/StackPilot.git
