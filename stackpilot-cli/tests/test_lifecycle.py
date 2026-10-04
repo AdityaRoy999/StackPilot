@@ -20,7 +20,8 @@ class UpdateTests(unittest.TestCase):
         self.git("init", "-b", "main")
         self.git("config", "user.name", "Fixture")
         self.git("config", "user.email", "fixture@example.test")
-        (self.root / ".gitignore").write_text(".env\n.stackpilot-backups/\n.stackpilot-install.json\n.stackpilot-update.lock\n")
+        # Model the previous release, which does not know about setup's new files.
+        (self.root / ".gitignore").write_text(".env\n")
         (self.root / "docker-compose.yml").write_text("services: {}\n")
         (self.root / ".env").write_text("DB_PASSWORD='fixture-secret'\n")
         self.git("add", ".")
@@ -49,6 +50,12 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Local changes"):
             lifecycle.update_status(self.root, fetch=False)
         self.assertEqual(self.git("rev-parse", "HEAD"), self.original)
+
+    def test_untracked_user_files_are_protected_even_on_older_releases(self):
+        (self.root / "user-notes.txt").write_text("Keep my work")
+        with self.assertRaisesRegex(RuntimeError, "Local changes"):
+            lifecycle.update_status(self.root, fetch=False)
+        self.assertEqual((self.root / "user-notes.txt").read_text(), "Keep my work")
 
     def test_refuses_other_origins_and_branches(self):
         self.git("remote", "set-url", "origin", "https://example.test/untrusted.git")

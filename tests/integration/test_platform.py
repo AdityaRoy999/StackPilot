@@ -179,7 +179,8 @@ def test_authentication_required() -> None:
     for path in ("/api/v1/auth/me", "/api/v1/secrets", "/api/v1/projects", "/api/v1/deployments"):
         status, _ = request("GET", BACKEND + path)
         check(f"{path} rejects anonymous", status == 401, f"got {status}")
-    status, _ = request("POST", f"{BACKEND}/api/v1/ai/connection-test", {"model": "fixture-model"})
+    status, _ = request("POST", f"{BACKEND}/api/v1/ai/connection-test", {"model": "fixture-model"},
+                        headers={"Origin": BROWSER_ORIGIN, "X-stackpilot-CSRF": "1"})
     check("AI connection test rejects anonymous", status == 401, f"got {status}")
 
 

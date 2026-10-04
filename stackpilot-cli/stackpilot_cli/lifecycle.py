@@ -29,7 +29,8 @@ def run(args, root=None, timeout=30, env=None, log_path=None):
         # Never copy subprocess output into HTTP responses: it can contain credentials.
         detail = f" Open the private log: {log_path}." if log_path else " Check Docker or the terminal and retry."
         raise RuntimeError(f"{Path(args[0]).name} {args[1] if len(args) > 1 else ''} failed (exit {result.returncode}).{detail}")
-    return (result.stdout or "").strip()
+    output = result.stdout or ""
+    return output if "-z" in args else output.strip()
 
 
 def prerequisites():
@@ -118,7 +119,13 @@ def update_status(root, fetch=True):
         raise RuntimeError("Workspace must be the repository root.")
     if run(["git", "branch", "--show-current"], root) != "main":
         raise RuntimeError("Switch to main before using automatic updates.")
-    if run(["git", "status", "--porcelain"], root):
+    tracked_changes = run(["git", "status", "--porcelain", "--untracked-files=no"], root)
+    untracked = run(["git", "ls-files", "--others", "--exclude-standard", "-z"], root).split("\0")
+    # These files belong to setup, including when updating an older checkout
+    # whose .gitignore predates this wizard. Tracked changes are never excluded.
+    unmanaged = [name for name in untracked if name and name not in {
+        ".stackpilot-install.json", ".stackpilot-update.lock"} and not name.startswith(".stackpilot-backups/")]
+    if tracked_changes or unmanaged:
         raise RuntimeError("Local changes detected. Commit or move them before updating; nothing has been overwritten.")
     if fetch:
         run(["git", "fetch", "origin", "main"], root, 120)
