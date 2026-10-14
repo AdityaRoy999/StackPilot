@@ -11,16 +11,24 @@ import urllib.parse
 def inventory(root):
     root = Path(root).resolve()
     entries = []
+    metadata={}
+    manifest=root/'manifest.json'
+    if manifest.is_file() and not manifest.is_symlink() and manifest.stat().st_size<=256*1024:
+        value=json.loads(manifest.read_text())
+        if isinstance(value,dict):metadata=value.get('artifact_metadata',{})
+    if not isinstance(metadata,dict):raise ValueError('Artifact metadata must be an object')
     for path in sorted(root.iterdir()):
         if path.is_symlink() or not path.is_file() or path.name.startswith('.') or path.name == 'manifest.json':
             continue
-        if path.suffix.lower() not in {'.apk', '.aab', '.zip', '.exe', '.msi', '.dmg', '.deb', '.appimage', '.tar', '.gz', '.whl', '.jar'}:
+        if path.suffix.lower() not in {'.apk', '.aab', '.aar', '.zip', '.exe', '.msi', '.msix', '.dmg', '.pkg', '.ipa', '.deb', '.rpm', '.appimage', '.tar', '.gz', '.tgz', '.whl', '.jar', '.nupkg', '.crate', '.vsix', '.wasm', '.bin', '.hex', '.uf2'}:
             continue
         digest = hashlib.sha256()
         with path.open('rb') as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                 digest.update(chunk)
-        entries.append({'name':path.name, 'size':path.stat().st_size, 'sha256':digest.hexdigest()})
+        details=metadata.get(path.name,{})
+        if not isinstance(details,dict):raise ValueError('Artifact metadata must be an object')
+        entries.append({**{key:details[key] for key in ('kind','format_validation','target','native_execution','variant','signature_status','store_publication') if key in details},'name':path.name, 'size':path.stat().st_size, 'sha256':digest.hexdigest()})
     return entries
 
 

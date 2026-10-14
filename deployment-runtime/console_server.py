@@ -206,7 +206,11 @@ class Console:
 
 def serve(command, workload='cli', port=3000, deadline=3600):
     console = Console(command, workload, deadline)
-    class Handler(BaseHTTPRequestHandler):
+    from artifact_server import inventory, make_handler
+    artifact_root=os.getenv('ARTIFACT_ROOT')
+    artifacts=inventory(artifact_root) if artifact_root else []
+    artifact_handler=make_handler(artifact_root) if artifacts else None
+    class Handler(artifact_handler or BaseHTTPRequestHandler):
         def log_message(self, *args): pass
         def reply(self, status, value, html=False):
             data = value.encode() if html else json.dumps(value).encode()
@@ -223,6 +227,7 @@ def serve(command, workload='cli', port=3000, deadline=3600):
             try:
                 if path.path == '/':
                     page = PAGE
+                    if artifacts:page=page.replace('<h1>Application console</h1>','<h1>Application console</h1><p><a href="/artifacts/'+artifacts[0]['name']+'">Download CLI bundle</a></p>')
                     if console.job:
                         page=page.replace('Application console','Repository job')
                         page=page.replace('<form id="form">','<form id="form" hidden>')
@@ -233,7 +238,9 @@ def serve(command, workload='cli', port=3000, deadline=3600):
                     ready = not console.job or result['state']=='completed'
                     # HTTP liveness permits a long-running job to start. The
                     # independent job verifier still requires a completed exit.
-                    self.reply(200, {'workload': workload, 'ready': ready, **result})
+                    self.reply(200, {'workload': workload, 'ready': ready, 'artifacts':artifacts, **result})
+                elif path.path.startswith('/artifacts/') and artifact_handler:
+                    artifact_handler.do_GET(self)
                 elif path.path == '/job/status' and console.job:
                     self.reply(200, {'workload':'job',**console.job.read()})
                 elif path.path == '/console/read':

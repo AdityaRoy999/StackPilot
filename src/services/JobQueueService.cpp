@@ -19,6 +19,7 @@
 #include "LocalDockerRuntime.h"
 #include "PendingRuntime.h"
 #include "ComponentRuntimeVerification.h"
+#include "BuildInputScope.h"
 #include <thread>
 
 #include <algorithm>
@@ -380,7 +381,7 @@ std::string makeLocalDockerRunCommand(const std::string& containerName,
                                       const Json::Value& plan) {
     std::vector<std::pair<std::string,std::string>> values;
     for(const auto& item:envVars)values.emplace_back(item.key,item.value);
-    return LocalDockerRuntime::makeRunCommand(containerName,imageName,containerPort,values,plan.get("protocol","http").asString(),plan.get("health_path","/").asString());
+    return LocalDockerRuntime::makeRunCommand(containerName,imageName,containerPort,runtimeInputs(values,plan),plan.get("protocol","http").asString(),plan.get("health_path","/").asString());
 }
 
 struct GitHubCheckProbe {
@@ -424,6 +425,24 @@ GitHubCheckProbe queryGitHubCheckRuns(const std::string& repoUrl,const std::stri
     std::filesystem::remove(file);const auto result=parseJsonObject(output);
     probe.queried=result.get("queried",false).asBool();probe.hasChecks=result.get("has_checks",false).asBool();
     probe.pending=result.get("pending",false).asBool();probe.passed=result.get("passed",false).asBool();probe.failed=result.get("failed",false).asBool();probe.detail=result.get("detail","CI evidence unavailable").asString();return probe;
+}
+
+Json::Value resolveGitHubRevision(const std::string& repoUrl, const std::string& ref, const std::string& token) {
+    const auto repository = githubFullNameFromUrl(repoUrl);
+    if (repository.empty()) throw std::runtime_error("A valid GitHub repository is required to resolve the source revision");
+    std::string pattern = (std::filesystem::temp_directory_path() / "stackpilot-revision-XXXXXX").string();
+    std::vector<char> name(pattern.begin(), pattern.end()); name.push_back('\0');
+    const int descriptor = mkstemp(name.data());
+    if (descriptor < 0) throw std::runtime_error("Source revision credential file unavailable");
+    close(descriptor);
+    const std::filesystem::path file(name.data());
+    struct Cleanup { std::filesystem::path file; ~Cleanup() { std::error_code ec; std::filesystem::remove(file, ec); } } cleanup{file};
+    Json::Value config; config["repo"] = repository; config["ref"] = ref; config["token"] = token;
+    { std::ofstream output(file); output << compactJson(config); if (!output) throw std::runtime_error("Could not write source revision request"); }
+    const auto root = getEnvOrDefault("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT", "/app/deployment-runtime");
+    const auto result = parseJsonObject(runCommandCapture("timeout 30s python3 " + shellQuote(root + "/github_revision.py") + " " + shellQuote(file.string())));
+    if (!result.get("resolved", false).asBool()) throw std::runtime_error(result.get("detail", "GitHub source revision is unavailable").asString());
+    return result;
 }
 
 SshConnectionConfig rowToSshConfig(const pqxx::row& row,
@@ -806,7 +825,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             "(SELECT metadata::text FROM deployment_jobs WHERE id=d.job_id) AS job_metadata, "
             "d.remote_container_name AS previous_container, d.runtime_url AS previous_url, d.runtime_snapshot::text AS previous_snapshot, d.runtime_provider AS previous_provider, "
             "EXTRACT(EPOCH FROM (NOW() - d.created_at))::int AS deployment_age_seconds, "
-            "e.cleanup_previous_on_success, e.current_deployment_id AS previous_current_deployment_id, "
+            "e.cleanup_previous_on_success, e.current_deployment_id AS previous_current_deployment_id, e.require_ci AS environment_require_ci, "
             "sa.storage_path AS artifact_storage_path, "
             "p.name AS project_name, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
             "p.application_template_id, p.application_config::text AS application_config, "
@@ -845,8 +864,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         const std::string previousUrl=row["previous_url"].is_null()?"":row["previous_url"].as<std::string>();
         const Json::Value previousSnapshot=row["previous_snapshot"].is_null()?Json::Value(Json::objectValue):parseJsonObject(row["previous_snapshot"].as<std::string>());
         const std::string environmentId = row["environment_id"].is_null() ? "" : row["environment_id"].as<std::string>();
-        const bool ciRequired = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
-        const std::string ciStatus = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
+        bool ciRequired = row["ci_required"].is_null() ? false : row["ci_required"].as<bool>();
+        std::string ciStatus = row["ci_status"].is_null() ? "not_required" : row["ci_status"].as<std::string>();
         const std::string triggerSource = row["trigger_source"].is_null() ? "manual" : row["trigger_source"].as<std::string>();
         const std::string projectId = row["project_id"].is_null() ? "" : row["project_id"].as<std::string>();
         const int deploymentAgeSeconds = row["deployment_age_seconds"].is_null() ? 0 : row["deployment_age_seconds"].as<int>();
@@ -855,7 +874,7 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         const std::string previousCurrentDeploymentId =
             row["previous_current_deployment_id"].is_null() ? "" : row["previous_current_deployment_id"].as<std::string>();
         const std::string repoUrlForCi = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
-        const std::string commitShaForCi = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+        std::string commitShaForCi = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
         const std::string sourceTypeForCi = row["source_type"].is_null() ? "github" : row["source_type"].as<std::string>();
         const std::string projectTokenForCi = row["github_pat"].is_null() ? "" : TokenCrypto::decrypt(row["github_pat"].as<std::string>());
         const std::string linkedGitHubTokenForCi = row["github_access_token"].is_null() ? "" : TokenCrypto::decrypt(row["github_access_token"].as<std::string>());
@@ -867,12 +886,41 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
             DeploymentJournal::broadcastSummary(job.deploymentId);
             return;
         }
+        // Pin before the first build or CI probe. Retries must use the same
+        // source, even if the branch advances while a deployment is queued.
+        const std::string artifactForRevision = row["source_artifact_id"].is_null() ? "" : row["source_artifact_id"].as<std::string>();
+        std::string branchForBuild = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
+        ciRequired = ciRequired || (sourceTypeForCi == "github" && !row["environment_require_ci"].is_null() && row["environment_require_ci"].as<bool>());
+        if (ciRequired && ciStatus == "not_required") {
+            ciStatus = "pending";
+            txn.exec_params("UPDATE deployments SET ci_required=TRUE,ci_status='pending' WHERE id=$1", job.deploymentId);
+        }
+        if (ciRequired && sourceTypeForCi == "github" && !artifactForRevision.empty()) {
+            txn.exec_params("UPDATE deployments SET status='blocked',ci_status='pending' WHERE id=$1", job.deploymentId);
+            txn.commit(); failJob(job, "Commit edited source before deploying: required GitHub CI cannot verify a workspace archive", false); return;
+        }
+        const bool resolveDefaultBranch = branchForBuild.empty() || branchForBuild == "HEAD";
+        const bool resolveCommit = commitShaForCi.length() != 40 && commitShaForCi.length() != 64;
+        if (sourceTypeForCi == "github" && artifactForRevision.empty() && (resolveCommit || resolveDefaultBranch)) {
+            const auto revision = resolveGitHubRevision(repoUrlForCi, resolveDefaultBranch ? "HEAD" : (commitShaForCi.empty() ? branchForBuild : commitShaForCi), githubTokenForCi);
+            if (resolveDefaultBranch) branchForBuild = revision["ref"].asString();
+            if (resolveCommit) {
+                commitShaForCi = resolveDefaultBranch && !commitShaForCi.empty()
+                    ? resolveGitHubRevision(repoUrlForCi, commitShaForCi, githubTokenForCi)["sha"].asString()
+                    : revision["sha"].asString();
+            }
+            txn.exec_params("UPDATE deployments SET commit_sha=$2,commit_hash=$2,branch=$3,updated_at=NOW() WHERE id=$1 AND job_id=$4",
+                            job.deploymentId, commitShaForCi, branchForBuild, job.id);
+            if (resolveDefaultBranch && !environmentId.empty()) {
+                txn.exec_params("UPDATE project_environments SET branch=$2 WHERE id=$1 AND branch IN ('','HEAD')", environmentId, branchForBuild);
+            }
+        }
         if (ciRequired && ciStatus != "passed" &&
             (sourceTypeForCi != "github" || repoUrlForCi.empty() || commitShaForCi.empty())) {
             txn.exec_params("UPDATE deployments SET status='blocked',ci_status='pending',updated_at=NOW() WHERE id=$1",job.deploymentId);
             txn.commit(); failJob(job,"Required CI cannot be verified: source and commit check evidence are missing",false); return;
         }
-        if (ciRequired && ciStatus == "pending" &&
+        if (ciRequired && ciStatus != "passed" &&
             sourceTypeForCi == "github" && !repoUrlForCi.empty() && !commitShaForCi.empty()) {
             const int graceSeconds = std::max(15, getEnvIntOrDefault("STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS", 90));
             if (deploymentAgeSeconds >= graceSeconds) {
@@ -933,6 +981,10 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                         LogWebSocketController::broadcastStatus(job.deploymentId, "blocked");
                         DeploymentJournal::broadcastSummary(job.deploymentId);
                         return;
+                    }
+                    if (!probe.passed) {
+                        txn.exec_params("UPDATE deployments SET status='blocked',ci_status='pending',updated_at=NOW() WHERE id=$1", job.deploymentId);
+                        txn.commit(); failJob(job, "Required CI did not return explicit passing evidence", false); return;
                     }
                     txn.exec_params(
                         "UPDATE deployments "
@@ -1010,8 +1062,8 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
         const std::string runtimeScheme = normalizeRuntimeScheme(row["runtime_scheme"].is_null() ? "http" : row["runtime_scheme"].as<std::string>());
         const bool localHttpsEnabled = false;
         const std::string repoUrl = row["repo_url"].is_null() ? "" : row["repo_url"].as<std::string>();
-        const std::string branch = row["branch"].is_null() ? "" : row["branch"].as<std::string>();
-        const std::string commitSha = row["commit_sha"].is_null() ? "" : row["commit_sha"].as<std::string>();
+        const std::string branch = branchForBuild;
+        const std::string commitSha = commitShaForCi;
         const std::string sourcePath = row["source_path"].is_null() ? "" : row["source_path"].as<std::string>();
         const std::string applicationTemplateId =
             row["application_template_id"].is_null() ? "" : row["application_template_id"].as<std::string>();
@@ -2088,7 +2140,9 @@ void JobQueueService::executeDeploymentBuildJob(const DeploymentJobRecord& job) 
                 }
             }
         } else {
-            failJob(job, buildResult.error.empty() ? "Deployment build failed" : buildResult.error, false);
+            failJob(job, buildResult.error.empty() ? "Deployment build failed" : buildResult.error,
+                    buildResult.retryableInfrastructureFailure);
+            if (buildResult.retryableInfrastructureFailure && job.attempts < job.maxAttempts) return;
 
             // Persist an incident; the managed AI-service worker renews its lease
             // and resumes bounded repairs after service restarts.

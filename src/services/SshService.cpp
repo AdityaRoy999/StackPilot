@@ -6,6 +6,7 @@
 #include "../utils/StringUtils.h"
 
 #include "ComposeKubernetesPlanner.h"
+#include "WindowsHostProbe.h"
 
 #include <algorithm>
 #include <cctype>
@@ -760,7 +761,7 @@ SshOperationResult SshService::testConnection(const SshConnectionConfig& config)
     const SessionFiles files = prepareSessionFiles(config);
     const std::string command =
         "timeout 35s sh -lc " +
-        shellQuote(files.sshpassPrefix + files.sshPrefix + " " + shellQuote("printf __STACKPILOT_SSH_OK__"));
+        shellQuote(files.sshpassPrefix + files.sshPrefix + " " + shellQuote("echo __STACKPILOT_SSH_OK__"));
 
     std::string output;
     const int exitCode = runCommand(command, output);
@@ -918,6 +919,17 @@ SshOperationResult SshService::probeHost(const SshConnectionConfig& config) cons
     }
 
     const SessionFiles files = prepareSessionFiles(config);
+    // Windows OpenSSH may use cmd.exe or PowerShell as its default shell.
+    // An explicitly encoded PowerShell command works with either; Linux/macOS
+    // hosts fall through to the existing POSIX probe when it is unavailable.
+    std::string windowsOutput;
+    const int windowsExit=runCommand("timeout 35s sh -lc "+shellQuote(files.sshpassPrefix+files.sshPrefix+" "+shellQuote(windowsHostProbeCommand())),windowsOutput);
+    if(windowsExit==0 && windowsOutput.find("os_family=windows")!=std::string::npos && windowsOutput.find("__STACKPILOT_PROBE_END__")!=std::string::npos) {
+        cleanupSessionFiles(files);result.success=true;result.output=windowsOutput;return result;
+    }
+    if(windowsExit==255 || windowsExit==124) {
+        cleanupSessionFiles(files);result.error=windowsExit==124?"SSH host capability probe timed out":"SSH host authentication or connection failed";result.output=windowsOutput;return result;
+    }
     const std::string remoteCommand =
         "export PATH=\"/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin:$PATH\"; "
         "set +e; "

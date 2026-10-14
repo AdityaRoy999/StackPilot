@@ -53,7 +53,7 @@ void RemoteController::manage(const drogon::HttpRequestPtr& req,Callback&& cb){
                 Json::Value result;result["id"]=rows[0][0].as<std::string>();result["secret"]=secret;result["expires_at"]=rows[0][1].as<std::string>();tx.commit();reply(cb,result);return;
             }
             if(req->method()==drogon::Get){
-                auto rows=tx.exec_params("SELECT d.id,d.name,d.confirmation_code,d.status,d.created_at::text,d.expires_at::text,d.last_seen_at::text FROM remote_devices d JOIN remote_pairings p ON p.id=d.pairing_id WHERE d.user_id=$1 AND (d.status!='pending' OR p.expires_at>NOW()) ORDER BY d.created_at DESC",uid);
+                auto rows=tx.exec_params("SELECT d.id,d.name,d.confirmation_code,CASE WHEN d.expires_at<=NOW() THEN 'expired' ELSE d.status END AS status,d.created_at::text,d.expires_at::text,d.last_seen_at::text,d.location_label,d.timezone,d.user_agent,(SELECT COUNT(*) FROM remote_runs r WHERE r.device_id=d.id AND r.user_id=d.user_id)::text AS request_count FROM remote_devices d JOIN remote_pairings p ON p.id=d.pairing_id WHERE d.user_id=$1 AND (d.status!='pending' OR p.expires_at>NOW()) ORDER BY d.created_at DESC LIMIT 100",uid);
                 Json::Value result;result["devices"]=rowsJson(rows);tx.commit();reply(cb,result);return;
             }
             auto id=body?body->get("id","").asString():"";auto action=body?body->get("action","").asString():"";
@@ -72,12 +72,17 @@ void RemoteController::connect(const drogon::HttpRequestPtr& req,Callback&& cb){
             if(!body||header.size()!=81||header.rfind("Bearer sp_remote_",0)!=0){error(cb,"Invalid pairing request");return;}
             auto secret=body->get("secret","").asString();auto name=body->get("name","Phone").asString();
             if(!std::regex_match(secret,std::regex("[a-f0-9]{64}"))||name.empty()||name.size()>80){error(cb,"Invalid pairing request");return;}
+            if ((body->isMember("location_label") && !(*body)["location_label"].isString()) ||
+                (body->isMember("timezone") && !(*body)["timezone"].isString())) { error(cb,"Invalid device details"); return; }
+            auto location=body->get("location_label","").asString();auto timezone=body->get("timezone","").asString();
+            if(location.size()>160 || timezone.size()>80){error(cb,"Device details are too long");return;}
+            const auto agent=req->getHeader("User-Agent").substr(0,512);
             auto connection=Database::getInstance().getConnection();pqxx::work tx(*connection);
             auto pair=tx.exec_params("UPDATE remote_pairings SET claimed=TRUE WHERE secret_hash=$1 AND NOT claimed AND expires_at>NOW() RETURNING id,user_id",remote::hash(secret));
             if(pair.empty()){error(cb,"Pairing link expired or already used",drogon::k410Gone);return;}
             unsigned int random=0;do{if(RAND_bytes(reinterpret_cast<unsigned char*>(&random),sizeof(random))!=1)throw std::runtime_error("Random unavailable");}while(random>4293999999U);
             auto code=std::to_string(100000+random%900000);
-            auto rows=tx.exec_params("INSERT INTO remote_devices(pairing_id,user_id,name,token_hash,confirmation_code) VALUES($1,$2,$3,$4,$5) RETURNING id",pair[0][0].as<std::string>(),pair[0][1].as<std::string>(),name,remote::hash(header.substr(7)),code);
+            auto rows=tx.exec_params("INSERT INTO remote_devices(pairing_id,user_id,name,token_hash,confirmation_code,location_label,timezone,user_agent) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",pair[0][0].as<std::string>(),pair[0][1].as<std::string>(),name,remote::hash(header.substr(7)),code,location,timezone,agent);
             Json::Value result;result["id"]=rows[0][0].as<std::string>();result["confirmation_code"]=code;result["status"]="pending";tx.commit();reply(cb,result,drogon::k201Created);
         }catch(...){error(cb,"Pairing unavailable",drogon::k503ServiceUnavailable);}
     });
@@ -164,7 +169,7 @@ void RemoteController::run(const drogon::HttpRequestPtr& req,Callback&& cb,const
         try{
             auto user=identity(req);if(user.isNull()){error(cb,"Authentication required",drogon::k401Unauthorized);return;}
             auto uid=user["user_id"].asString();auto connection=Database::getInstance().getConnection();pqxx::work tx(*connection);
-            auto rows=tx.exec_params("SELECT r.id,r.session_id,r.state,r.last_sequence,r.context::text,r.created_at::text,s.title FROM remote_runs r JOIN ai_sessions s ON s.id=r.session_id WHERE r.user_id=$1 AND ($2='' OR r.id::text=$2) ORDER BY r.created_at DESC LIMIT 50",uid,id);
+            auto rows=tx.exec_params("SELECT r.id,r.device_id,r.session_id,r.state,r.last_sequence,r.context::text,r.created_at::text,s.title FROM remote_runs r JOIN ai_sessions s ON s.id=r.session_id WHERE r.user_id=$1 AND ($2='' OR r.id::text=$2) ORDER BY r.created_at DESC LIMIT 50",uid,id);
             if(!id.empty()&&rows.empty()){error(cb,"Run unavailable",drogon::k404NotFound);return;}
             Json::Value result;result["runs"]=rowsJson(rows);
             for(Json::ArrayIndex i=0;i<result["runs"].size();++i){auto& run=result["runs"][i];Json::Value context;Json::Reader parser;if(parser.parse(run["context"].asString(),context))run["context"]=context;if(run["state"]=="working"&&!remote::activeRun(run["id"].asString())){

@@ -30,7 +30,7 @@ export const SETTINGS_SECTIONS: SettingsSectionMeta[] = [
   {
     id: "remote",
     title: "Remote Connections",
-    keywords: ["ssh", "remote", "server", "vps", "tailscale", "headscale", "kubernetes", "cluster", "host", "terminal", "docker"],
+    keywords: ["ssh", "rdp", "remote", "server", "vps", "vm", "vmware", "windows", "desktop", "tailscale", "headscale", "kubernetes", "cluster", "host", "terminal", "docker"],
   },
   {
     id: "platform",
@@ -67,12 +67,14 @@ export function SettingsSection({
   id,
   query,
   children,
+  activeId,
 }: {
   id: string;
   query: string;
   children: ReactNode;
+  activeId?: string;
 }) {
   const meta = SETTINGS_SECTIONS.find((section) => section.id === id);
   if (!meta) return <>{children}</>;
-  return settingsSectionMatches(meta, query) ? <>{children}</> : null;
+  return (!activeId || activeId === id) && settingsSectionMatches(meta, query) ? <section id={`settings-${id}`} aria-label={meta.title}>{children}</section> : null;
 }

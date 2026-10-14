@@ -157,6 +157,12 @@ class RealConsole(unittest.IsolatedAsyncioTestCase):
         result=await self.verify(base,{'verification_scope':'console_workflow'})
         self.assertFalse(result['verified'])
         self.assertIn('broken original program',result['scenarios'][0]['output'])
+    async def test_finite_cli_command_requires_its_declared_exit_and_output(self):
+        for exit_code,passed in ((0,True),(7,False)):
+            base=await self.server("print('tool version 1.2.3')\nraise SystemExit("+str(exit_code)+")")
+            result=await self.verify(base,{'verification_scope':'console_workflow','console_scenarios':[
+                {'name':'Version','steps':[{'output_contains':'tool version 1.2.3'},{'exit_code':0}]}]})
+            self.assertEqual(result['verified'],passed,result)
     async def test_real_job_exit_failure_and_timeout(self):
         for source,deadline,passed in (("print('real work')",45,True),('raise SystemExit(7)',45,False),
                                        ('import time;time.sleep(10)',1,False)):

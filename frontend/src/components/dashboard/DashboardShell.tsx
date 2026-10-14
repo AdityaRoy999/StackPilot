@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Building2,
   LayoutDashboard,
@@ -21,16 +22,15 @@ import {
   Gauge,
   KeyRound,
   Smartphone,
-  Check,
 } from "@/lib/platform-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
@@ -52,7 +52,6 @@ const navigation = [
   { name: "Secrets", href: "/dashboard/secrets", icon: KeyRound, iconName: "key-round" },
   { name: "Organization", href: "/dashboard/organization", icon: Building2, iconName: "building-2" },
   { name: "Remote", href: "/dashboard/remote", icon: Smartphone, iconName: "smartphone" },
-  { name: "Setup guide", href: "/dashboard/setup", icon: Check, iconName: "check" },
   { name: "Settings", href: "/dashboard/settings", icon: Settings, iconName: "settings" },
 ];
 
@@ -107,8 +106,9 @@ const sidebarStore = {
 
 export default function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const asideRef = useRef<HTMLElement | null>(null);
-  const [themeDialogOpen, setThemeDialogOpen] = useState(false);
+  const colorModeInitialized = useRef(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isCollapsed = useSyncExternalStore(
     sidebarStore.subscribe,
@@ -130,50 +130,38 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     const element = asideRef.current;
     if (!element) return;
     const frame = requestAnimationFrame(() => {
-      element.classList.add("transition-[width]", "duration-200", "ease-out");
+      element.dataset.animate = "true";
     });
     return () => cancelAnimationFrame(frame);
   }, []);
 
+  // Share the account response with Settings and source pickers instead of
+  // starting another auth request for every page mount.
+  const sessionQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: async ({ signal }) => (await api.get<{ user?: { preferences?: {
+      sidebar_collapsed?: boolean; ui_theme?: UiTheme; color_mode?: string;
+    } } }>("/auth/me", { signal })).data,
+    refetchInterval: 60000,
+    retry: false,
+  });
   useEffect(() => {
-    let cancelled = false;
-
-    const checkSession = async () => {
-      try {
-        const res = await api.get("/auth/me");
-        const prefs = res.data?.user?.preferences;
-        if (prefs && !cancelled) {
-          if (prefs.sidebar_collapsed !== undefined && prefs.sidebar_collapsed !== sidebarStore.getSnapshot()) {
-            window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(prefs.sidebar_collapsed));
-            for (const listener of sidebarListeners) listener();
-          }
-          if (prefs.ui_theme) {
-            const currentTheme = window.localStorage.getItem(UI_THEME_STORAGE_KEY);
-            if (currentTheme !== prefs.ui_theme) {
-              setUiTheme(prefs.ui_theme as UiTheme);
-            }
-          }
-          if (prefs.color_mode && ["light", "dark", "system"].includes(prefs.color_mode)) {
-            if (theme !== prefs.color_mode) {
-              setTheme(prefs.color_mode);
-            }
-          }
-        }
-      } catch (error: unknown) {
-        const status = (error as { response?: { status?: number } }).response?.status;
-        if (!cancelled && status === 401) {
-          window.location.href = isRemotePlatform() ? "/remote" : "/auth/login";
-        }
-      }
-    };
-
-    checkSession();
-    const interval = setInterval(checkSession, 60000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [theme, setTheme]);
+    const prefs = sessionQuery.data?.user?.preferences;
+    if (!prefs) return;
+    if (prefs.sidebar_collapsed !== undefined && prefs.sidebar_collapsed !== sidebarStore.getSnapshot()) {
+      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(prefs.sidebar_collapsed));
+      for (const listener of sidebarListeners) listener();
+    }
+    if (prefs.ui_theme && window.localStorage.getItem(UI_THEME_STORAGE_KEY) !== prefs.ui_theme) setUiTheme(prefs.ui_theme);
+    if (!colorModeInitialized.current && prefs.color_mode && ["light", "dark", "system"].includes(prefs.color_mode)) {
+      colorModeInitialized.current = true;
+      setTheme(prefs.color_mode);
+    }
+  }, [sessionQuery.data, setTheme]);
+  useEffect(() => {
+    const status = (sessionQuery.error as { response?: { status?: number } } | null)?.response?.status;
+    if (status === 401) window.location.href = isRemotePlatform() ? "/remote" : "/auth/login";
+  }, [sessionQuery.error]);
 
   const toggleSidebar = () => {
     sidebarStore.set(!isCollapsed);
@@ -198,64 +186,47 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     }
   }, []);
 
-  // The label lives in a collapsing grid column so it slides away instead of
-  // popping out of the DOM. Keeping it mounted is what makes the toggle smooth.
+  // Fixed icon tracks and padding keep every row anchored while the rail narrows.
   const labelClass = cn(
     "min-w-0 overflow-hidden truncate whitespace-nowrap text-left text-sm font-medium transition-opacity duration-150",
     sidebarCollapsed ? "opacity-0" : "opacity-100"
   );
 
-  // Collapsed drops the gap and centers the tracks; otherwise the 8px gap sits
-  // entirely to the right of the icon and shifts it off-center in the rail.
-  const rowClass = (isCollapsed: boolean) =>
-    cn(
-      "grid h-11 items-center rounded-xl transition-[grid-template-columns] duration-200 ease-out",
-      isCollapsed ? "grid-cols-[40px_0fr] justify-center gap-0" : "grid-cols-[40px_1fr] gap-2"
-    );
+  const rowClass = "grid h-9 grid-cols-[36px_148px] items-center gap-2 overflow-hidden rounded-md";
 
   const renderSidebarLink = (item: (typeof navigation)[number], isActive: boolean) => (
     <Link
       key={item.name}
       href={item.href}
+      prefetch={false}
+      onPointerEnter={() => { if (pathname !== item.href) router.prefetch(item.href); }}
+      onFocus={() => { if (pathname !== item.href) router.prefetch(item.href); }}
       onClick={() => setMobileMenuOpen(false)}
+      aria-label={item.name}
       aria-current={isActive ? "page" : undefined}
       className={cn(
-        rowClass(sidebarCollapsed),
+        rowClass,
         "relative w-full",
         isActive
           ? "bg-accent font-semibold text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
       )}
     >
-      <span className="flex h-10 w-10 items-center justify-center">
+      <span className="flex size-9 items-center justify-center">
         <AppIcon
           name={item.iconName}
           fallback={item.icon}
-          size={20}
-          className={cn("h-5 w-5", isActive ? "text-primary" : "text-current")}
+          size={18}
+          className={cn("size-[18px]", isActive ? "text-primary" : "text-current")}
         />
       </span>
-      <span className={labelClass}>{item.name}</span>
+      <span aria-hidden={sidebarCollapsed} className={labelClass}>{item.name}</span>
     </Link>
   );
 
   const sidebarContent = (
         <TooltipProvider>
-          {/* Brand + toggle share a row, so the control never floats over content. */}
-          <div
-            className={cn(
-              "flex h-14 shrink-0 items-center border-b border-border",
-              sidebarCollapsed ? "justify-center px-2" : "justify-between pl-3 pr-2"
-            )}
-          >
-            {!sidebarCollapsed && (
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm">
-                  <AppIcon name="star" size={19} />
-                </span>
-                <span className="truncate text-base font-semibold tracking-tight">StackPilot</span>
-              </span>
-            )}
+          <div className="grid h-11 shrink-0 grid-cols-[36px_148px] items-center gap-2 overflow-hidden px-2">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -265,7 +236,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                     onClick={() => isMobileSidebar ? setMobileMenuOpen(false) : toggleSidebar()}
                     aria-label={isMobileSidebar ? "Close navigation" : isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                     aria-expanded={isMobileSidebar ? mobileMenuOpen : !isCollapsed}
-                    className="h-11 w-11 shrink-0 text-muted-foreground hover:text-foreground"
+                    className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
                   >
                     {isCollapsed ? (
                       <AppIcon name="panel-left-open" fallback={PanelLeftOpen} size={18} className="h-[18px] w-[18px]" />
@@ -277,36 +248,22 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               />
               <TooltipContent side="right">{isCollapsed ? "Expand sidebar" : "Collapse sidebar"}</TooltipContent>
             </Tooltip>
+            <span aria-hidden={sidebarCollapsed} className={cn(labelClass, "text-base font-semibold tracking-tight")}>StackPilot</span>
           </div>
 
-          <div className={cn("shrink-0 py-2.5", sidebarCollapsed ? "flex justify-center px-1" : "px-3")}>
+          <div className="shrink-0 px-2 py-2">
             <WorkspaceSwitcher isCollapsed={sidebarCollapsed} />
           </div>
 
           <nav
-            className={cn(
-              "no-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden py-3",
-              sidebarCollapsed ? "items-center px-2" : "px-3"
-            )}
+            aria-label="Workspace navigation"
+            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden px-2 py-2"
           >
             {navigation.map((item) => {
-              if (item.nested && !sidebarCollapsed) {
-                if (item.name !== "Visualization") return null;
-                return (
-                  <div key="monitoring-sections" className="ml-5 flex flex-col gap-1 border-l border-border pl-4">
-                    {navigation.filter((entry) => entry.nested).map((entry) =>
-                      renderSidebarLink(entry, pathname === entry.href)
-                    )}
-                  </div>
-                );
-              }
               const isActive =
                 item.name === "Projects"
                   ? pathname === "/dashboard" || pathname.startsWith("/dashboard/projects")
                   : pathname === item.href;
-              if (!sidebarCollapsed) {
-                return renderSidebarLink(item, isActive);
-              }
               return (
                 <Tooltip key={item.name}>
                   <TooltipTrigger render={renderSidebarLink(item, isActive)} />
@@ -317,32 +274,23 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           </nav>
 
           <div
-            className={cn(
-              "flex shrink-0 flex-col gap-0.5 border-t border-border py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]",
-              sidebarCollapsed ? "items-center px-2" : "px-3"
-            )}
+            className="flex shrink-0 flex-col gap-0.5 px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
           >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    onClick={() => { setMobileMenuOpen(false); setThemeDialogOpen(true); }}
-                    aria-label="Theme"
-                    className={cn(
-                      rowClass(sidebarCollapsed),
-                      "w-full justify-start p-0 text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-                    )}
-                  >
-                    <span className="flex h-10 w-10 items-center justify-center">
-                      <AppIcon name={activeTheme.iconName} fallback={ActiveThemeIcon} size={18} className="h-[18px] w-[18px]" />
-                    </span>
-                    <span className={labelClass}>{activeTheme.label}</span>
-                  </Button>
-                }
-              />
-              <TooltipContent side="right">{activeTheme.label} theme</TooltipContent>
-            </Tooltip>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" aria-label="Theme" className={cn(rowClass, "w-full justify-start p-0 text-muted-foreground hover:bg-accent/60 hover:text-foreground")} />}>
+                <span className="flex size-9 items-center justify-center"><AppIcon name={activeTheme.iconName} fallback={ActiveThemeIcon} size={18} className="h-[18px] w-[18px]" /></span>
+                <span aria-hidden={sidebarCollapsed} className={labelClass}>{activeTheme.label}</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side={isMobileSidebar ? "top" : "right"} align={isMobileSidebar ? "start" : "end"} sideOffset={10} className="!w-auto min-w-0 max-w-[calc(100vw-2rem)] !rounded-xl" aria-label="Theme options">
+                <DropdownMenuRadioGroup className="flex gap-1" value={activeThemeValue} onValueChange={value => {
+                  colorModeInitialized.current = true;
+                  setTheme(String(value));
+                  api.put("/auth/preferences", { color_mode: value }).catch(() => {});
+                }}>
+                  {themeOptions.map(option => <DropdownMenuRadioItem key={option.value} value={option.value} closeOnClick className="theme-option !flex-col !gap-1 !rounded-lg !px-2 !py-2 min-h-14 w-16 text-xs [&>[data-slot=dropdown-menu-radio-item-indicator]]:hidden"><AppIcon name={option.iconName} fallback={option.icon} size={16} /><span>{option.label}</span></DropdownMenuRadioItem>)}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <Tooltip>
               <TooltipTrigger
@@ -352,14 +300,14 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                     onClick={handleLogout}
                     aria-label="Logout"
                     className={cn(
-                      rowClass(sidebarCollapsed),
+                      rowClass,
                       "w-full justify-start p-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     )}
                   >
-                    <span className="flex h-10 w-10 items-center justify-center">
+                    <span className="flex size-9 items-center justify-center">
                       <AppIcon name="log-out" fallback={LogOut} size={18} className="h-[18px] w-[18px]" />
                     </span>
-                    <span className={labelClass}>Logout</span>
+                    <span aria-hidden={sidebarCollapsed} className={labelClass}>Logout</span>
                   </Button>
                 }
               />
@@ -375,9 +323,10 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     <div data-slot="dashboard-shell" className="flex h-dvh overflow-hidden bg-background text-foreground">
       <aside
         ref={asideRef}
+        data-collapsed={sidebarCollapsed}
         className={cn(
-          "z-20 hidden h-full shrink-0 flex-col border-r border-border bg-card sm:flex",
-          sidebarCollapsed ? "w-[60px]" : "w-[288px]"
+          "z-20 hidden h-full shrink-0 flex-col bg-card transition-none data-[animate=true]:transition-[width] data-[animate=true]:duration-200 data-[animate=true]:ease-out motion-reduce:!transition-none sm:flex",
+          sidebarCollapsed ? "w-[52px]" : "w-[208px]"
         )}
       >
         {sidebarContent}
@@ -395,49 +344,28 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         </DialogContent>
       </Dialog>
 
-          <Dialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen}>
-            <DialogContent className="sm:max-w-sm">
-              <DialogHeader>
-                <DialogTitle>Theme</DialogTitle>
-                <DialogDescription>Choose the interface mode for this device.</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-2">
-                {themeOptions.map((option) => {
-                  const ThemeIcon = option.icon;
-                  const isSelected = activeThemeValue === option.value;
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", !isFullBleed && "bg-card")}>
+        {!isFullBleed && (
+          <header data-workspace-header className="hidden h-11 shrink-0 items-center justify-between gap-4 bg-card px-5 sm:flex md:px-8">
+            <div className="flex min-w-0 items-center gap-3 text-sm">
+              <span className="text-muted-foreground">Workspace</span><span aria-hidden="true" className="text-muted-foreground/50">/</span>
+              <span className="truncate font-medium">{navigation.find(item => item.href === pathname)?.name || (pathname.startsWith("/dashboard/projects/") ? "Project overview" : "Dashboard")}</span>
+            </div>
 
-                  return (
-                    <Button
-                      key={option.value}
-                      type="button"
-                      variant={isSelected ? "default" : "outline"}
-                      className="justify-start gap-2"
-                      onClick={() => {
-                        setTheme(option.value);
-                        api.put("/auth/preferences", { color_mode: option.value }).catch(() => {});
-                        setThemeDialogOpen(false);
-                      }}
-                    >
-                      <AppIcon name={option.iconName} fallback={ThemeIcon} size={16} className="h-4 w-4 shrink-0" />
-                      <span>{option.label}</span>
-                    </Button>
-                  );
-                })}
-              </div>
-            </DialogContent>
-          </Dialog>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex shrink-0 items-center gap-3 border-b border-border bg-card px-3 pt-[env(safe-area-inset-top)] sm:hidden">
-          <Button variant="ghost" size="icon" className="h-12 w-12 shrink-0" aria-label="Open navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(true)}>
+          </header>
+        )}
+        <header className="flex shrink-0 items-center gap-3 bg-card px-3 pt-[env(safe-area-inset-top)] sm:hidden">
+          <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label="Open navigation" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(true)}>
             <PanelLeftOpen className="h-5 w-5" />
           </Button>
-          <Link href="/dashboard" className="min-w-0 truncate font-semibold">StackPilot</Link>
+          <Link prefetch={false} href="/dashboard" className="min-w-0 truncate font-semibold">StackPilot</Link>
           <span className="ml-auto truncate text-xs text-muted-foreground">{navigation.find(item => item.href === pathname)?.name || "Dashboard"}</span>
         </header>
         <main
+          data-full-bleed={isFullBleed}
           className={cn(
             "min-h-0 min-w-0 flex-1 bg-background/50 scrollbar-thin",
-            isFullBleed ? "overflow-hidden p-0" : "overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5 md:p-8"
+            isFullBleed ? "overflow-hidden p-0" : "rounded-tl-none bg-background overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:rounded-tl-2xl sm:p-5 md:p-8"
           )}
         >
           {children}

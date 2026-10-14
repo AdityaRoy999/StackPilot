@@ -1,7 +1,9 @@
 """Live hit testing and native pointer recovery; never forces DOM state."""
 import asyncio
+from .overlays import OVERLAY_HELPERS
 
 ACTIONABILITY = r"""(() => {
+ __SP_OVERLAY_HELPERS__
  const el = window.__spFast?.nodes.get(__ID__);
  if (!el || !el.isConnected) return {reason:'stale_element'};
  const r = el.getBoundingClientRect(), s = getComputedStyle(el);
@@ -30,28 +32,64 @@ ACTIONABILITY = r"""(() => {
  const label = node => (node.getAttribute('aria-label') || node.labels?.[0]?.textContent || node.name || node.id || node.tagName).trim().slice(0,120);
  const invalid = form ? [...form.querySelectorAll('input,select,textarea')].filter(n=>!n.disabled && n.willValidate && !n.validity.valid)
    .slice(0,12).map(n=>({label:label(n),required:n.required,validation:n.validationMessage.slice(0,180)})) : [];
- const blockingDialog = blocker?.closest('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open]');
+ const activeOverlay = window.__spOverlay.active();
+ const outsideOverlay = activeOverlay && !activeOverlay.contains(el);
+ const blockingDialog = outsideOverlay ? activeOverlay : blocker?.closest('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open]');
+ if (outsideOverlay) {point=null;blocker=blocker || activeOverlay;}
  const blockingNavigation = blocker?.closest('header,nav,[role="navigation"]');
+ const targetNavigation = el.closest('header,nav,[role="navigation"]');
  return {x:point?.x,y:point?.y,text:(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0,120),
    disabled,is_in_viewport:inView,is_occluded:inView && !point,
    reason:disabled?'disabled':!visible?'hidden':!inView?'outside_viewport':!point?'occluded':'ready',
    invalid_fields:invalid,
    navigation_hover_blocker:!!blockingNavigation && !blockingNavigation.contains(el) && !blockingDialog,
+   target_in_navigation:!!targetNavigation,
    neutral_pointer:{x:Math.max(0,innerWidth-2),y:Math.max(0,innerHeight-2)},
    blocker:blocker?{tag:blocker.tagName.toLowerCase(),role:blocker.getAttribute('role') || '',
      label:label(blocker),dialog:Boolean(blockingDialog),
      text:(blockingDialog?.innerText || blocker.innerText || '').slice(0,300)}:null};
-})()"""
+})()""".replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS)
 
 
 async def inspect_actionability(session, element_id: int) -> dict:
     result = await session.evaluate(ACTIONABILITY.replace('__ID__', str(int(element_id))))
+    if isinstance(result,dict) and result.get('reason')=='ready':
+        if getattr(session,'_selected_frame',None):
+            # Scrolling a child can also scroll its parent. Recompute the owner
+            # bounds and hit-test in the main page to avoid clicking its overlay.
+            try:
+                from .frames import frame_offset,frame_point_is_clear
+                session.frame_offset=await frame_offset(session,session._selected_frame)
+                ox,oy=session.frame_offset
+                if not await frame_point_is_clear(session,session._selected_frame,result['x']+ox,result['y']+oy):
+                    return {**result,'reason':'occluded','is_occluded':True,'blocker':{'dialog':True,'text':'The frame is covered in its parent page.'}}
+            except Exception:
+                return {**result,'reason':'frame_geometry_unavailable','is_occluded':True}
+        x,y=getattr(session,'frame_offset',(0,0))
+        result['x']+=x
+        result['y']+=y
+        if result.get('neutral_pointer'):
+            result['neutral_pointer']['x']+=x
+            result['neutral_pointer']['y']+=y
     return result if isinstance(result, dict) else {"reason": "observation_unavailable"}
 
 
 async def prepare_pointer_target(session, element_id: int) -> dict:
     result = await inspect_actionability(session, element_id)
-    if result.get('reason') != 'occluded' or not result.get('navigation_hover_blocker'):
+    # Hydrating controls often become enabled a fraction of a second after
+    # they enter the tree. Wait only for a transient disabled/hidden state;
+    # never wait through a modal or dispatch through an overlay.
+    if result.get('reason') in {'disabled', 'hidden'} and not result.get('invalid_fields'):
+        for delay in (.06, .10, .16):
+            await asyncio.sleep(delay)
+            result = await inspect_actionability(session, element_id)
+            if result.get('reason') not in {'disabled', 'hidden'} or result.get('invalid_fields'):
+                break
+    def hover_recovery_allowed(state: dict) -> bool:
+        return (state.get('reason') == 'occluded'
+                and not (state.get('blocker') or {}).get('dialog')
+                and (state.get('navigation_hover_blocker') or state.get('target_in_navigation')))
+    if not hover_recovery_allowed(result):
         return result
     # A prior hover can leave a sticky navigation flyout over a scrolled
     # target. Leave that navigation with native pointer input; never dismiss
@@ -67,6 +105,6 @@ async def prepare_pointer_target(session, element_id: int) -> dict:
     for delay in (.08, .12, .2):
         await asyncio.sleep(delay)
         result = await inspect_actionability(session, element_id)
-        if result.get('reason') != 'occluded' or not result.get('navigation_hover_blocker'):
+        if not hover_recovery_allowed(result):
             break
     return result

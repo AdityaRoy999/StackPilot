@@ -5,6 +5,7 @@ Zero heavy dependencies: uses standard asyncio, httpx, and websockets.
 """
 
 import asyncio
+import re
 import base64
 import json
 import logging
@@ -16,7 +17,7 @@ import time
 import uuid
 from collections import deque
 from typing import Any, Callable, Dict, List, Optional, Set
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 import httpx
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -114,26 +115,39 @@ def is_transitioning_or_submit_action(element: Optional[Dict[str, Any]] = None, 
     """Detects whether an action triggers submission, authentication, navigation, or asynchronous state changes."""
     if action in {"navigate", "navigate_back"}:
         return True
-    
+
     text_corpus = (label or "").lower()
     if element:
-        el_text = (element.get("text") or element.get("aria_label") or element.get("placeholder") or element.get("name") or "").lower()
+        el_text = (element.get("text") or element.get("aria_label") or "").lower()
         el_tag = (element.get("tag") or "").lower()
         el_type = (element.get("type") or "").lower()
         el_role = (element.get("role") or "").lower()
         el_href = (element.get("href") or "").lower()
-        text_corpus += f" {el_text} {el_tag} {el_type} {el_role} {el_href}"
-        if el_type == "submit" or (el_tag == "button" and el_type != "button"):
+        text_corpus += f" {el_text}"
+        if el_tag == "a" and el_href and not el_href.startswith(("#", "javascript:", "void(")):
             return True
+        if el_type == "submit" and (el_tag != "button" or element.get("form_id")):
+            return True
+        # Field activation and picker opening are immediate UI changes. Their
+        # placeholder text often contains verbs such as "Enter" or "Search";
+        # treating those as a submission made ordinary clicks wait ~1.5 s.
+        if el_tag in {"input", "textarea", "select"} or el_role in {
+            "combobox", "listbox", "option", "checkbox", "radio", "switch", "textbox"
+        } or el_type in {"checkbox", "radio", "date", "time", "search", "text"}:
+            return False
+        if re.search(r"\b(?:enter|search|choose|select)\s+(?:source|destination|origin|arrival|departure|date|city|location|name)\b", text_corpus):
+            return False
 
     transition_keywords = [
         "login", "log in", "signin", "sign in", "sign-in", "log-in",
         "submit", "save", "send", "register", "signup", "sign up", "sign-up",
-        "continue", "next", "confirm", "proceed", "enter", "checkout",
+        "continue", "next", "confirm", "proceed", "checkout",
         "apply", "book", "delete", "destroy", "create", "search", "verify",
         "authenticate", "reset", "start", "join", "connect", "auth"
     ]
-    return any(kw in text_corpus for kw in transition_keywords)
+    return text_corpus.strip() == "enter" or any(
+        re.search(r"\b" + re.escape(kw) + r"\b", text_corpus) for kw in transition_keywords
+    )
 
 
 class BrowserSession:
@@ -153,6 +167,19 @@ class BrowserSession:
         self._navigation_generation = 0
         self._main_frame_id = None
         self._main_context_id = None
+        self.native_dialog = None
+        self._native_dialog_event = asyncio.Event()
+        self.download_events: Dict[str, Dict[str, Any]] = {}
+        self._download_event = asyncio.Event()
+        self.last_download: Optional[Dict[str, Any]] = None
+        self.dispatched_inputs = 0
+        self.consequential_dispatches = {}
+        self.related_targets = {}
+        self.frame_contexts = {}
+        self.frame_parents = {}
+        self.frame_session_roots = {}
+        self._selected_frame = None
+        self.frame_offset = (0,0)
         self.target_id: Optional[str] = None
         self.ws_url: Optional[str] = None
         self.cdp_ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -179,12 +206,16 @@ class BrowserSession:
         self._last_jpeg_frame_at = None
         self._jpeg_frame_times = deque(maxlen=240)
         self._h264_frame_times = deque(maxlen=240)
-        self._next_element_id = 1
+        # Fresh opaque references prevent history from addressing a different
+        # control after a worker/session restart; remain exact JavaScript integers.
+        self._next_element_id = (uuid.uuid4().int >> 76) + (1 << 32)
+        self._element_cache_owner = uuid.uuid4().hex
         self.browser_context_id = None
         self._context_owner = None
         self.is_connected = False
         self.cursor_x = 640
         self.cursor_y = 360
+        self._input_generation = 0
         self._frame_seq = 0
         self._inflight_requests: Dict[str, float] = {}
         self._last_network_activity: float = time.time()
@@ -210,6 +241,7 @@ class BrowserSession:
         self.pda = PushdownNavigationAutomaton(root_url=self.current_url)
         self.current_archetype: PageArchetype = PageArchetype.UNKNOWN
         self.last_action_verification: Optional[Dict[str, Any]] = None
+        self.observed_targets: Dict[int, Any] = {}
         self.pda.push(url=self.current_url, title="Initial Root", archetype=PageArchetype.LANDING.value, parent_url="")
 
     def _next_id(self) -> int:
@@ -277,19 +309,23 @@ class BrowserSession:
 
     def is_url_in_target_domain(self, url: str) -> bool:
         """Determines whether a candidate URL belongs to the target application's allowed domain."""
-        if not url or url.startswith("javascript:") or url.startswith("mailto:") or url.startswith("tel:"):
+        if not isinstance(url, str) or not url.strip():
             return False
-        if url.startswith("#") or url.startswith("/"):
+        # In-memory CDP fixtures start at about:blank. Permit only that exact
+        # document when no web origin was selected; it grants no network scope.
+        if self.target_url == "about:blank" and url.strip() == "about:blank":
             return True
-        from urllib.parse import urlparse
         try:
             base_url = self.target_url or self.current_url or ""
-            target_host = urlparse(base_url).hostname
-            link_host = urlparse(url).hostname
-            if not target_host or not link_host:
-                return True
-            target_h = target_host.lower().lstrip("www.")
-            link_h = link_host.lower().lstrip("www.")
+            target = urlparse(base_url)
+            link = urlparse(urljoin(base_url, url.strip()))
+            if (target.scheme not in {"http", "https"} or link.scheme not in {"http", "https"}
+                    or not target.hostname or not link.hostname or link.username or link.password):
+                return False
+            # str.lstrip('www.') strips *any* leading w/dot characters and can
+            # turn wow.com into com, accidentally admitting unrelated .com sites.
+            target_h = target.hostname.lower().removeprefix("www.")
+            link_h = link.hostname.lower().removeprefix("www.")
             if link_h == target_h or link_h.endswith("." + target_h):
                 return True
             # Cross-match local docker / localhost addresses
@@ -413,7 +449,7 @@ class BrowserSession:
                 now = time.time()
 
                 # 1. Periodic active URL sync (checks window.location.href every 1.0s)
-                if now - last_url_check >= 1.0:
+                if now - last_url_check >= 1.0 and not self._selected_frame and not self.native_dialog:
                     last_url_check = now
                     try:
                         generation = self._navigation_generation
@@ -495,25 +531,52 @@ class BrowserSession:
         except Exception:
             pass
 
-    async def send_command(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 3.5) -> Any:
+    async def send_command(self, method: str, params: Optional[Dict[str, Any]] = None, timeout: float = 3.5, cdp_session_id=None) -> Any:
         if method.startswith("Input.") or method == "Page.navigate":
             self.mark_activity()
         if not self.cdp_ws or not self.is_connected:
             raise RuntimeError("CDP WebSocket is not connected.")
+        if self.native_dialog:
+            if method.startswith('Input.'):
+                return {'dialogOpened':True}
+            if method.startswith(('Runtime.','DOM.')):
+                raise RuntimeError('Resolve the native dialog before evaluating page state.')
         msg_id = self._next_id()
         payload = {"id": msg_id, "method": method}
-        if params:
-            payload["params"] = params
+        if method == 'Runtime.evaluate' and self._selected_frame and 'contextId' not in (params or {}) and cdp_session_id is None:
+            context=self.frame_contexts.get(self._selected_frame)
+            if not context:raise RuntimeError('Selected frame was replaced; select a current frame before input.')
+            params={**(params or {}),'contextId':context['context_id']}
+            cdp_session_id=cdp_session_id or context.get('session_id')
+        if params: payload["params"] = params
+        if cdp_session_id:payload['sessionId']=cdp_session_id
 
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         self._pending_requests[msg_id] = fut
 
         self._send_queue.put_nowait((10, msg_id, json.dumps(payload)))
+        if (method in {'Input.insertText', 'Input.dispatchKeyEvent', 'Page.navigate'} or
+                (method=='Input.dispatchMouseEvent' and (params or {}).get('type') in {'mousePressed','mouseReleased','mouseWheel'})):
+            self.dispatched_inputs+=1
         started = time.monotonic()
+        dialog_wait = None
         try:
+            if method in {'Input.dispatchMouseEvent','Input.dispatchKeyEvent'}:
+                # Chrome may withhold the input ACK until a JavaScript dialog
+                # is closed. Observe its opening without replaying the input.
+                self._native_dialog_event.clear()
+                dialog_wait=asyncio.create_task(self._native_dialog_event.wait())
+                ready,_=await asyncio.wait({fut,dialog_wait},timeout=timeout,return_when=asyncio.FIRST_COMPLETED)
+                if fut in ready:return fut.result()
+                if dialog_wait in ready and self.native_dialog:return {'dialogOpened':True}
+                raise TimeoutError('Browser input acknowledgment timed out; do not replay before reconciliation.')
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
+            if dialog_wait:
+                dialog_wait.cancel()
+                await asyncio.gather(dialog_wait,return_exceptions=True)
+            if not fut.done():fut.cancel()
             self._pending_requests.pop(msg_id, None)
             elapsed = time.monotonic()-started
             if elapsed >= 1.0:
@@ -539,16 +602,51 @@ class BrowserSession:
                 method = data.get("method", "")
                 params = data.get("params", {})
 
+                if method == "Browser.downloadWillBegin":
+                    guid = params.get("guid")
+                    if guid:
+                        self.download_events[guid] = {
+                            "guid": guid, "filename": params.get("suggestedFilename", ""),
+                            "state": "inProgress", "received_bytes": 0,
+                        }
+                        if len(self.download_events) > 100:
+                            self.download_events.pop(next(iter(self.download_events)))
+                        self._download_event.set()
+                elif method == "Browser.downloadProgress":
+                    guid = params.get("guid")
+                    if guid and guid in self.download_events:
+                        event = self.download_events[guid]
+                        event["state"] = params.get("state", event["state"])
+                        event["received_bytes"] = params.get("receivedBytes", event["received_bytes"])
+                        self._download_event.set()
+
                 if method == "Runtime.executionContextCreated":
                     context = params.get("context", {})
                     aux = context.get("auxData", {})
-                    if aux.get("isDefault") and aux.get("frameId") == self._main_frame_id:
+                    if aux.get('isDefault') and aux.get('frameId'):
+                        self.frame_contexts[aux['frameId']]={'context_id':context.get('id'),'session_id':data.get('sessionId'),
+                                                           'url':context.get('origin',''),'name':context.get('name','')}
+                    if not data.get('sessionId') and aux.get("isDefault") and aux.get("frameId") == self._main_frame_id:
                         self._main_context_id = context.get("id")
                 elif method == "Runtime.executionContextDestroyed":
-                    if params.get("executionContextId") == self._main_context_id:
+                    self.frame_contexts={k:v for k,v in self.frame_contexts.items() if not(v['context_id']==params.get('executionContextId') and v.get('session_id')==data.get('sessionId'))}
+                    if not data.get('sessionId') and params.get("executionContextId") == self._main_context_id:
                         self._main_context_id = None
                 elif method == "Runtime.executionContextsCleared":
-                    self._main_context_id = None
+                    self.frame_contexts={k:v for k,v in self.frame_contexts.items() if v.get('session_id')!=data.get('sessionId')}
+                    if not data.get('sessionId'):self._main_context_id = None
+                elif method == 'Target.attachedToTarget' and params.get('targetInfo',{}).get('type')=='iframe':
+                    child=params.get('sessionId')
+                    root=params.get('targetInfo',{}).get('targetId')
+                    self.frame_session_roots[child]=root
+                    if data.get('sessionId') in self.frame_session_roots:
+                        self.frame_parents.setdefault(root,self.frame_session_roots[data['sessionId']])
+                    asyncio.create_task(self._initialize_frame_session(child))
+                elif method=='Page.frameAttached':
+                    self.frame_parents[params.get('frameId')]=params.get('parentFrameId')
+                elif method=='Page.frameDetached' and params.get('reason')!='swap':
+                    self.frame_contexts.pop(params.get('frameId'),None)
+                    self.frame_parents.pop(params.get('frameId'),None)
                 elif method == "Runtime.bindingCalled" and params.get("name") == PAGE_STATE_BINDING:
                     if params.get("executionContextId") == self._main_context_id and self._main_context_id is not None:
                         try:
@@ -642,10 +740,12 @@ class BrowserSession:
                     self._notify_listeners({"type": "console", "log": exc_item})
 
                 # 4. Navigated within page (full document or SPA in-document)
-                elif method in {"Page.frameNavigated", "Page.navigatedWithinDocument"}:
+                elif not data.get('sessionId') and method in {"Page.frameNavigated", "Page.navigatedWithinDocument"}:
                     raw_nav_url = ""
                     if method == "Page.frameNavigated":
                         frame = params.get("frame", {})
+                        if frame.get('id') in self.frame_contexts:
+                            self.frame_contexts[frame['id']].update(url=frame.get('url',''),name=frame.get('name',''))
                         if not frame.get("parentId"):
                             self._main_frame_id = frame.get("id")
                             self._main_context_id = None
@@ -661,15 +761,23 @@ class BrowserSession:
                         self.update_page_metadata(raw_nav_url, "" if method == "Page.frameNavigated" else None,
                                                   reset_document=method == "Page.frameNavigated")
 
-                # 4b. Target lifecycle: close orphan background tabs and keep session on primary tab
-                elif method == "Target.targetCreated":
+                elif method == "Page.javascriptDialogOpening":
+                    self.native_dialog = {'dialog_id':uuid.uuid4().hex, 'type':params.get('type'),
+                                          'message':str(params.get('message',''))[:2000], 'url':params.get('url',''),
+                                          '_cdp_session_id':data.get('sessionId')}
+                    self._native_dialog_event.set()
+                elif method == "Page.javascriptDialogClosed":
+                    self.native_dialog = None
+                    self._native_dialog_event.clear()
+                # Preserve legitimate login/payment/help windows in this session's context.
+                elif method in {"Target.targetCreated", "Target.targetInfoChanged"}:
                     target_info = params.get("targetInfo", {})
                     if (target_info.get("type") == "page" and target_info.get("targetId") != self.target_id
-                            and target_info.get("openerId") == self.target_id):
+                            and (target_info.get("openerId") == self.target_id or target_info.get('targetId') in self.related_targets)):
                         extra_id = target_info.get("targetId")
-                        extra_url = target_info.get("url", "")
-                        logger.info(f"Closing extra popup tab: {extra_id} ({extra_url})")
-                        asyncio.create_task(self._close_extra_tab(extra_id))
+                        self.related_targets[extra_id] = {k:target_info.get(k,'') for k in ('targetId','url','title','openerId','browserContextId')}
+                elif method == 'Target.targetDestroyed':
+                    self.related_targets.pop(params.get('targetId'),None)
 
                 # 5. Network tracking for Quiescence
                 elif method == "Network.requestWillBeSent":
@@ -711,6 +819,8 @@ class BrowserSession:
         if not changed_url and next_title == self.page_title and not reset_document:
             return
         if changed_url or reset_document:
+            self._selected_frame=None
+            self.frame_offset=(0,0)
             self._navigation_generation += 1
             self.interactive_elements = []
             self.discovered_subpages = []
@@ -753,9 +863,86 @@ class BrowserSession:
         except Exception:
             pass
 
+    async def handle_native_dialog(self, arguments):
+        dialog=self.native_dialog
+        if not dialog or dialog['dialog_id']!=arguments.get('dialog_id') or type(arguments.get('accept')) is not bool:
+            return {'status':'failed','error':'Native dialog is missing, changed or not explicitly accepted/dismissed. No action dispatched.'}
+        # Clear before dispatch: a lost response must never replay a decision.
+        self.native_dialog=None
+        await self.send_command('Page.handleJavaScriptDialog',{'accept':arguments['accept'],'promptText':arguments.get('text','')},cdp_session_id=dialog.get('_cdp_session_id'))
+        return {'status':'passed','verification':{'verified':True,'effect_type':'native_dialog_handled'}}
+
+    async def switch_tab(self, target_id):
+        if target_id not in self.related_targets or target_id==self.target_id:
+            return {'status':'failed','error':'Select a different observed tab owned by this browser session.'}
+        from .browser_testing.isolation import browser_command
+        info=(await browser_command(self.config.endpoint,'Target.getTargetInfo',{'targetId':target_id},self.config.headers)).get('targetInfo',{})
+        if self.browser_context_id and info.get('browserContextId')!=self.browser_context_id:
+            return {'status':'failed','error':'Tab belongs to a different browser context. No switch performed.'}
+        old=self.target_id
+        self.related_targets[old]={'targetId':old,'url':self.current_url,'title':self.page_title,'browserContextId':self.browser_context_id}
+        self.is_connected=False
+        tasks=[self._read_task,self._send_task,self._keepalive_task,self._h264_task]
+        for task in tasks:
+            if task:task.cancel()
+        await asyncio.gather(*(t for t in tasks if t),return_exceptions=True)
+        await self.cdp_ws.close()
+        for future in self._pending_requests.values():
+            if not future.done():future.set_exception(RuntimeError('Tab switched before command completed.'))
+        self._pending_requests.clear()
+        self._send_queue=asyncio.PriorityQueue()
+        self._jpeg_streaming=False
+        self._selected_frame=None
+        self.frame_offset=(0,0)
+        self.frame_contexts={}
+        self.frame_parents={}
+        self.frame_session_roots={}
+        self._main_frame_id=self._main_context_id=None
+        self.native_dialog=None
+        self.pending_browser_approval=None
+        self.target_id=target_id
+        self.ws_url='ws://'+urlparse(self.config.endpoint).netloc+'/devtools/page/'+target_id
+        self.cdp_ws=await websockets.connect(self.ws_url,max_size=10*1024*1024,additional_headers=self.config.headers,compression=None)
+        self.update_page_metadata(info.get('url','about:blank'),info.get('title',''),reset_document=True)
+        await self._initialize_target()
+        await self.send_command('Page.bringToFront')
+        await self.extract_interactive_tree()
+        return {'status':'passed','target_id':target_id,'verification':{'verified':True,'effect_type':'tab_switch'}}
+
+    async def switch_frame(self, frame_id):
+        if frame_id in {'main',self._main_frame_id}:
+            self._selected_frame=None
+            self.frame_offset=(0,0)
+        elif frame_id in self.frame_contexts:
+            # Obtain the owner box in the parent document before selecting its context.
+            old=self._selected_frame
+            self._selected_frame=None
+            try:
+                tree=(await self.send_command('Page.getFrameTree')).get('frameTree',{})
+                def index_frames(node,parent=None):
+                    frame=node.get('frame',{})
+                    if parent:self.frame_parents[frame.get('id')]=parent
+                    if frame.get('id') in self.frame_contexts:
+                        self.frame_contexts[frame['id']].update(url=frame.get('url',''),name=frame.get('name',''))
+                    for child in node.get('childFrames',[]):index_frames(child,frame.get('id'))
+                index_frames(tree)
+                from .browser_testing.frames import frame_offset
+                self.frame_offset=await frame_offset(self,frame_id)
+            except Exception:
+                self._selected_frame=old
+                return {'status':'failed','error':'Frame owner cannot be located; no frame input dispatched.'}
+            self._selected_frame=frame_id
+        else:return {'status':'failed','error':'Frame is missing or replaced. Observe current frame IDs.'}
+        self.interactive_elements=[]
+        await self.extract_interactive_tree()
+        return {'status':'passed','frame_id':frame_id,'verification':{'verified':True,'effect_type':'frame_switch'}}
+
     async def connect(self):
         """Create a session-owned tab with isolated cookies and browser storage."""
         from .browser_testing.isolation import create_isolated_target, open_context_owner, dispose_context
+        if self.config.mode == "remote":
+            from .remote_browser_recovery import ensure_remote_browser_ready
+            await ensure_remote_browser_ready(self.config.endpoint)
         self._context_owner = await open_context_owner(self.config.endpoint, self.config.headers)
         try:
             self.browser_context_id,self.target_id = await create_isolated_target(self.config.endpoint, self._context_owner,
@@ -777,6 +964,10 @@ class BrowserSession:
             await self._context_owner.close()
             self._context_owner = None
             raise
+        await self._initialize_target()
+
+    async def _initialize_target(self):
+        self.related_targets.setdefault(self.target_id,{'targetId':self.target_id,'url':self.current_url,'title':self.page_title,'browserContextId':self.browser_context_id})
         self.is_connected = True
         self._read_task = asyncio.create_task(self._listen_loop())
         self._send_task = asyncio.create_task(self._send_loop())
@@ -785,8 +976,20 @@ class BrowserSession:
         # Enable core domains
         await asyncio.gather(self.send_command("Page.enable"),
                              self.send_command("Runtime.enable"))
+        if self.browser_context_id:
+            # Save into the browser worker instead of opening a GTK Save File
+            # dialog that CDP cannot dismiss. Never save to the user's host
+            # machine when using Host Chrome. GUID names avoid collisions.
+            download_behavior = {
+                "behavior": "allowAndName" if self.config.mode in {"local", "remote"} else "deny",
+                "browserContextId": self.browser_context_id, "eventsEnabled": True,
+            }
+            if self.config.mode in {"local", "remote"}:
+                download_behavior["downloadPath"] = "/tmp"
+            await self.send_command("Browser.setDownloadBehavior", download_behavior)
         tree = await self.send_command("Page.getFrameTree")
         self._main_frame_id = tree.get("frameTree", {}).get("frame", {}).get("id")
+        self._main_context_id=self.frame_contexts.get(self._main_frame_id,{}).get('context_id')
         await self.send_command("Runtime.addBinding", {"name": PAGE_STATE_BINDING})
         await self.send_command("Page.addScriptToEvaluateOnNewDocument", {"source": PAGE_STATE_SCRIPT})
         await self.evaluate(PAGE_STATE_SCRIPT)
@@ -813,8 +1016,7 @@ class BrowserSession:
             logger.debug(f"Focus emulation notice: {e}")
 
 
-        # Force all links (target="_blank") and window.open calls to navigate the current tab
-        # so CDP session tracking and live stream never detach into zombie background tabs
+        # Observe target creation without rewriting application navigation semantics.
         try:
             await self.send_command("Page.addScriptToEvaluateOnNewDocument", {
                 "source": """
@@ -840,16 +1042,6 @@ class BrowserSession:
                             };
                         }
 
-                        window.open = function(url) {
-                            if (url) window.location.href = url;
-                            return window;
-                        };
-                        document.addEventListener('click', (e) => {
-                            const a = e.target && e.target.closest ? e.target.closest('a') : null;
-                            if (a && a.target && a.target.toLowerCase() !== '_self') {
-                                a.target = '_self';
-                            }
-                        }, true);
                     } catch(e) {}
                 })();
                 """
@@ -1137,6 +1329,23 @@ class BrowserSession:
         except Exception as e:
             logger.warning(f"Failed to inject scroll & ripple scripts: {e}")
 
+    async def _initialize_frame_session(self,session_id):
+        try:
+            await asyncio.gather(self.send_command('Runtime.enable',cdp_session_id=session_id),
+                                 self.send_command('Page.enable',cdp_session_id=session_id))
+            await self.send_command('Target.setAutoAttach',{'autoAttach':True,'waitForDebuggerOnStart':False,'flatten':True},cdp_session_id=session_id)
+            tree=(await self.send_command('Page.getFrameTree',cdp_session_id=session_id)).get('frameTree',{})
+            def record(node,parent=None):
+                frame=node.get('frame',{})
+                if parent:self.frame_parents[frame['id']]=parent
+                if frame.get('id') in self.frame_contexts:
+                    self.frame_contexts[frame['id']].update(url=frame.get('url',''),name=frame.get('name',''))
+                for child in node.get('childFrames',[]):record(child,frame.get('id'))
+            self.frame_session_roots[session_id]=tree['frame']['id']
+            record(tree)
+        except Exception as exc:
+            logger.debug('Child frame initialization unavailable: %s',exc)
+
     async def capture_screenshot(self, quality: int = 60, use_cache: bool = False) -> Optional[str]:
         """Captures a direct JPEG screenshot from Chromium via CDP or returns cached frame."""
         if use_cache and self.latest_frame:
@@ -1392,291 +1601,25 @@ class BrowserSession:
             return {"is_modal": False, "type": "none", "title": "", "back_btn_text": ""}
 
     async def dismiss_active_modal(self) -> bool:
-        """
-        Dismisses any open modal or overlay via:
-        1. In-modal acknowledgment/continue/language buttons (English, Hindi, OK, Accept, Got it, Continue, Close).
-        2. Close buttons and 'X' icons (including PrimeNG .ui-dialog-titlebar-close, .p-dialog-header-close).
-        3. In-page back buttons for subviews/case studies.
-        4. In-DOM and CDP Escape keyboard event dispatch.
-        5. Removal of stale or blocking backdrop masks.
-        """
-        try:
-            res = await self.send_command("Runtime.evaluate", {
-                "expression": """(() => {
-                    if (window.__EXPLORER_ENGINE__ && typeof window.__EXPLORER_ENGINE__.dismissModal === 'function') {
-                        if (window.__EXPLORER_ENGINE__.dismissModal()) return true;
-                    }
-
-                    // 1. Multilingual Acknowledgement / Confirmation / Language buttons
-                    const confirmKeywords = [
-                        'english', 'ok', 'okay', 'got it', 'accept', 'agree', 'i agree', 'continue',
-                        'proceed', 'confirm', 'enter', 'yes', 'allow', 'done', 'close', 'dismiss', 'skip',
-                        'हिंदी', 'स्वीकार', 'जारी रखें', 'ठीक है', 'बंद करें', 'आगे बढ़ें', 'सहमति'
-                    ];
-
-                    const modalContainers = Array.from(document.querySelectorAll(
-                        '[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open], ' +
-                        '.ui-dialog, .p-dialog, .swal2-container, .modal.show, .ant-modal, .cdk-overlay-pane, ' +
-                        '[class*="modal"][class*="open"], [class*="Modal_open"]'
-                    )).filter(el => {
-                        const s = window.getComputedStyle(el);
-                        return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') > 0.1;
-                    });
-
-                    for (const modal of modalContainers) {
-                        const btns = Array.from(modal.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]'));
-                        // Priority A: 'English' or standard 'OK' / 'Got it'
-                        for (const b of btns) {
-                            const txt = (b.textContent || b.getAttribute('aria-label') || b.value || '').trim().toLowerCase();
-                            if (txt === 'english' || txt.includes('english') || txt === 'ok' || txt === 'okay' || txt === 'got it' || txt === 'accept' || txt === 'agree' || txt === 'i agree' || txt === 'continue' || txt === 'proceed') {
-                                try { b.click(); return true; } catch(e) {}
-                            }
-                        }
-                        // Priority B: Other confirmation keywords including multilingual
-                        for (const b of btns) {
-                            const txt = (b.textContent || b.getAttribute('aria-label') || b.value || '').trim().toLowerCase();
-                            if (confirmKeywords.some(kw => txt === kw || txt.includes(kw))) {
-                                try { b.click(); return true; } catch(e) {}
-                            }
-                        }
-                    }
-
-                    // 2. Standard modal close button selectors (including PrimeNG and Angular CDK)
-                    const closeSelectors = [
-                        '.ui-dialog-titlebar-close',
-                        '.p-dialog-header-close',
-                        '[role="dialog"] [class*="close"]',
-                        '[role="dialog"] button[aria-label*="close" i]',
-                        '[aria-modal="true"] [class*="close"]',
-                        '[aria-modal="true"] button[aria-label*="close" i]',
-                        '.modal [class*="close"]',
-                        '.modal button[aria-label*="close" i]',
-                        'button.close-btn',
-                        'button.close',
-                        '.close-btn',
-                        '.close',
-                        '[aria-label*="close" i]',
-                        '[data-dismiss="modal"]',
-                        '[data-bs-dismiss="modal"]'
-                    ];
-                    for (const sel of closeSelectors) {
-                        const btn = document.querySelector(sel);
-                        if (btn && typeof btn.click === 'function') {
-                            btn.click();
-                            return true;
-                        }
-                    }
-
-                    // 3. Try in-page back buttons for subviews/case studies (e.g. "Back to Projects")
-                    const backButtons = Array.from(document.querySelectorAll('button, a')).filter(el => {
-                        const txt = (el.textContent || '').trim().toLowerCase();
-                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                        return (
-                            txt.includes('back to') ||
-                            txt.includes('← back') ||
-                            txt === 'back' ||
-                            txt.includes('return to') ||
-                            txt.includes('close case study') ||
-                            txt.includes('close modal') ||
-                            aria.includes('back') ||
-                            aria.includes('close')
-                        );
-                    });
-                    for (const btn of backButtons) {
-                        const rect = btn.getBoundingClientRect();
-                        if (rect.width > 0 && rect.height > 0 && rect.top <= 300) {
-                            btn.click();
-                            return true;
-                        }
-                    }
-
-                    // 4. In-DOM Escape dispatch
-                    const esc = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-                    window.dispatchEvent(esc);
-                    document.dispatchEvent(esc);
-                    if (document.activeElement) document.activeElement.dispatchEvent(esc);
-
-                    // 5. Hide leftover backdrop masks that intercept clicks
-                    document.querySelectorAll('.ui-dialog-mask, .p-dialog-mask, .modal-backdrop, .cdk-overlay-backdrop').forEach(m => {
-                        try {
-                            m.style.display = 'none';
-                            m.style.pointerEvents = 'none';
-                        } catch(e) {}
-                    });
-
-                    return true;
-                })()""",
-                "returnByValue": True
-            }, timeout=1.0)
-            if res.get("result", {}).get("value") is True:
-                await self.wait_for_quiescence(dom_quiet_ms=40, max_timeout_s=0.6)
-        except Exception:
-            pass
-
-        # Fallback: dispatch CDP Escape key event
-        try:
-            await self.send_command("Input.dispatchKeyEvent", {
-                "type": "rawKeyDown",
-                "windowsVirtualKeyCode": 27,
-                "key": "Escape",
-                "code": "Escape",
-            })
-            await self.send_command("Input.dispatchKeyEvent", {
-                "type": "keyUp",
-                "windowsVirtualKeyCode": 27,
-                "key": "Escape",
-                "code": "Escape",
-            })
-            await self.wait_for_quiescence(dom_quiet_ms=40, max_timeout_s=0.6)
-        except Exception:
-            pass
-
-        # Ensure no persistent blocking modals or masks remain visible
-        try:
-            await self.send_command("Runtime.evaluate", {
-                "expression": """(() => {
-                    const openModals = Array.from(document.querySelectorAll('[role="dialog"], dialog[open], .ui-dialog, .p-dialog, .modal.active, .modal.show'))
-                        .filter(m => window.getComputedStyle(m).display !== 'none');
-                    for (const m of openModals) {
-                        if (typeof m.close === 'function') m.close();
-                        m.classList.remove('active');
-                        m.classList.remove('show');
-                    }
-                    document.querySelectorAll('.ui-dialog-mask, .p-dialog-mask, .modal-backdrop, .cdk-overlay-backdrop').forEach(m => {
-                        try {
-                            m.style.display = 'none';
-                            m.style.pointerEvents = 'none';
-                        } catch(e) {}
-                    });
-                    return true;
-                })()""",
-                "returnByValue": True
-            }, timeout=0.6)
-            await self.wait_for_quiescence(dom_quiet_ms=30, max_timeout_s=0.5)
-            return True
-        except Exception:
-            return True
+        """Close one observed, harmless overlay through the normal native executor."""
+        from .browser_testing.widgets import observe_widgets
+        from .browser_testing.permissions import observe_step, permission_reason
+        await self.extract_interactive_tree()
+        overlay=(await observe_widgets(self)).get('active_overlay')
+        if not overlay:return False
+        candidates=[c for c in overlay['controls'] if not c.get('disabled') and
+                    re.fullmatch(r'(?:close(?:\s+(?:dialog|advisory|popup|window))?|dismiss|cancel|back|go back|[×✕])',c.get('text',''),re.I)]
+        if len(candidates)!=1:return False
+        arguments={'action':'click','element_id':candidates[0]['id']}
+        control=await observe_step(self,arguments)
+        if permission_reason(arguments,control):return False
+        if not await self.click_element(candidates[0]['id'],label=candidates[0]['text']):return False
+        current=(await observe_widgets(self)).get('active_overlay')
+        return not current or current['id']!=overlay['id']
 
     async def auto_dismiss_startup_modals(self) -> bool:
-        """
-        Universally inspects and dismisses startup modal dialogs, alert popups, language selection modals,
-        and cookie banners that appear immediately on page load across any framework and language.
-        """
-        dismiss_js = """
-        (() => {
-            const confirmKeywords = [
-                'english', 'ok', 'okay', 'got it', 'accept', 'agree', 'i agree', 'continue', 'proceed', 'confirm',
-                'enter', 'yes', 'allow', 'done', 'close', 'dismiss', 'skip',
-                'हिंदी', 'स्वीकार', 'जारी रखें', 'ठीक है', 'बंद करें', 'आगे बढ़ें', 'सहमति'
-            ];
-
-            const modalSelectors = [
-                '[role="dialog"]',
-                '[role="alertdialog"]',
-                '[aria-modal="true"]',
-                'dialog[open]',
-                '.ui-dialog',
-                '.p-dialog',
-                '.cdk-overlay-pane',
-                '.swal2-container',
-                '.modal.show',
-                '.ant-modal-wrap',
-                '[class*="modal"][class*="open"]',
-                '[class*="alert"][class*="dialog"]'
-            ];
-
-            let activeModal = null;
-            for (const sel of modalSelectors) {
-                const els = Array.from(document.querySelectorAll(sel));
-                for (const el of els) {
-                    const style = window.getComputedStyle(el);
-                    if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0.1) {
-                        const rect = el.getBoundingClientRect();
-                        if (rect.width >= 120 && rect.height >= 80) {
-                            activeModal = el;
-                            break;
-                        }
-                    }
-                }
-                if (activeModal) break;
-            }
-
-            if (!activeModal) {
-                const fixedEls = Array.from(document.querySelectorAll('div, section, aside')).filter(el => {
-                    const style = window.getComputedStyle(el);
-                    if (style.position === 'fixed' || (style.position === 'absolute' && parseInt(style.zIndex, 10) >= 100)) {
-                        const z = parseInt(style.zIndex, 10);
-                        if (!isNaN(z) && z >= 100) {
-                            const rect = el.getBoundingClientRect();
-                            return (
-                                rect.width >= window.innerWidth * 0.35 &&
-                                rect.height >= window.innerHeight * 0.25 &&
-                                style.visibility !== 'hidden' &&
-                                style.display !== 'none' &&
-                                parseFloat(style.opacity || '1') > 0.5
-                            );
-                        }
-                    }
-                    return false;
-                });
-                if (fixedEls.length > 0) {
-                    activeModal = fixedEls[fixedEls.length - 1];
-                }
-            }
-
-            if (!activeModal) return false;
-
-            const candidates = Array.from(activeModal.querySelectorAll('button, a, [role="button"], input[type="button"], input[type="submit"]'));
-            
-            // Priority A: Preferred language button (English) or universal OK/Got it/Accept button
-            for (const btn of candidates) {
-                const txt = (btn.textContent || btn.getAttribute('aria-label') || btn.value || '').trim().toLowerCase();
-                if (txt === 'english' || txt.includes('english') || txt === 'ok' || txt === 'okay' || txt === 'got it' || txt === 'i agree' || txt === 'accept' || txt === 'agree' || txt === 'continue' || txt === 'proceed') {
-                    try {
-                        btn.click();
-                        return { dismissed: true, target: txt, type: 'button_click' };
-                    } catch(e) {}
-                }
-            }
-
-            // Priority B: Hindi / Multilingual buttons
-            for (const btn of candidates) {
-                const txt = (btn.textContent || btn.getAttribute('aria-label') || btn.value || '').trim().toLowerCase();
-                for (const kw of confirmKeywords) {
-                    if (txt === kw || txt.includes(kw)) {
-                        try {
-                            btn.click();
-                            return { dismissed: true, target: txt, type: 'multilingual_click' };
-                        } catch(e) {}
-                    }
-                }
-            }
-
-            // Priority C: Close / 'X' buttons
-            const closeBtn = activeModal.querySelector('.ui-dialog-titlebar-close, .p-dialog-header-close, button[aria-label*="close" i], button[title*="close" i], .close, .modal-close, [class*="close"], [data-dismiss="modal"]');
-            if (closeBtn && typeof closeBtn.click === 'function') {
-                closeBtn.click();
-                return { dismissed: true, target: 'close_btn', type: 'close_click' };
-            }
-
-            // Priority D: Fallback Escape event
-            const esc = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
-            activeModal.dispatchEvent(esc);
-            document.dispatchEvent(esc);
-
-            return { dismissed: true, target: 'escape', type: 'escape_dispatched' };
-        })()
-        """
-        try:
-            res = await self.send_command("Runtime.evaluate", {"expression": dismiss_js, "returnByValue": True}, timeout=1.5)
-            val = res.get("result", {}).get("value")
-            if isinstance(val, dict) and val.get("dismissed"):
-                logger.info(f"Auto-dismissed startup modal/alert on '{self.current_url}': {val}")
-                await self.wait_for_quiescence(network_idle_ms=60, dom_quiet_ms=30, max_timeout_s=0.8, fast_mode=True)
-                return True
-        except Exception as e:
-            logger.debug(f"auto_dismiss_startup_modals notice: {e}")
-        return False
+        """Legacy entry point; never selects consent/language or hides a backdrop."""
+        return await self.dismiss_active_modal()
 
     async def force_fresh_frame(self) -> Optional[str]:
         """Forces Chromium to render and capture an immediate fresh frame, broadcasting it to live stream listeners."""
@@ -1864,7 +1807,9 @@ class BrowserSession:
             await asyncio.sleep(0.01)
 
         # 2. Comprehensive Scroll, Animation, and DOM Settling Script
-        remaining = max(0.4, max_timeout_s - (time.time() - start))
+        # A fast click is explicitly capped below 400 ms. The former 400 ms
+        # floor silently defeated that cap whenever the site had animations.
+        remaining = max(0.05 if fast_mode else 0.4, max_timeout_s - (time.time() - start))
         settle_js = f"""
         new Promise((resolve) => {{
             let done = false;
@@ -2092,17 +2037,22 @@ class BrowserSession:
         self._lifecycle_events.clear()
         res = None
         try:
-            res = await self.send_command("Page.navigate", {"url": internal_url}, timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.warning(f"Page.navigate timed out after 15s for {internal_url}; checking if navigation committed...")
             try:
+                res = await self.send_command("Page.navigate", {"url": internal_url}, timeout=15.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"Page.navigate timed out after 15s for {internal_url}; checking if navigation committed...")
                 curr_href = await self.evaluate("window.location.href", timeout=1.5)
                 if curr_href and curr_href != "about:blank":
                     res = {"url": curr_href}
                 else:
                     raise
-            except Exception:
-                raise
+        except BaseException:
+            self._navigating = False
+            raise
+
+        if isinstance(res, dict) and res.get('errorText'):
+            self._navigating = False
+            raise RuntimeError(f"Browser navigation failed: {str(res['errorText'])[:160]}")
 
         for _ in range(30):
             if "DOMContentLoaded" in self._lifecycle_events or "load" in self._lifecycle_events:
@@ -2189,12 +2139,16 @@ class BrowserSession:
 
     async def _extract_interactive_tree(self) -> Dict[str, Any]:
         """Traverses light DOM + open shadow roots to return interactive elements (buttons, links, inputs, tabs, toggles) with viewport and page coordinates."""
+        from .browser_testing.overlays import OVERLAY_HELPERS
         generation = self._navigation_generation
         state_seq = self._page_state_seq
         js_code = r"""
         (() => {
             const elements = [];
             const seen = new Set();
+            __SP_OVERLAY_HELPERS__
+            const activeOverlay = window.__spOverlay.active();
+            const overlayControls = new Set(activeOverlay ? window.__spOverlay.controls(activeOverlay) : []);
             
             // Persistent in-browser DOM node cache with WeakMap identity preservation
             const cache = window.__spFast = window.__spFast || {
@@ -2202,6 +2156,15 @@ class BrowserSession:
                 nodes: new Map(),
                 nextId: __SP_INITIAL_ID__
             };
+            // BFCache restores the old DOM and its WeakMap. Its references
+            // belong to a previous navigation, even when the URL is unchanged.
+            if (cache.generation !== __SP_GENERATION__ || cache.owner !== __SP_CACHE_OWNER__) {
+                cache.ids = new WeakMap();
+                cache.nodes.clear();
+                cache.generation = __SP_GENERATION__;
+                cache.owner = __SP_CACHE_OWNER__;
+            }
+            cache.nextId = Math.max(cache.nextId, __SP_INITIAL_ID__);
             // Clean up disconnected nodes to prevent memory leaks
             for (const [id, e] of cache.nodes) {
                 if (!e || !e.isConnected) cache.nodes.delete(id);
@@ -2228,7 +2191,8 @@ class BrowserSession:
 
             const isVisible = (e) => {
                 if (!e || !e.isConnected) return false;
-                if (e.closest && e.closest('[aria-hidden="true"],[inert]')) return false;
+                if (e.closest && e.closest('[inert]')) return false;
+                if (e.closest && e.closest('[aria-hidden="true"]') && !overlayControls.has(e)) return false;
                 if (typeof e.checkVisibility === 'function') {
                     return e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
                 }
@@ -2239,18 +2203,39 @@ class BrowserSession:
             function collectNodes(root, depth = 0) {
                 const list = [];
                 if (depth > 2 || !root || !root.querySelectorAll) return list;
-                const selector = 'button, a[href], input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="switch"], [role="checkbox"], [role="combobox"], [role="option"], [role="menuitem"], [role="alert"], [role="status"], [contenteditable="true"], [tabindex="0"], summary, details, li.ui-autocomplete-list-item, li.p-autocomplete-item, [class*="autocomplete-item"], [class*="suggestion-item"], [class*="dropdown-item"], .ui-message-error, .invalid-feedback, .alert, .toast, .pac-item';
+                const selector = 'button, a[href], input, select, textarea, .ace_editor, .CodeMirror, .cm-editor, .monaco-editor, [role="textbox"], [role="button"], [role="link"], [role="tab"], [role="switch"], [role="checkbox"], [role="combobox"], [role="option"], [role="menuitem"], [role="alert"], [role="status"], [contenteditable="true"], [tabindex="0"], summary, details, li.ui-autocomplete-list-item, li.p-autocomplete-item, [class*="autocomplete-item"], [class*="suggestion-item"], [class*="dropdown-item"], .ui-message-error, .invalid-feedback, .alert, .toast, .pac-item';
                 try {
-                    const matched = root.querySelectorAll(selector);
-                    for (let i = 0; i < matched.length && list.length < 350; i++) {
+                    const matched = [...root.querySelectorAll(selector)].map(node => {
+                        const r=node.getBoundingClientRect();
+                        return {node, inView:isVisible(node) && r.bottom>0 && r.top<innerHeight && r.right>0 && r.left<innerWidth};
+                    }).sort((a,b)=>Number(b.inView)-Number(a.inView)).map(item=>item.node);
+                    for (let i = 0; i < matched.length && list.length < 450; i++) {
                         list.push(matched[i]);
                     }
-                    // Framework event delegation can make a div clickable
-                    // without role/button semantics or an onclick attribute.
+                    const known = new Set(list);
+                    const customIncluded = [];
+                    // Frameworks often attach handlers through event delegation.
+                    // Include visible custom hit targets whose pointer cursor
+                    // identifies the boundary of a clickable region, even when
+                    // onclick/role/tabindex are absent. Reserve a separate quota
+                    // so a link-heavy page cannot hide its search/date controls.
                     const custom = root.querySelectorAll('div,span');
-                    for (let i=0;i<custom.length && list.length<350;i++) {
+                    let customCount = 0;
+                    for (let i=0;i<custom.length && customCount<150;i++) {
                         const node=custom[i];
-                        if (typeof node.onclick==='function' && !node.closest('a,button,[role="button"]') && !list.includes(node)) list.push(node);
+                        if (known.has(node) || node.closest('a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="switch"],[role="checkbox"],[role="combobox"],[role="option"],[role="menuitem"],[contenteditable="true"],[tabindex="0"],summary')) continue;
+                        if (customIncluded.some(ancestor => ancestor.contains(node))) continue;
+                        const box=node.getBoundingClientRect();
+                        if (box.width<12 || box.height<12 || box.bottom<=0 || box.top>=innerHeight || box.right<=0 || box.left>=innerWidth) continue;
+                        const name=(node.getAttribute('aria-label') || node.getAttribute('title') || node.innerText || '').trim();
+                        if (!name || name.length>180 || !isVisible(node)) continue;
+                        const directClick=typeof node.onclick==='function';
+                        const pointer=getComputedStyle(node).cursor==='pointer';
+                        if (!directClick && !pointer) continue;
+                        // Only suppress descendants of a control we actually
+                        // admitted. An oversized pointer parent may be just a
+                        // layout shell around a smaller delegated target.
+                        list.push(node); known.add(node); customIncluded.push(node); customCount++;
                     }
                     // For shadow DOM, inspect custom elements with shadow roots (limit sample to 60)
                     const shadowHosts = Array.from(root.querySelectorAll('*')).filter(n=>n.shadowRoot).slice(0,60);
@@ -2263,7 +2248,9 @@ class BrowserSession:
                 return list;
             }
 
-            const nodes = collectNodes(document);
+            // Portals can mount after hundreds of background links. Reserve
+            // their controls before any document quota or prompt pagination.
+            const nodes = [...overlayControls, ...collectNodes(document)];
             const scrollY = Math.round(window.scrollY || window.pageYOffset || 0);
             const scrollX = Math.round(window.scrollX || window.pageXOffset || 0);
             const winH = window.innerHeight || 720;
@@ -2285,10 +2272,26 @@ class BrowserSession:
                 const rect = el.getBoundingClientRect();
                 if (rect.width < 3 || rect.height < 3) continue;
 
-                let text = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+                const visibleText = (el.innerText || '').trim();
+                const accessibleText = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+                let text = /SafeValue|<\/?(?:body|html|script)|\[property\]/i.test(accessibleText) ? visibleText : accessibleText;
                 if (!text) {
-                    text = (el.textContent || el.placeholder || el.value || el.name || el.id || '').trim();
+                    const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => el.ownerDocument.getElementById(id)?.innerText || '').join(' ').trim();
+                    text = (visibleText || labelled || el.labels?.[0]?.innerText || el.placeholder ||
+                            (el.type === 'password' ? '' : el.value) || el.name || '').trim();
                 }
+                if (!text && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                    // Custom autocomplete inputs often have no own label. A
+                    // short wrapper caption (for example "From") is useful
+                    // context without leaking an unrelated page section.
+                    let parent = el.parentElement;
+                    for (let depth = 0; parent && depth < 3 && !text; depth++, parent = parent.parentElement) {
+                        const caption = (parent.innerText || '').replace(/\s+/g, ' ').trim();
+                        if (caption && caption.length <= 48) text = caption;
+                    }
+                }
+                if (!text && overlayControls.has(el)) text = window.__spOverlay.name(el);
+                if (!text) text = (el.id || '').trim();
                 text = text.replace(/\s+/g, ' ').slice(0, 80);
                 const href = el.getAttribute('href') || '';
                 if (text.toLowerCase().includes('skip to content') || text.toLowerCase().includes('skip to main') || href === '#main-content') {
@@ -2301,7 +2304,7 @@ class BrowserSession:
                 const pageY = cy + scrollY;
 
                 // Hit-testing / point occlusion verification (limited to top visible elements to prevent layout thrashing)
-                let isOccluded = false;
+                let isOccluded = Boolean(activeOverlay && !activeOverlay.contains(el));
                 if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH && elements.length < 35) {
                     try {
                         const topNode = document.elementFromPoint(cx, cy);
@@ -2312,17 +2315,22 @@ class BrowserSession:
                 }
 
                 const tagL = (el.tagName || '').toLowerCase();
-                const hasPop = el.getAttribute('aria-haspopup') === 'true' || el.hasAttribute('data-toggle') || (el.className && typeof el.className === 'string' && (el.className.includes('dropdown') || el.className.includes('has-sub')));
+                const hasPop = ['true','dialog','menu','listbox','tree','grid'].includes(el.getAttribute('aria-haspopup')) || el.hasAttribute('data-toggle') || (el.className && typeof el.className === 'string' && (el.className.includes('dropdown') || el.className.includes('has-sub')));
                 const isHoverCand = hasPop || (el.closest('nav, header, [role="navigation"], [class*="menu"]') !== null && (tagL === 'a' || tagL === 'button' || el.getAttribute('role') === 'menuitem'));
-                const isInsideModal = Boolean(el.closest && el.closest('[role="dialog"], [role="alertdialog"], .ui-dialog, .p-dialog, .swal2-container, .modal.show, .ant-modal, .cdk-overlay-pane'));
+                const isInsideModal = Boolean(activeOverlay && activeOverlay.contains(el));
                 
-                const parentForm = el.closest('form');
+                const parentForm = el.form || el.closest('form');
                 const formId = parentForm ? (parentForm.id || parentForm.getAttribute('name') || ('form_' + Array.from(document.querySelectorAll('form')).indexOf(parentForm))) : '';
-                const parentCard = el.parentElement ? el.parentElement.closest('[class*="card"], [class*="item"], [class*="box"], [class*="tile"], article, section') : null;
                 let cardHeading = '';
-                if (parentCard) {
-                    const h = parentCard.querySelector('h1, h2, h3, h4, [class*="title"], [class*="heading"], strong');
-                    if (h) cardHeading = (h.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+                // Tailwind/React cards need not have a "card" class. Use the
+                // nearest container with one heading, rather than assigning
+                // every repeated action the whole section's heading.
+                for (let parent = el.parentElement, depth = 0; parent && parent !== document.body && depth < 8; parent = parent.parentElement, depth++) {
+                    const headings = [...parent.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]')];
+                    if (headings.length === 1 && !headings[0].contains(el)) {
+                        cardHeading = (headings[0].textContent || '').trim().replace(/\s+/g, ' ').slice(0, 160);
+                        break;
+                    }
                 }
 
                 const elemId = window.__spGetOrAssignId(el);
@@ -2345,10 +2353,12 @@ class BrowserSession:
                 elements.push({
                     id: elemId,
                     tag: tagL,
-                    role: el.getAttribute('role') || tagL,
+                    role: el.getAttribute('role') || (overlayControls.has(el) && !['input','select','textarea','a','button','iframe'].includes(tagL) ? 'button' : tagL),
                     type: el.type || '',
+                    editor_kind: el.closest('.ace_editor') ? 'ace' : el.closest('.CodeMirror') ? 'codemirror' : el.closest('.cm-editor') ? 'codemirror6' : el.closest('.monaco-editor') ? 'monaco' : el.isContentEditable ? 'contenteditable' : undefined,
                     classes: (typeof el.className === 'string') ? el.className : '',
                     href: href,
+                    download: el.hasAttribute('download'),
                     is_external: isExternalLink,
                     text: text,
                     name: el.name || '',
@@ -2358,12 +2368,17 @@ class BrowserSession:
                     required: Boolean(el.required || el.getAttribute('aria-required') === 'true'),
                     invalid: Boolean(el.willValidate && !el.validity.valid || el.getAttribute('aria-invalid') === 'true'),
                     expanded: el.getAttribute('aria-expanded'),
+                    selected: el.getAttribute('aria-selected'),
+                    pressed: el.getAttribute('aria-pressed'),
+                    aria_controls: el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '',
+                    min: el.min || '', max: el.max || '', readonly: Boolean(el.readOnly || el.getAttribute('aria-readonly') === 'true'),
                     options: tagL === 'select' ? [...el.options].slice(0,60).map(o=>({text:o.text,value:o.value,disabled:o.disabled || !!o.parentElement?.disabled,selected:o.selected})) : undefined,
                     checked: Boolean(el.checked || el.getAttribute('aria-checked') === 'true'),
                     disabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
                     is_in_viewport: isInViewport,
                     is_occluded: isOccluded,
                     is_inside_modal: isInsideModal,
+                    overlay_id: isInsideModal ? window.__spGetOrAssignId(activeOverlay) : null,
                     is_hover_candidate: Boolean(isHoverCand),
                     has_popup: Boolean(hasPop),
                     form_id: formId,
@@ -2573,7 +2588,7 @@ class BrowserSession:
         """
         try:
             res = await self.send_command("Runtime.evaluate", {
-                "expression": js_code.replace('__SP_INITIAL_ID__', str(self._next_element_id)),
+                "expression": js_code.replace('__SP_INITIAL_ID__', str(self._next_element_id)).replace('__SP_GENERATION__', str(generation)).replace('__SP_CACHE_OWNER__', json.dumps(self._element_cache_owner)).replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS),
                 "returnByValue": True,
             }, timeout=6.0)
             val = res.get("result", {}).get("value", {})
@@ -2581,19 +2596,26 @@ class BrowserSession:
             logger.debug(f"extract_interactive_tree evaluation notice: {e}")
             val = {}
         if not val or generation != self._navigation_generation or (
-                state_seq != self._page_state_seq and val.get("title") != self.page_title):
-            return {**self.page_metadata(), "elements": self.interactive_elements,
+                not self._selected_frame and state_seq != self._page_state_seq and val.get("title") != self.page_title):
+            return {**self.page_metadata(), "fresh": False, "elements": self.interactive_elements,
                     "subpages": self.discovered_subpages}
-        self.update_page_metadata(val.get("url"), val.get("title"))
+        if not self._selected_frame:self.update_page_metadata(val.get("url"), val.get("title"))
         if type(val.get('next_element_id')) is int:
             self._next_element_id = max(self._next_element_id,val['next_element_id'])
         self.scroll_y = val.get("scroll_y", 0)
         self.scroll_height = val.get("scroll_height", 720)
         self.viewport_height = val.get("viewport_height", 720)
         raw_ret_url = val.get("url", "")
-        if raw_ret_url and "chrome-error://" not in raw_ret_url:
+        if not self._selected_frame and raw_ret_url and "chrome-error://" not in raw_ret_url:
             self.current_url = to_frontend_display_url(raw_ret_url)
         self.interactive_elements = val.get("elements", [])
+        if self._selected_frame:
+            ox,oy=self.frame_offset
+            for element in self.interactive_elements:
+                element['x']+=ox; element['y']+=oy
+                element['box'][0]+=ox; element['box'][1]+=oy
+        from .browser_testing.targets import remember_targets
+        remember_targets(self)
         raw_subpages = val.get("subpages", [])
         self.discovered_subpages = [
             {
@@ -2643,6 +2665,7 @@ class BrowserSession:
         }
         self._notify_listeners(state_payload)
         return {
+            "fresh": True,
             "url": self.current_url,
             "title": self.page_title,
             "scroll_y": self.scroll_y,
@@ -2663,8 +2686,9 @@ class BrowserSession:
         for el in (self.interactive_elements or []):
             if "page_x" in el and "page_y" in el:
                 # page_x/page_y are center coordinates in document space
-                new_cx = el["page_x"] - scroll_x
-                new_cy = el["page_y"] - scroll_y
+                ox,oy=self.frame_offset if self._selected_frame else (0,0)
+                new_cx = el["page_x"] - scroll_x + ox
+                new_cy = el["page_y"] - scroll_y + oy
                 el_w = el.get("w", 0)
                 el_h = el.get("h", 0)
                 el["x"] = new_cx
@@ -2709,25 +2733,38 @@ class BrowserSession:
 
     async def _move_pointer(self, x: int, y: int, label: str = "", fast_mode: bool = False, buttons: int = 0):
         """Bound native movement and announce one compositor animation, not every sample."""
-        path = self._generate_bezier_path(self.cursor_x, self.cursor_y, x, y, fast_mode=fast_mode)
-        duration = 0 if fast_mode or len(path) == 1 else min(.12, max(.05, len(path) * .008))
+        generation = self._input_generation
+        origin = (self.cursor_x, self.cursor_y)
+        # Fast mode controls settling, not whether the viewer sees the gesture.
+        path = self._generate_bezier_path(*origin, x, y)
+        duration = 0 if len(path) == 1 else min(.18, max(.09, len(path) * .012))
         self._notify_listeners({"type": "cursor_action", "action": "move", "phase": "moving",
-                                "x": x, "y": y, "duration_ms": round(duration * 1000), "label": label})
+                                "x": x, "y": y, "duration_ms": round(duration * 1000),
+                                "path": [list(origin), *[list(point) for point in path]], "label": label})
+        # The viewer interpolates the announced path. For ordinary fast clicks,
+        # send only the final native move before pressing: queuing a dozen CDP
+        # events over a remote tunnel delays the actual click without making
+        # the visible cursor any smoother. Drag gestures keep native samples.
+        native_path = [path[-1]] if fast_mode and not buttons else path
         started = time.monotonic()
-        for index, (cx, cy) in enumerate(path):
-            due = started + duration * ((index + 1) / len(path))
+        for index, (cx, cy) in enumerate(native_path):
+            due = started + duration * ((index + 1) / len(native_path)) if not fast_mode else started
             remaining = due - time.monotonic()
             if remaining > 0:
                 await asyncio.sleep(remaining)
+            if generation != self._input_generation:
+                raise asyncio.CancelledError('Pointer movement stopped')
             params = {"type": "mouseMoved", "x": cx, "y": cy, "buttons": buttons}
             # The event may reach Chromium even if its acknowledgement times out.
             # A drag release must use the latest dispatched position, not jump back.
             self.cursor_x, self.cursor_y = cx, cy
-            if index == len(path) - 1:
+            if index == len(native_path) - 1:
                 # A click/drag must never overtake an unacknowledged final move.
                 await self.send_command("Input.dispatchMouseEvent", params)
             else:
                 self.send_command_nowait("Input.dispatchMouseEvent", params)
+        if generation != self._input_generation:
+            raise asyncio.CancelledError('Pointer movement stopped')
         self.cursor_x, self.cursor_y = x, y
 
     async def _pointer_click_cycle(self, x: int, y: int, button: str = "left", count: int = 1, dwell: float = 0):
@@ -3031,21 +3068,34 @@ class BrowserSession:
 
     async def click_element(self, element_id: int, label: str = "", fast_mode: bool = True) -> bool:
         """Scrolls element into view if needed, performs APV two-tier click, awaits action completion, and verifies outcome."""
+        phase_started = time.monotonic()
+        self.last_action_timing = {}
+        def mark(phase):
+            nonlocal phase_started
+            now = time.monotonic()
+            self.last_action_timing[phase + '_ms'] = round((now - phase_started) * 1000, 1)
+            phase_started = now
         el = next((e for e in (self.interactive_elements or []) if str(e.get("id")) == str(element_id)), None)
         target_name = label or (el.get("text") if el else f"Element #{element_id}")
+        self.last_download = None
+        prior_downloads = set(self.download_events)
+        self._download_event.clear()
         is_transition = is_transitioning_or_submit_action(el, label=target_name, action="click")
         # Scroll element into viewport center before capturing snapshot & clicking
         try:
             await self.scroll_to_element(element_id)
         except Exception:
             pass
+        mark('prepare')
 
         # 1. Capture Pre-action Perception Snapshot
         pre_snap = await ActionPerceptionVerification.capture_snapshot(self)
+        mark('pre_observe')
 
         # 2. Dispatch Two-Tier Click (CDP synthetic input events + Native Blink DOM synthetic sequence)
         dispatched = await ActionPerceptionVerification.dispatch_two_tier_click(
             self, element_id, label=target_name, fast_mode=fast_mode)
+        mark('dispatch')
         if not dispatched:
             # Some sites intentionally place a transparent/fixed layer over
             # their navigation while the pointer animation settles. A native
@@ -3053,7 +3103,8 @@ class BrowserSession:
             # avoids guessing coordinates or forcing an occluded hit target.
             href = (el or {}).get("href") or ""
             tag = str((el or {}).get("tag") or "").lower()
-            if href and tag == "a" and not (el or {}).get("is_external"):
+            blocked=getattr(self,'last_actionability',{}) or {}
+            if href and tag == "a" and not (el or {}).get("is_external") and blocked.get('navigation_hover_blocker') and not (blocked.get('blocker') or {}).get('dialog'):
                 focused = await self.evaluate(f"(() => {{ const e=window.__spFast?.nodes.get({int(element_id)}); if(!e?.isConnected) return false; e.focus(); return document.activeElement===e; }})()")
                 if focused is True and await self.press_key("Enter"):
                     await self.wait_for_action_quiescence(pre_url=pre_snap.url,is_transition=True,
@@ -3071,25 +3122,77 @@ class BrowserSession:
                 f"Target is not actionable: {getattr(self, 'last_actionability', {}).get('reason', 'unknown')}. Inspect recovery evidence before retrying.").to_dict()
             return False
 
+        if self.native_dialog:
+            self.last_action_verification = ActionVerificationResult(
+                'click', target_name, True, 'native_dialog_opened',
+                'A native dialog opened. Its decision and the business outcome remain to be verified.').to_dict()
+            return True
         # 3. Action Completion Quiescence (awaits network idle, loading spinners cleared, route changes settled)
-        await self.wait_for_action_quiescence(
-            pre_url=pre_snap.url,
-            is_transition=is_transition,
-            min_grace_ms=80 if is_transition else (15 if fast_mode else 40),
-            max_timeout_s=1.5 if is_transition else (0.25 if fast_mode else 0.6),
-            fast_mode=fast_mode,
-        )
+        if fast_mode and not is_transition:
+            # For an ordinary field/picker click the post-action observation
+            # itself checks the effect; waiting on unrelated page animations
+            # before that observation made these clicks needlessly slow.
+            await asyncio.sleep(.03)
+        else:
+            await self.wait_for_action_quiescence(
+                pre_url=pre_snap.url,
+                is_transition=is_transition,
+                min_grace_ms=80 if is_transition else (15 if fast_mode else 40),
+                max_timeout_s=1.5 if is_transition else (0.25 if fast_mode else 0.6),
+                fast_mode=fast_mode,
+            )
+        mark('site_wait')
 
         # 4. Refresh interactive tree
         try:
             await self.extract_interactive_tree()
         except Exception:
             pass
+        mark('post_observe')
 
         # 5. Capture Post-action Perception Snapshot and Verify Outcome
         post_snap = await ActionPerceptionVerification.capture_snapshot(self)
         verification = ActionPerceptionVerification.verify_action_outcome(pre_snap, post_snap, action="click", target=target_name)
+        from .browser_testing.transactions import editable_control
+        if (verification.effect_type in {'focus', 'no_effect'} and editable_control(el)
+                and element_id is not None and str(post_snap.focused_id) == str(element_id)):
+            verification = ActionVerificationResult('click', target_name, True, 'field_focus',
+                'The observed editable field has focus. This is a preparation checkpoint, not a submitted form outcome.')
+        from .browser_testing.site_audit import download_control
+        if download_control(el or {'label': target_name}) and not (set(self.download_events) - prior_downloads):
+            try:
+                await asyncio.wait_for(self._download_event.wait(), timeout=0.75)
+            except asyncio.TimeoutError:
+                pass
+        new_downloads = [event for guid, event in self.download_events.items() if guid not in prior_downloads]
+        if new_downloads:
+            download = new_downloads[-1]
+            if download['state'] == 'inProgress':
+                try:
+                    self._download_event.clear()
+                    await asyncio.wait_for(self._download_event.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+            self.last_download = dict(download)
+            completed = download['state'] == 'completed'
+            verification = ActionVerificationResult(
+                'click', target_name, completed,
+                'download_completed' if completed else 'download_' + download['state'].lower(),
+                (f"Browser saved {download['filename']} on the browser worker." if completed else
+                 f"Browser download {download['state']}: {download['filename']}."),
+            )
+        if fast_mode and not is_transition and verification.effect_type == "no_effect":
+            # An asynchronous picker may mount after the first fast snapshot.
+            # Give only that case a bounded settling retry, never a second click.
+            await self.wait_for_action_quiescence(
+                pre_url=pre_snap.url, is_transition=False,
+                min_grace_ms=15, max_timeout_s=.25, fast_mode=True,
+            )
+            await self.extract_interactive_tree()
+            post_snap = await ActionPerceptionVerification.capture_snapshot(self)
+            verification = ActionPerceptionVerification.verify_action_outcome(pre_snap, post_snap, action="click", target=target_name)
         self.last_action_verification = verification.to_dict()
+        mark('verify')
 
         # Domain Boundary Guard: If the click navigated outside the target application's allowed domain,
         # immediately block exploration, log the event, navigate back to pre_snap.url, and abort further SKG/PNA updates.
@@ -3171,22 +3274,14 @@ class BrowserSession:
         # sends several contradictory input events and breaks controlled forms.
         if element_id is not None:
             await self.scroll_to_element(element_id)
+            if self._selected_frame:
+                from .browser_testing.actionability import inspect_actionability
+                actionable=await inspect_actionability(self,element_id)
+                if actionable.get('is_occluded') or actionable.get('disabled'):
+                    raise RuntimeError('Input frame is blocked in its parent page. No text input dispatched.')
         target_js = f"window.__spFast?.nodes.get({int(element_id)})" if element_id is not None else "document.activeElement"
-        focus_js = f"""(() => {{
-            const el = {target_js};
-            if (!el?.isConnected) return {{error:'Requested input is missing or was replaced; observe fresh controls.'}};
-            if (el.matches(':disabled') || el.closest('[inert]')) return {{error:'Requested input is disabled or inert.'}};
-            if (el.readOnly) return {{error:'Requested input is readonly.'}};
-            if (!(el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return {{error:'Requested control is not an editable input.'}};
-            el.focus();
-            let active = document.activeElement;
-            while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
-            if (active !== el) return {{error:'Requested input could not be focused.'}};
-            return {{value: el.isContentEditable ? el.textContent : el.value,
-                type: el.type || '',
-                autocomplete: el.getAttribute('role') === 'combobox' || Boolean(el.getAttribute('aria-autocomplete')) || Boolean(el.getAttribute('list')) ||
-                    Boolean(el.closest('p-autocomplete, [class*="autocomplete"], [class*="combobox"]'))}};
-        }})()"""
+        from .browser_testing.editors import focus_editor_script, read_editor_script
+        focus_js = focus_editor_script(target_js)
         probe = await self.evaluate(focus_js)
         if probe is None:
             # A lost CDP observation is not evidence of a disabled input.
@@ -3196,9 +3291,6 @@ class BrowserSession:
             raise RuntimeError('Input focus could not be observed because the browser did not respond. No text input was dispatched.')
         if probe.get('error'):
             raise RuntimeError(probe['error']+' No text input was dispatched.')
-        display_text = "[redacted]" if probe.get("type") == "password" else text
-        self._notify_listeners({"type": "cursor_action", "action": "type", "text": display_text,
-                                "label": f"Typing '{display_text[:25]}...'"})
         # Native segmented controls do not accept Input.insertText. Use a typed
         # control fill (as browser testing libraries do), never the ordinary
         # text-input fallback. Validate before mutation; send input/change once.
@@ -3222,8 +3314,9 @@ class BrowserSession:
                 const requested = {json.dumps(requested)};
                 const candidate = document.createElement('input');
                 candidate.type = el.type;
+                for(const attr of ['min','max','step'])if(el.hasAttribute(attr))candidate.setAttribute(attr,el.getAttribute(attr));
                 candidate.value = requested;
-                if (candidate.value !== requested) return false;
+                if (candidate.value !== requested || !candidate.validity.valid) return false;
                 Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, requested);
                 el.dispatchEvent(new Event('input', {{bubbles:true, composed:true}}));
                 el.dispatchEvent(new Event('change', {{bubbles:true}}));
@@ -3231,22 +3324,71 @@ class BrowserSession:
             }})()""")
             if not filled:
                 raise RuntimeError("Typed control rejected the requested value.")
+            self._notify_listeners({"type":"cursor_action","action":"type","phase":"applied","label":"Value entered"})
             return True
+        from .browser_testing.editors import typing_guard_script
+        from .browser_testing.motion import typing_plan
+        generation = self._input_generation
+        if isinstance(probe.get('x'), (int,float)) and isinstance(probe.get('y'), (int,float)):
+            px,py=probe['x'],probe['y']
+            if self._selected_frame:
+                from .browser_testing.frames import frame_offset
+                ox,oy=await frame_offset(self,self._selected_frame)
+                px+=ox;py+=oy
+            await self._move_pointer(round(px),round(py),'Typing')
+        initial = str(probe.get('value') or '').replace('\r\n','\n').replace('\r','\n')
+        if generation != self._input_generation:
+            raise asyncio.CancelledError('Typing stopped')
+        if await self.evaluate(typing_guard_script(target_js,initial)) is not True:
+            raise RuntimeError('Input changed or lost focus before typing. No text input was dispatched.')
         if clear_first:
             for event_type in ("rawKeyDown", "keyUp"):
+                if generation != self._input_generation:
+                    raise asyncio.CancelledError('Typing stopped')
                 await self.send_command("Input.dispatchKeyEvent", {"type": event_type, "windowsVirtualKeyCode": 65,
                                         "modifiers": 2, "key": "a", "code": "KeyA"})
             for event_type in ("rawKeyDown", "keyUp"):
+                if generation != self._input_generation:
+                    raise asyncio.CancelledError('Typing stopped')
                 await self.send_command("Input.dispatchKeyEvent", {"type": event_type, "windowsVirtualKeyCode": 8,
                                         "key": "Backspace", "code": "Backspace"})
-        await self.send_command("Input.insertText", {"text": text})
-        expected = text if clear_first else str(probe.get("value") or "") + text
-        actual = await self.evaluate(f"""(() => {{
-            const el = {target_js};
-            return el ? (el.isContentEditable ? el.textContent : el.value) : null;
-        }})()""")
-        if actual != expected:
-            raise RuntimeError("Input value did not match the requested text after native insertion.")
+        # Number inputs reject incomplete signs/exponents, so preserve atomic fill.
+        chunks,interval=typing_plan(text,atomic=probe.get('type')=='number')
+        prefix = '' if clear_first else initial
+        expected = (prefix + text).replace('\r\n','\n').replace('\r','\n')
+        private = probe.get('type')=='password'
+        event = {"type":"cursor_action","action":"type","label":"Typing","private":private}
+        self._notify_listeners({**event,"phase":"started"})
+        try:
+            last_progress=time.monotonic()
+            for index,chunk in enumerate(chunks):
+                if index:
+                    # Always give the browser a paint opportunity, even after a slow ACK.
+                    await asyncio.sleep(interval)
+                if generation != self._input_generation:
+                    raise asyncio.CancelledError('Typing stopped')
+                if await self.evaluate(typing_guard_script(target_js,prefix)) is not True:
+                    raise RuntimeError('Typing stopped because the input changed or lost focus. Read the current editor before retrying; no remaining text was dispatched.')
+                await self.send_command("Input.insertText", {"text": chunk})
+                prefix=(prefix+chunk).replace('\r\n','\n').replace('\r','\n')
+                now=time.monotonic()
+                if now-last_progress>=.10:
+                    self._notify_listeners({**event,"phase":"progress"})
+                    last_progress=now
+            deadline = time.monotonic() + 1
+            while True:
+                if generation != self._input_generation:
+                    raise asyncio.CancelledError('Typing stopped')
+                actual = await self.evaluate(read_editor_script(target_js))
+                if isinstance(actual, dict) and actual.get('value') == expected:
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Editor document did not match the requested text after native insertion. Input may have changed; read the editor before retrying. Preserve the requested program and inspect the source editor, not the output pane.")
+                await asyncio.sleep(.05)
+        except BaseException:
+            self._notify_listeners({**event,"phase":"interrupted","label":"Typing interrupted"})
+            raise
+        self._notify_listeners({**event,"phase":"applied","label":"Text entered"})
 
         # 4. Autocomplete harvest with progressive retry loop
         # Angular/PrimeNG autocompletes have debounce timers (typically 200-500ms) before
@@ -3288,14 +3430,8 @@ class BrowserSession:
                 });
                 if (items.length > 0) {
                     return items.slice(0, 15).map((el, idx) => {
-                        let spId = el.getAttribute('data-sp-id');
-                        if (!spId && window.__spGetOrAssignId) {
-                            spId = String(window.__spGetOrAssignId(el));
-                        } else if (!spId && window.__spFast) {
-                            spId = String(window.__spFast.nextId++);
-                            window.__spFast.nodes.set(Number(spId), el);
-                            try { el.setAttribute('data-sp-id', spId); } catch(e) {}
-                        }
+                        // Framework clones can copy data-sp-id; only node identity is authoritative.
+                        const spId = window.__spGetOrAssignId ? String(window.__spGetOrAssignId(el)) : null;
                         const rect = el.getBoundingClientRect();
                         return {
                             id: spId ? Number(spId) : null,
@@ -3315,7 +3451,10 @@ class BrowserSession:
         # Some sites do not expose ARIA autocomplete metadata even though they
         # render a real suggestion popup. Probe ordinary fields immediately;
         # known comboboxes get a bounded debounce window.
-        harvest_delays = [0, 0.15, 0.25, 0.4, 0.6, 0.6] if probe.get("autocomplete") or auto_select_suggestion else [0]
+        # Start after common suggestion debounce timers. Harvesting the first
+        # transient option too early can race a later replacement, causing a
+        # click to land on an unmounted node while appearing dispatched.
+        harvest_delays = [0.25, 0.15, 0.25, 0.4, 0.6, 0.6] if probe.get("autocomplete") or auto_select_suggestion else [0]
 
         for delay in harvest_delays:
             await asyncio.sleep(delay)
@@ -3352,7 +3491,24 @@ class BrowserSession:
                 # Dispatch exactly once; never replay a successful hardware click.
                 sugg_id = best_match.get("id")
                 if sugg_id is not None:
-                    if not await ActionPerceptionVerification.dispatch_two_tier_click(self, sugg_id, label=match_text, fast_mode=True):
+                    dispatched = await ActionPerceptionVerification.dispatch_two_tier_click(
+                        self, sugg_id, label=match_text, fast_mode=True)
+                    # A debounced autocomplete can replace the observed option
+                    # between harvesting and hit testing. No input was sent for
+                    # a stale node, so reacquire the same unique choice once.
+                    for _ in range(2):
+                        if dispatched or (getattr(self, 'last_actionability', {}) or {}).get('reason') != 'stale_element':
+                            break
+                        await asyncio.sleep(.06)
+                        current = await self.evaluate(harvest_js, timeout=1.0)
+                        matches = [item for item in (current or [])
+                                   if (item.get('text') or '').strip().casefold() == match_text.strip().casefold()]
+                        if len(matches) != 1 or matches[0].get('id') is None:
+                            break
+                        self.last_autocomplete_suggestions = current
+                        dispatched = await ActionPerceptionVerification.dispatch_two_tier_click(
+                            self, matches[0]['id'], label=match_text, fast_mode=True)
+                    if not dispatched:
                         raise RuntimeError("Autocomplete suggestion is no longer actionable.")
                 elif best_match.get("x") is not None and best_match.get("y") is not None:
                     await self.click(best_match["x"], best_match["y"], label=match_text, fast_mode=True, exact_coords=True)
@@ -3485,28 +3641,22 @@ class BrowserSession:
     get_theme_state = get_theme
 
     async def navigate_back(self, fallback_url: str = "") -> Dict[str, Any]:
-        """Navigates back to previous page in exploration hierarchy using PNA 4-tier escalation backtracking."""
-        self._notify_listeners({"type": "action", "action": "navigate_back"})
-        if hasattr(self, "pda") and self.pda and self.pda.can_backtrack():
-            backtrack_res = await self.pda.backtrack_to_parent(self, fallback_parent_url=fallback_url)
-            await self.force_fresh_frame()
-            tree = await self.extract_interactive_tree()
-            return {**tree, "backtrack_result": backtrack_res}
+        """Move one actual browser history entry; parent recovery is explicit."""
+        from .browser_testing.navigation import move_history
+        return await move_history(self, -1)
 
-        pre_url = (self.current_url or "").rstrip("/")
-        try:
-            await self.send_command("Runtime.evaluate", {"expression": "window.history.back()"})
-            await self.wait_for_quiescence(network_idle_ms=300, dom_quiet_ms=150, max_timeout_s=4.0)
-            await self.extract_interactive_tree()
-            curr_url = (self.current_url or "").rstrip("/")
-            if fallback_url and (curr_url == pre_url or not self.interactive_elements):
-                await self.navigate(fallback_url)
-            return await self.extract_interactive_tree()
-        except Exception as e:
-            if fallback_url:
-                await self.navigate(fallback_url)
-                return await self.extract_interactive_tree()
-            return {"error": str(e)}
+    async def navigate_forward(self) -> Dict[str, Any]:
+        from .browser_testing.navigation import move_history
+        return await move_history(self, 1)
+
+    async def return_to_parent(self) -> Dict[str, Any]:
+        result = await self.pda.backtrack_to_parent(self)
+        self.last_action_verification = {
+            'verified': result.get('success') is True, 'effect_type': 'parent_restored' if result.get('success') else 'no_effect',
+            'description': 'Returned to the observed parent context.' if result.get('success') else result.get('reason', 'Parent recovery failed.'),
+            'method': result.get('method'), 'expected_url': result.get('target_url'), 'actual_url': self.current_url}
+        return {'status': 'passed' if result.get('success') else 'unverified', 'action': 'return_to_parent',
+                'verification': self.last_action_verification, 'backtrack_result': result}
 
     async def scroll(self, delta_y: int = 300, extract_tree: bool = True, fast_mode: bool = True):
         """Scrolls the page up or down and awaits scroll rest."""
@@ -3753,6 +3903,9 @@ class BrowserSession:
 
     async def cancel_actions(self):
         """Immediately aborts any ongoing user interaction / animations in Chromium."""
+        self._input_generation += 1
+        self._notify_listeners({"type":"cursor_action","action":"cancel","phase":"interrupted",
+                                "x":self.cursor_x,"y":self.cursor_y,"duration_ms":0,"label":"Stopped"})
         try:
             # Release mouse buttons and clear keys
             await self.send_command("Input.dispatchMouseEvent", {
@@ -3809,8 +3962,29 @@ class BrowserManager:
         from weakref import WeakValueDictionary
         self.operation_locks = WeakValueDictionary()
         self.busy_sessions = set()
+        self.protected_sessions = set()
         self.session_modes = {}
         self.switching_sessions = set()
+
+    def _capacity_reached(self, purpose):
+        # Server-side release checks have bounded reserved slots. Opening chats
+        # must not exhaust deployment verification capacity (or evict a viewer).
+        limit = max(1, int(os.getenv('BROWSER_VERIFICATION_MAX_SESSIONS', '2') if purpose == 'verification'
+                           else os.getenv('BROWSER_MAX_SESSIONS', '4')))
+        return sum(getattr(session, 'purpose', 'interactive') == purpose
+                   for session in self.sessions.values()) >= limit
+
+    async def _reclaim_unused_slot(self, purpose):
+        if purpose != 'interactive' or not self._capacity_reached(purpose):
+            return
+        candidates = [(session.last_used, session_id) for session_id, session in self.sessions.items()
+            if getattr(session, 'purpose', 'interactive') == purpose and not session.listeners
+            and session_id not in self.busy_sessions and session_id not in self.protected_sessions
+            and session_id not in self.switching_sessions]
+        if candidates:
+            # A closed chat's background tab can be recreated from its saved
+            # target. Never interrupt a viewer, tool, campaign, or active run.
+            await self.close_session(min(candidates)[1])
 
     def configure_session(self, session_id, mode):
         from .browser_config import browser_config
@@ -3840,11 +4014,12 @@ class BrowserManager:
             self.switching_sessions.add(session_id)
             try:
                 async with self._display_lock:
-                    if existing is None and len(self.sessions) >= max(1, int(os.getenv('BROWSER_MAX_SESSIONS', '4'))):
+                    if existing is None: await self._reclaim_unused_slot('interactive')
+                    if existing is None and self._capacity_reached('interactive'):
                         raise RuntimeError("Browser session capacity reached. Close an idle browser first.")
                     displayed = self.display_session_id
                     try:
-                        await asyncio.wait_for(candidate.connect(), timeout=12)
+                        await asyncio.wait_for(candidate.connect(), timeout=27 if mode == "remote" else 12)
                         if target != "about:blank":
                             await candidate.navigate(target)
                     except BaseException:
@@ -3870,7 +4045,7 @@ class BrowserManager:
     async def reap_idle(self, protected=()):
         ttl = max(60, float(os.getenv('BROWSER_SESSION_IDLE_SECONDS', '900')))
         for session_id, session in list(self.sessions.items()):
-            if session_id not in protected and session_id not in self.busy_sessions and not session.listeners and (not session.is_connected or time.monotonic() - session.last_used > ttl):
+            if session_id not in protected and session_id not in self.busy_sessions and session_id not in self.protected_sessions and not session.listeners and (not session.is_connected or time.monotonic() - session.last_used > ttl):
                 await self.close_session(session_id)
 
     async def activate_display(self, session_id: str):
@@ -3893,7 +4068,9 @@ class BrowserManager:
                 return s
         return None
 
-    async def get_or_create_session(self, session_id: str = "default", url: str = "about:blank") -> BrowserSession:
+    async def get_or_create_session(self, session_id: str = "default", url: str = "about:blank", *, purpose="interactive") -> BrowserSession:
+        if purpose not in {'interactive', 'verification'}:
+            raise ValueError('Unknown browser session purpose')
         norm_url = url.rstrip("/").strip() if url else ""
         from .browser_config import browser_config
         config = browser_config(self.session_modes.get(session_id, "local"))
@@ -3927,11 +4104,13 @@ class BrowserManager:
             return session
 
         session = BrowserSession(session_id=session_id, target_url=url, sandbox_mode=config.mode)
+        session.purpose = purpose
         # Creating another tab must not change the surface sent to an existing viewer.
         async with self._display_lock:
             if session_id in self.sessions and self.sessions[session_id].is_connected:
                 return self.sessions[session_id]
-            if session_id not in self.sessions and len(self.sessions) >= max(1, int(os.getenv('BROWSER_MAX_SESSIONS', '4'))):
+            if session_id not in self.sessions: await self._reclaim_unused_slot(purpose)
+            if session_id not in self.sessions and self._capacity_reached(purpose):
                 raise RuntimeError('Browser session capacity reached. Close an idle session or allocate another browser worker; no additional tab was created.')
             stale = self.sessions.pop(session_id,None)
             if stale:
@@ -3950,7 +4129,9 @@ class BrowserManager:
                     previous._video_needs_keyframe = True
                     await previous.send_command("Page.bringToFront")
                     self.display_session_id = displayed
-        self.sessions[session_id] = session
+            # Commit the slot under the same lock used for allocation, before
+            # another request can count available capacity.
+            self.sessions[session_id] = session
         if norm_url and norm_url not in {"about:blank", "http://localhost:3000", "http://127.0.0.1:3000"}:
             await session.navigate(url)
         return session

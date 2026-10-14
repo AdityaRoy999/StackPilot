@@ -38,6 +38,7 @@ export function permissionMatchesCall(permission: PendingPermission, call: Propo
 
 export function streamOutcome(status: string | undefined, verified: boolean | undefined,
                               browserUsed: boolean, hasTools: boolean) {
+  if (status === "campaign_queued") return { text: "Background testing queued. Monitor the campaign card for progress and verified results.", browserCompleted: false };
   if (status === "waiting_for_permission") return { text: "Waiting for your approval of the specific step above.", browserCompleted: false };
   if (status === "waiting_for_user_input") return { text: "Waiting for your input before continuing.", browserCompleted: false };
   if (["blocked", "approval_stale", "unverified", "failed", "error", "stopped", "canceled"].includes(status || ""))

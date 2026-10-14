@@ -5,5 +5,7 @@ websockets==17.1
 pydantic==2.10.4
 typing-extensions==4.12.2
 psycopg2-binary>=2.9.9
+cryptography>=44.0
 aiortc==1.15.0
 aioice==0.10.2
+vosk==0.3.45

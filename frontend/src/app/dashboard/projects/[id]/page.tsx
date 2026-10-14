@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import Link from "next/link";
 import api from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisclosureSection } from "@/components/ui/disclosure-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { toast } from "sonner";
 import { ArrowLeft, ExternalLink, GitBranch, Globe, HardDrive, Loader2, ShieldCheck, Trash2, Zap } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
+import { ExposureOption, exposureOptions, runtimeOptions } from "@/components/projects/ExposureOption";
+import { TechnologyIcon } from "@/components/projects/TechnologyIcon";
 
 type RuntimeTarget = "docker" | "kubernetes";
 
@@ -66,14 +69,6 @@ interface ProjectEnvironment {
   current_runtime_url?: string;
 }
 
-interface DeploymentDetails {
-  id: string;
-  status: string;
-  logs: string;
-  image_name: string;
-  updated_at: string;
-}
-
 function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
   if (status === "built") return "default";
   if (status === "failed" || status === "failed_ci") return "destructive";
@@ -84,14 +79,14 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 
 export default function ProjectDeploymentsPage() {
   const params = useParams();
+  const router = useRouter();
   const rawId = params.id;
   const projectId = useMemo(() => (Array.isArray(rawId) ? rawId[0] : rawId), [rawId]);
 
   const queryClient = useQueryClient();
   const selectedEnvironmentStorageKey = projectId ? `StackPilot:selected-environment:${projectId}` : "";
-  const [version, setVersion] = useState("v1.0.0");
+  const [version, setVersion] = useState("");
   const [commitHash, setCommitHash] = useState("");
-  const [selectedDeploymentId, setSelectedDeploymentId] = useState<string>("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<string>(() => {
     if (!selectedEnvironmentStorageKey || typeof window === "undefined") {
       return "";
@@ -192,8 +187,8 @@ export default function ProjectDeploymentsPage() {
         ? candidateId
         : availableEnvironments[0]?.id ?? "";
       const res = await api.post(`/projects/${projectId}/deployments`, {
-        version,
-        commit_hash: commitHash,
+        version: version.trim() || undefined,
+        commit_hash: commitHash.trim() || undefined,
         environment_id: selectedId,
         trigger_source: "manual",
         local_exposure_mode: deployExposureMode,
@@ -208,7 +203,7 @@ export default function ProjectDeploymentsPage() {
       queryClient.invalidateQueries({ queryKey: ["project-environments", projectId] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       queryClient.invalidateQueries({ queryKey: ["deployment-logs", data.deploymentId] });
-      setSelectedDeploymentId(data.deploymentId);
+      router.push(`/dashboard/deployments?logs=${encodeURIComponent(data.deploymentId)}`);
       setCommitHash("");
     },
     onError: (error: unknown) => {
@@ -234,7 +229,7 @@ export default function ProjectDeploymentsPage() {
       queryClient.invalidateQueries({ queryKey: ["project-environments", projectId] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
       queryClient.invalidateQueries({ queryKey: ["deployment-logs", deploymentId] });
-      setSelectedDeploymentId(deploymentId);
+      router.push(`/dashboard/deployments?logs=${encodeURIComponent(deploymentId)}`);
     },
     onError: (error: unknown) => {
       const message =
@@ -245,23 +240,6 @@ export default function ProjectDeploymentsPage() {
       queryClient.invalidateQueries({ queryKey: ["project-deployments", projectId] });
       queryClient.invalidateQueries({ queryKey: ["project-environments", projectId] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
-    },
-  });
-
-  const deploymentLogsQuery = useQuery({
-    queryKey: ["deployment-logs", selectedDeploymentId],
-    queryFn: async () => {
-      const res = await api.get(`/deployments/${selectedDeploymentId}/logs`);
-      return res.data;
-    },
-    enabled: !!selectedDeploymentId,
-    refetchInterval: (query) => {
-      const data = query.state.data as any;
-      const status = data?.deployment?.status;
-      if (status && ["built", "failed", "canceled", "superseded", "failed_ci"].includes(status)) {
-        return false;
-      }
-      return 3000;
     },
   });
 
@@ -334,6 +312,7 @@ export default function ProjectDeploymentsPage() {
   const effectiveSelectedEnvironmentId = selectedEnvironmentExists ? selectedEnvironmentId : environments[0]?.id || "";
   const selectedEnvironment = environments.find((environment) => environment.id === effectiveSelectedEnvironmentId);
   const defaultRuntimeTarget: RuntimeTarget = project.remote_runtime_type === "kubernetes" ? "kubernetes" : "docker";
+  const latestDeploymentStatus = deployments[0]?.status;
 
   return (
     <div className="space-y-6">
@@ -351,7 +330,9 @@ export default function ProjectDeploymentsPage() {
             </a>
           )}
         </div>
-        <Badge variant={project.status === "active" ? "default" : "secondary"}>{project.status}</Badge>
+        <Badge variant={latestDeploymentStatus ? statusVariant(latestDeploymentStatus) : "secondary"}>
+          {latestDeploymentStatus || "Not deployed"}
+        </Badge>
       </div>
 
       <Card className="border-primary/30">
@@ -363,13 +344,13 @@ export default function ProjectDeploymentsPage() {
         </CardHeader>
         <CardContent>
           <form
-            className="grid gap-4 md:grid-cols-[1fr,160px,1fr,auto]"
+            className="grid gap-4 md:grid-cols-2"
             onSubmit={(event) => {
               event.preventDefault();
               createDeploymentMutation.mutate({});
             }}
           >
-            <div className="space-y-2">
+            <div className="space-y-2 md:col-span-2">
               <Label>Environment</Label>
               <Select
                 value={effectiveSelectedEnvironmentId}
@@ -392,13 +373,13 @@ export default function ProjectDeploymentsPage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="version">Version</Label>
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="version">Release label (optional)</Label>
               <Input
                 id="version"
                 value={version}
                 onChange={(event) => setVersion(event.target.value)}
-                placeholder="v1.0.0"
+                placeholder="Generated automatically"
               />
             </div>
             <div className="space-y-2">
@@ -413,22 +394,23 @@ export default function ProjectDeploymentsPage() {
             <div className="space-y-2">
               <Label htmlFor="deployExposureMode">Local URL / Ingress Target</Label>
               <Select
+                items={exposureOptions}
                 value={deployExposureMode}
                 onValueChange={(val) => {
                   if (val) setDeployExposureMode(val as "direct" | "portless" | "cloudflare_tunnel");
                 }}
               >
-                <SelectTrigger id="deployExposureMode" className="h-10 text-xs font-mono">
-                  <SelectValue />
+                <SelectTrigger id="deployExposureMode" className="h-10 w-full">
+                  <SelectValue><ExposureOption mode={deployExposureMode} /></SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="direct">🔌 Direct Port (localhost)</SelectItem>
-                  <SelectItem value="portless">🌐 Portless (.localhost)</SelectItem>
-                  <SelectItem value="cloudflare_tunnel">⚡ Cloudflare Tunnel (HTTPS)</SelectItem>
+                  <SelectItem value="direct"><ExposureOption mode="direct" /></SelectItem>
+                  <SelectItem value="portless"><ExposureOption mode="portless" /></SelectItem>
+                  <SelectItem value="cloudflare_tunnel"><ExposureOption mode="cloudflare_tunnel" /></SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex items-end">
+            <div className="flex items-end md:col-span-2">
               <Button type="submit" disabled={createDeploymentMutation.isPending || environments.length === 0}>
                 {createDeploymentMutation.isPending ? "Deploying..." : "Deploy Selected"}
               </Button>
@@ -437,13 +419,7 @@ export default function ProjectDeploymentsPage() {
           <p className="mt-3 text-sm text-muted-foreground">
             This deploys only the selected environment. Your selected environment is remembered in this browser.
           </p>
-          <div className="mt-6 border-t pt-5">
-            <div>
-              <h2 className="text-base font-semibold">Branch environments</h2>
-              <p className="text-sm text-muted-foreground">
-                These cards show which Git branch belongs to each environment. Click one to choose the default target for manual deploys.
-              </p>
-            </div>
+          <DisclosureSection className="mt-6" title="Branch environments" description={`${environments.length} environments · manage branches and runtime defaults`}>
           {environments.length === 0 ? (
             <div className="mt-4 rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
               No environments are configured for this project.
@@ -548,6 +524,7 @@ export default function ProjectDeploymentsPage() {
                         <div className="flex items-center justify-between gap-2 pt-1 border-t border-border/40" onClick={(event) => event.stopPropagation()}>
                           <span className="text-[10px] uppercase font-mono tracking-wider text-muted-foreground">Change URL Mode:</span>
                           <Select
+                            items={exposureOptions}
                             value={
                               environment.current_runtime_url?.includes("trycloudflare.com")
                                 ? "cloudflare_tunnel"
@@ -565,13 +542,13 @@ export default function ProjectDeploymentsPage() {
                             }}
                             disabled={updatingExposureDeploymentId === environment.current_deployment_id}
                           >
-                            <SelectTrigger size="sm" className="h-7 w-36 text-xs bg-muted/40 font-medium">
+                            <SelectTrigger size="sm" className="h-8 w-64 max-w-full bg-muted/40">
                               <SelectValue placeholder="Exposure Mode" />
                             </SelectTrigger>
                             <SelectContent align="end">
-                              <SelectItem value="direct">🔌 Direct Port</SelectItem>
-                              <SelectItem value="portless">🌐 Portless</SelectItem>
-                              <SelectItem value="cloudflare_tunnel">⚡ Cloudflare</SelectItem>
+                              <SelectItem value="direct"><ExposureOption mode="direct" /></SelectItem>
+                              <SelectItem value="portless"><ExposureOption mode="portless" /></SelectItem>
+                              <SelectItem value="cloudflare_tunnel"><ExposureOption mode="cloudflare_tunnel" /></SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -582,7 +559,7 @@ export default function ProjectDeploymentsPage() {
               })}
             </div>
           )}
-          </div>
+          </DisclosureSection>
         </CardContent>
       </Card>
 
@@ -646,13 +623,7 @@ export default function ProjectDeploymentsPage() {
                           >
                             Open <AppIcon name="external-link" fallback={ExternalLink} className="h-3 w-3" />
                           </a>
-                          <span className="font-mono text-[10px] text-muted-foreground">
-                            {deployment.runtime_url.includes("trycloudflare.com")
-                              ? "⚡ Cloudflare"
-                              : deployment.runtime_url.includes(".localhost")
-                              ? "🌐 Portless"
-                              : "🔌 Localhost"}
-                          </span>
+                          <span className="text-xs text-muted-foreground"><ExposureOption compact mode={deployment.runtime_url.includes("trycloudflare.com") ? "cloudflare_tunnel" : deployment.runtime_url.includes(".localhost") ? "portless" : "direct"} /></span>
                         </div>
                       ) : (
                         <span className="text-muted-foreground">-</span>
@@ -672,6 +643,7 @@ export default function ProjectDeploymentsPage() {
                           {deployment.status === "queued" ? "Queued..." : deployment.status === "building" ? "Building..." : "Rebuild"}
                         </Button>
                         <Select
+                          items={runtimeOptions}
                           value={runtimeTarget}
                           onValueChange={(value) => {
                             if (!value) return;
@@ -682,12 +654,12 @@ export default function ProjectDeploymentsPage() {
                           }}
                           disabled={!canDeployRuntime || deployRuntimeMutation.isPending}
                         >
-                          <SelectTrigger size="sm" className="w-32 shrink-0">
+                          <SelectTrigger size="sm" className="w-40 shrink-0">
                             <SelectValue placeholder="Runtime" />
                           </SelectTrigger>
                           <SelectContent align="start" className="w-40">
-                            <SelectItem value="docker">Docker</SelectItem>
-                            <SelectItem value="kubernetes">Kubernetes</SelectItem>
+                            <SelectItem value="docker"><TechnologyIcon id="docker" className="size-4" />Docker</SelectItem>
+                            <SelectItem value="kubernetes"><TechnologyIcon id="kubernetes" className="size-4" />Kubernetes</SelectItem>
                           </SelectContent>
                         </Select>
                         <Button
@@ -703,6 +675,7 @@ export default function ProjectDeploymentsPage() {
                           Start runtime
                         </Button>
                         <Select
+                          items={exposureOptions}
                           value={
                             deployment.runtime_url?.includes("trycloudflare.com")
                               ? "cloudflare_tunnel"
@@ -720,20 +693,20 @@ export default function ProjectDeploymentsPage() {
                           }}
                           disabled={updatingExposureDeploymentId === deployment.id}
                         >
-                          <SelectTrigger size="sm" className="h-8 w-32 shrink-0 text-xs font-mono bg-muted/30">
+                          <SelectTrigger size="sm" className="h-8 w-64 shrink-0 bg-muted/30">
                             <SelectValue placeholder="URL Mode" />
                           </SelectTrigger>
                           <SelectContent align="end">
-                            <SelectItem value="direct">🔌 Direct Port</SelectItem>
-                            <SelectItem value="portless">🌐 Portless</SelectItem>
-                            <SelectItem value="cloudflare_tunnel">⚡ Cloudflare</SelectItem>
+                            <SelectItem value="direct"><ExposureOption mode="direct" /></SelectItem>
+                            <SelectItem value="portless"><ExposureOption mode="portless" /></SelectItem>
+                            <SelectItem value="cloudflare_tunnel"><ExposureOption mode="cloudflare_tunnel" /></SelectItem>
                           </SelectContent>
                         </Select>
                         <Button
                           size="sm"
                           variant="ghost"
                           className="shrink-0"
-                          onClick={() => setSelectedDeploymentId(deployment.id)}
+                          onClick={() => router.push(`/dashboard/deployments?logs=${encodeURIComponent(deployment.id)}`)}
                         >
                           Logs
                         </Button>
@@ -749,41 +722,6 @@ export default function ProjectDeploymentsPage() {
         </CardContent>
       </Card>
 
-      {selectedDeploymentId && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Build Logs</CardTitle>
-            <CardDescription>
-              Deployment {selectedDeploymentId.slice(0, 12)}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {deploymentLogsQuery.isLoading ? (
-              <div className="flex items-center text-sm text-muted-foreground">
-                <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin"  />
-                Loading logs...
-              </div>
-            ) : deploymentLogsQuery.error ? (
-              <div className="text-sm text-destructive">Failed to load logs.</div>
-            ) : (
-              (() => {
-                const details: DeploymentDetails | undefined = deploymentLogsQuery.data?.deployment;
-                return (
-                  <>
-                    <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                      <span>Status: {details?.status || "-"}</span>
-                      <span>Image: {details?.image_name || "-"}</span>
-                    </div>
-                    <pre className="max-h-96 overflow-auto rounded-md border bg-muted/40 p-3 text-xs whitespace-pre-wrap">
-                      {details?.logs || "No logs available yet."}
-                    </pre>
-                  </>
-                );
-              })()
-            )}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

@@ -1,0 +1,8 @@
+kokoro-onnx==0.6.1
+stable-ts==2.19.1
+torch==2.9.0
+torchaudio==2.9.0
+soundfile>=0.13,<0.14
+numpy>=2,<3
+scipy>=1.15,<2
+Pillow>=11,<13

@@ -19,3 +19,22 @@ it("forwards one browser approval in memory and retains the paused/verified stre
   expect(onEvent.mock.calls.map(([event]) => event)).toEqual(frames);
   expect(storage).not.toHaveBeenCalled();
 });
+
+it("forwards a bounded voice recording for persisted chat playback", async () => {
+  const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
+    `data: ${JSON.stringify({ type: "done", status: "verified" })}\n\n`, { status: 200 }
+  ));
+  vi.stubGlobal("fetch", fetch);
+  await streamAgentReply({
+    message: "transcribed voice",
+    sessionId: "voice-chat",
+    audioAttachment: { dataUrl: "data:audio/webm;base64,fixture", mimeType: "audio/webm", durationMs: 1200 },
+    onEvent: vi.fn(),
+  });
+  const body = JSON.parse(fetch.mock.calls[0][1]!.body as string);
+  expect(body.audio_attachment).toEqual({
+    data_url: "data:audio/webm;base64,fixture",
+    mime_type: "audio/webm",
+    duration_ms: 1200,
+  });
+});

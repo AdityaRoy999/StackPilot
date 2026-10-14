@@ -90,6 +90,10 @@ class BrowserPermissionTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(permission_reason({'action':'click'},c,True))
         self.assertFalse(permission_reason({'action':'type','text':'qa@example.test'},
                                           self.control(tag='input',type='email',label='Email'),True))
+        self.assertFalse(permission_reason({'action':'click'},
+                                          self.control(tag='input',type='email',label='Email'),True))
+        self.assertTrue(permission_reason({'action':'click'},
+                                         self.control(tag='input',type='submit',label='Send',form=True),True))
         self.assertTrue(permission_reason({'action':'click'},self.control(type='button',label='Perform action',form=False),True))
 
     def test_native_validation_is_strict_boolean_and_explicit_target(self):

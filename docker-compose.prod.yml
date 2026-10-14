@@ -7,6 +7,51 @@ x-stackpilot-logging: &stackpilot-logging
     max-file: ${STACKPILOT_LOG_MAX_FILE:-5}
 
 services:
+  rdp-bridge:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    networks: [rdp]
+    logging: *stackpilot-logging
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+  rdp-gateway:
+    build: ./rdp-gateway
+    restart: unless-stopped
+    networks: [default, rdp]
+    logging: *stackpilot-logging
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - BACKEND_INTERNAL_URL=http://backend:8090
+      - GUACD_HOST=rdp-bridge
+      - RDP_ALLOWED_ORIGINS=${RDP_ALLOWED_ORIGINS:-${CORS_ALLOWED_ORIGIN}}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      rdp-bridge:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health', timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
   remote-gateway:
     build: ./remote-gateway
     container_name: stackpilot-remote-gateway
@@ -166,7 +211,7 @@ services:
       - STACKPILOT_AGENT_RUN_DB=/app/browser-state/browser-runs.sqlite3
       - STACKPILOT_AGENT_WORKER_NETWORK=${STACKPILOT_AGENT_WORKER_NETWORK:-false}
       - STACKPILOT_AGENT_WORKER_IMAGES=${STACKPILOT_AGENT_WORKER_IMAGES:-python:3.12-slim,node:22-bookworm-slim,eclipse-temurin:21-jdk,golang:1.24-bookworm,gcc:14-bookworm,ubuntu:24.04,debian:bookworm-slim,alpine:3.21}
-      - STACKPILOT_AGENT_WORKER_MEMORY=${STACKPILOT_AGENT_WORKER_MEMORY:-512m}
+      - STACKPILOT_AGENT_WORKER_MEMORY=${STACKPILOT_AGENT_WORKER_MEMORY:-1g}
       - STACKPILOT_AGENT_WORKER_FAMILIES=${STACKPILOT_AGENT_WORKER_FAMILIES:-python,node,golang,rust,eclipse-temurin,mcr.microsoft.com/dotnet/sdk,ruby,php,gcc,ubuntu,debian,alpine}
       - STACKPILOT_AGENT_DOCKER_PROVISIONING=${STACKPILOT_AGENT_DOCKER_PROVISIONING:-true}
       - STACKPILOT_AGENT_INSTANCE_ROOT=/app/uploads/agent-instances
@@ -344,6 +389,11 @@ services:
       - STACKPILOT_AI_STREAM_HEADER_TIMEOUT_SECONDS=${STACKPILOT_AI_STREAM_HEADER_TIMEOUT_SECONDS:-30}
       - STACKPILOT_AI_STREAM_IDLE_TIMEOUT_SECONDS=${STACKPILOT_AI_STREAM_IDLE_TIMEOUT_SECONDS:-30}
       - STACKPILOT_AI_BROWSER_PROVIDER_TIMEOUT_SECONDS=${STACKPILOT_AI_BROWSER_PROVIDER_TIMEOUT_SECONDS:-120}
+      - STACKPILOT_BROWSER_DECISION_URL=${STACKPILOT_BROWSER_DECISION_URL:-}
+      - STACKPILOT_BROWSER_DECISION_MODEL=${STACKPILOT_BROWSER_DECISION_MODEL:-}
+      - STACKPILOT_BROWSER_DECISION_KEY=${STACKPILOT_BROWSER_DECISION_KEY:-}
+      - STACKPILOT_BROWSER_DECISION_THRESHOLD=${STACKPILOT_BROWSER_DECISION_THRESHOLD:-0.95}
+      - STACKPILOT_BROWSER_DECISION_TIMEOUT_SECONDS=${STACKPILOT_BROWSER_DECISION_TIMEOUT_SECONDS:-2}
       - BROWSER_MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-4}
       - BROWSER_SESSION_IDLE_SECONDS=${BROWSER_SESSION_IDLE_SECONDS:-900}
       - HOST_BROWSER_CDP_URL=${HOST_BROWSER_CDP_URL:-}
@@ -390,6 +440,35 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  remote-browser-tunnel:
+    build: ./browser-sandbox/ssh-tunnel
+    image: stackpilot/remote-browser-tunnel:latest
+    container_name: stackpilot-remote-browser-tunnel
+    profiles: ["remote-browser"]
+    restart: unless-stopped
+    init: true
+    logging: *stackpilot-logging
+    environment:
+      REMOTE_BROWSER_SSH_HOST: ${REMOTE_BROWSER_SSH_HOST:-}
+      REMOTE_BROWSER_SSH_USER: ${REMOTE_BROWSER_SSH_USER:-ubuntu}
+      REMOTE_BROWSER_SSH_PORT: ${REMOTE_BROWSER_SSH_PORT:-22}
+    volumes:
+      - remote_browser_ssh:/run/remote-browser-ssh:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+    pids_limit: 32
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "4", "http://localhost:9222/json/version"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   browser-sandbox:
     networks: [default, runtime]
@@ -532,10 +611,14 @@ services:
       - loki
 
 networks:
+  rdp:
   runtime:
     name: ${STACKPILOT_RUNTIME_NETWORK:-stackpilot-runtime}
 
 volumes:
+  remote_browser_ssh:
+    external: true
+    name: stackpilot_remote_browser_ssh
   agent_workspaces:
   alloy_data:
   agent_run_state:

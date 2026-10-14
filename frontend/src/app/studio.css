@@ -1,0 +1,134 @@
+/* Portfolio-inspired geometry, expressed as shared tokens so every page and
+   portal uses the same design in light and dark modes. No external assets. */
+html[data-ui-theme="studio"] {
+  --app-font-sans: "Segoe UI", Arial, Helvetica, sans-serif;
+  --radius: .375rem;
+  --background: #fafafa;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #27272a;
+  --muted: #f4f4f5;
+  --muted-foreground: #64646e;
+  --accent: #efeff1;
+  --accent-foreground: #18181b;
+  --border: #e4e4e7;
+  --input: #d4d4d8;
+  --ring: #71717a;
+  --destructive: #c52636;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #18181b;
+  --sidebar-primary: #18181b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f4f4f5;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: #71717a;
+  --chart-1: #18181b;
+  --chart-2: #16806a;
+  --chart-3: #508bd0;
+  --chart-4: #9377c5;
+  --chart-5: #b98228;
+  --ink: var(--foreground);
+  --ink-2: #3f3f46;
+  --ink-3: var(--muted-foreground);
+  --line: var(--border);
+  --line-strong: var(--input);
+  --surface: var(--card);
+  --field: var(--card);
+  --inset: var(--muted);
+  --hover: var(--accent);
+  --hover-2: #e4e4e7;
+  --green: #087b5e;
+  --red: #c52636;
+  --green-tint: #ecfdf5;
+  --red-tint: #fff1f2;
+}
+html.dark[data-ui-theme="studio"] {
+  --background: #101012;
+  --foreground: #f1f1f3;
+  --card: #151517;
+  --card-foreground: #f1f1f3;
+  --popover: #19191c;
+  --popover-foreground: #f1f1f3;
+  --primary: #f1f1f3;
+  --primary-foreground: #18181b;
+  --secondary: #232326;
+  --secondary-foreground: #e4e4e7;
+  --muted: #202023;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272b;
+  --accent-foreground: #f1f1f3;
+  --border: #2d2d32;
+  --input: #3f3f46;
+  --ring: #a1a1aa;
+  --destructive: #fb7185;
+  --sidebar: #151517;
+  --sidebar-foreground: #f1f1f3;
+  --sidebar-primary: #f1f1f3;
+  --sidebar-primary-foreground: #18181b;
+  --sidebar-accent: #232326;
+  --sidebar-accent-foreground: #f1f1f3;
+  --sidebar-border: #2d2d32;
+  --sidebar-ring: #a1a1aa;
+  --chart-1: #e4e4e7;
+  --chart-2: #34d399;
+  --chart-3: #60a5fa;
+  --chart-4: #c4b5fd;
+  --chart-5: #fbbf24;
+  --ink-2: #d4d4d8;
+  --hover-2: #323238;
+  --green: #34d399;
+  --red: #fb7185;
+  --green-tint: #11281e;
+  --red-tint: #30171e;
+}
+html[data-ui-theme="studio"] body { font-family: var(--app-font-sans); }
+html[data-ui-theme="studio"] :is([data-slot="card"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="popover-content"], [data-slot="select-content"]) {
+  border: 1px solid var(--border);
+  box-shadow: none;
+  border-radius: 10px;
+  --tw-ring-shadow: 0 0 transparent;
+  background-image: none;
+}
+html[data-ui-theme="studio"] :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"], [data-slot="popover-content"], [data-slot="select-content"]) {
+  box-shadow: 0 16px 48px rgb(0 0 0 / .12);
+}
+html[data-ui-theme="studio"] [data-slot="card-header"] { padding-inline: 20px; }
+html[data-ui-theme="studio"] [data-slot="card-content"] { padding-inline: 20px; }
+html[data-ui-theme="studio"] [data-slot="card-footer"] { background: var(--muted); border-color: var(--border); border-radius: 0 0 9px 9px; }
+html[data-ui-theme="studio"] :is([data-slot="button"], [data-slot="input"], [data-slot="select-trigger"], [data-slot="textarea"], [data-slot="tabs-list"]) { border-radius: 6px; box-shadow: none; }
+html[data-ui-theme="studio"] :is([data-slot="input"], [data-slot="textarea"], [data-slot="select-trigger"]) { background: var(--card); }
+html[data-ui-theme="studio"] [data-slot="tabs-list"] { gap: 4px; border: 1px solid var(--border); background: var(--muted); }
+html[data-ui-theme="studio"] [data-slot="tabs-trigger"] { border-radius: 4px; }
+html[data-ui-theme="studio"] [data-slot="table-head"] { font-size: 11px; font-weight: 500; letter-spacing: .04em; color: var(--muted-foreground); }
+html[data-ui-theme="studio"] [data-slot="table-row"] { border-color: var(--border); }
+html[data-ui-theme="studio"] [data-slot="dashboard-shell"] > aside { background: var(--sidebar); }
+html[data-ui-theme="studio"] [data-slot="dashboard-shell"] main:not([data-full-bleed="true"]) {
+  background-image: radial-gradient(var(--border) .7px, transparent .7px);
+  background-size: 20px 20px;
+}
+.workspace-section-label { font-family: var(--font-jetbrains-mono), monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-foreground); }
+.workspace-page-heading { padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+.workspace-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.workspace-stat { min-width: 0; padding: 20px; }
+.workspace-stat + .workspace-stat { border-left: 1px solid var(--border); }
+.workspace-stat-number { display: block; margin-top: 8px; font-size: 28px; line-height: 1; font-weight: 600; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.project-source-glyph { display: grid; place-items: center; height: 36px; width: 36px; border: 1px solid var(--border); border-radius: 8px; background: var(--muted); }
+.project-setup-step { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; font-size: 12px; color: var(--muted-foreground); }
+.project-setup-step[aria-current="step"] { color: var(--foreground); font-weight: 600; }
+.project-setup-step > span:first-child { display: grid; place-items: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; border: 1px solid var(--border); font-family: var(--font-jetbrains-mono), monospace; font-size: 10px; }
+.project-setup-step[aria-current="step"] > span:first-child { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.project-setup-disclosure > summary { cursor: pointer; padding: 12px 0; font-size: 13px; font-weight: 500; }
+.project-setup-disclosure > summary { margin-bottom: 0; }
+.project-setup-disclosure { border-top: 1px solid var(--border); }
+@media (max-width: 639px) {
+  .workspace-stat { padding: 14px 12px; }
+  .workspace-stat-number { font-size: 24px; }
+  .workspace-page-heading { padding-bottom: 20px; }
+}

@@ -8,6 +8,7 @@ def tool(name, description, properties=None, required=None):
 
 STRING = {'type': 'string'}
 STRINGS = {'type': 'array', 'items': STRING}
+WRITE_SCOPE = {'type':'array','items':STRING,'description':'Repository-relative files or directory/** prefixes. An existing directory is normalized to directory/**. Omit for read-only tasks. Use the narrow files/directories the worker needs to edit.'}
 COMPLETION_CHECK = {'type': 'object', 'properties': {
     'argv': STRINGS, 'root': STRING, 'image': STRING,
     'setup': {'type': 'array', 'items': STRINGS}, 'network': {'type': 'boolean'},
@@ -20,6 +21,9 @@ COMPLETION_CONTRACT = {'type': 'object', 'properties': {
         'required': ['id', 'description', 'checks'], 'additionalProperties': False}}},
     'required': ['summary', 'workload', 'features'], 'additionalProperties': False}
 TEAM_TOOLS = [
+    tool('get_project_context', 'Read executor-owned project context: selected branch/commit/environment, configured branch mappings, runtime target, and dotenv/configured variable names and scopes. Values and credentials are never returned. Runtime placement does not decide whether dependencies are hosted or local.'),
+    tool('check_service_connection', 'Check a saved service connection by environment-variable name. The executor resolves the selected environment privately; no URL values, header values or response bodies are returned. HTTP is a read-only GET with TLS verification. Remote database checks verify TCP connectivity only, not authentication. Local service names require runtime-network verification. Use header_keys to reference saved credentials by name.',
+         {'key':STRING,'path':STRING,'header_keys':{'type':'object','maxProperties':8,'additionalProperties':STRING}},['key']),
     tool('get_execution_capabilities', 'Inspect registered Linux sandbox capabilities and admitted toolchain images before choosing a worker. Docker can select versioned SDK images and provision isolated task instances, including Ubuntu. Admission is not successful execution. Missing capabilities return concrete prerequisites; cloud VM provisioning is not implemented.',
          {'capabilities': STRINGS, 'image': STRING}),
     tool('build_worker_image', 'Worker only: build a custom Linux SDK from a Dockerfile in this task source when a versioned SDK is insufficient. The isolated build receives source only, never platform credentials, host mounts or the Docker socket. Returns an observed immutable image digest scoped to this run; use it with run_worker_command or completion checks. A successful image build does not verify the application.',
@@ -44,7 +48,7 @@ TEAM_TOOLS = [
     tool('discover_agent_tools', 'Load additional tool schemas when needed. Choose browser, research, team, repository, or instances, or explicit tool names. Tools are available by capability, not a fixed specialist role.',
          {'group':STRING,'names':STRINGS}),
     tool('spawn_agent', 'Create a real asynchronous teammate with a goal and isolated source workspace. Choose its role freely. Assign disjoint write scopes for parallel edits; omit write_scope for read-only investigation. Returns queued, never verified completion.',
-         {'goal': STRING, 'role': STRING, 'write_scope': STRINGS, 'depends_on': STRINGS, 'completion_contract': STRING}, ['goal']),
+         {'goal': STRING, 'role': STRING, 'write_scope': WRITE_SCOPE, 'depends_on': STRINGS, 'completion_contract': STRING}, ['goal']),
     tool('list_agents', 'Inspect this run\'s actual tasks, states, results, patches and unresolved prerequisites.'),
     tool('send_agent_message', 'Send a persistent message to a teammate ID or lead. Include interface requirements and evidence; never credentials.',
          {'recipient': STRING, 'message': STRING}, ['recipient', 'message']),
@@ -56,16 +60,19 @@ TEAM_TOOLS = [
     tool('read_agent_patch', 'Inspect a peer patch and its proposed file contents without changing any workspace.',
          {'patch_id': STRING}, ['patch_id']),
     tool('verify_agent_source', 'Lead only: queue independent execution of the accepted repository test commands on the current integrated source. Uses executor exit codes, not a teammate claim or image-supplied JSON. Select an allowed toolchain image and optional dependency setup argv commands. A successful verification is invalidated by further source edits.',
-         {'image':STRING,'network':{'type':'boolean'},'setup':{'type':'array','items':STRINGS},'timeout_seconds':{'type':'integer','minimum':1,'maximum':300}}),
+         {'image':STRING,'network':{'type':'boolean'},'setup':{'type':'array','items':STRINGS},'timeout_seconds':{'type':'integer','minimum':1,'maximum':300},'repair_environment':{'type':'boolean','description':'After a failed verification on this exact source revision, repair only the admitted SDK/setup/network. Frozen test commands, roots and expected outputs remain unchanged.'}}),
     tool('revise_agent_task', 'Lead only: replace a failed, blocked or submitted task with a new task based on the current integration source. Preserves patch history, rewires waiting dependencies and revokes the old task. Use this to resolve conflicts and retest; never force overwrite.',
-         {'agent_id': STRING, 'goal': STRING, 'write_scope': STRINGS}, ['agent_id', 'goal']),
+         {'agent_id': STRING, 'goal': STRING, 'write_scope': WRITE_SCOPE}, ['agent_id', 'goal']),
     tool('cancel_agent', 'Cancel a task and its descendants, revoking execution leases.', {'agent_id': STRING}, ['agent_id']),
     tool('request_prerequisite', 'Record an irreducible missing credential reference, capability or requirement and pause this task. Do not use for ordinary repairable source defects.',
          {'kind': STRING, 'description': STRING}, ['kind', 'description']),
     tool('resolve_agent_requirement', 'Lead only: resolve a requirement using evidence or a credential reference, then resume its blocked task. Never include secret values.',
          {'requirement_id': STRING, 'resolution': STRING}, ['requirement_id', 'resolution']),
     tool('run_worker_command', 'Run an argv command in an isolated Docker worker containing only this task\'s source, with no control-plane credentials or Docker socket. Omit sandbox_id for a fresh disposable worker, or supply this task attempt\'s provisioned sandbox_id to reuse installed SDKs and build state. An existing instance retains its admitted image/network policy. Source changes remain scoped and require integration. Independent release acceptance always uses fresh disposable workers.',
-         {'argv': STRINGS, 'image': STRING, 'sandbox_id': STRING, 'timeout_seconds': {'type': 'integer', 'minimum': 1, 'maximum': 300},
+         {'argv': STRINGS, 'root': {'type':'string','description':'Repository-relative component directory, e.g. apps/api. argv paths are relative to this directory.'},
+          'setup': {'type':'array','maxItems':32,'items':STRINGS},
+          'prepare_environment': {'type':'boolean','description':'For disposable workers, infer SDK/dependency setup from the selected root. Defaults true for test commands. Setup and argv run in the same guest; separate disposable calls lose installed dependencies.'},
+          'image': STRING, 'sandbox_id': STRING, 'timeout_seconds': {'type': 'integer', 'minimum': 1, 'maximum': 300},
           'network': {'type': 'boolean'}, 'capabilities': STRINGS}, ['argv']),
     tool('workspace_delete_file', 'Delete a scoped file only at its observed revision. Deleting tests cannot waive release acceptance.',
          {'file_path': STRING, 'expected_revision': STRING}, ['file_path', 'expected_revision']),
@@ -110,7 +117,7 @@ TOOL_GROUPS = {
     'repository':REPO_NAMES & CHILD_TOOLS,
     'instances':INSTANCE_NAMES,
 }
-INITIAL_TOOLS = {'analyze_repository','discover_agent_tools','workspace_list_files','workspace_read_file','workspace_write_file',
+INITIAL_TOOLS = {'get_project_context','check_service_connection','analyze_repository','discover_agent_tools','workspace_list_files','workspace_read_file','workspace_write_file',
                  'workspace_edit_file','run_worker_command','build_worker_image','request_prerequisite','spawn_agent',
                  'send_agent_message','read_agent_messages','list_agents','wait_agents','submit_agent_patch','get_completion_status','get_execution_capabilities'}
 INITIAL_TOOLS |= INSTANCE_NAMES

@@ -610,7 +610,7 @@ void SshController::probeConnection(
             if (equals == std::string::npos || line.rfind("__STACKPILOT_", 0) == 0) {
                 continue;
             }
-            capabilities[line.substr(0, equals)] = line.substr(equals + 1);
+            capabilities[line.substr(0, equals)] = strings::trim(line.substr(equals + 1));
         }
 
         pqxx::work observation(*conn);

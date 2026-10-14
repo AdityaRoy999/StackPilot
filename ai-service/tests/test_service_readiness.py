@@ -22,12 +22,21 @@ class Connection:
 
 
 class ServiceReadinessTests(unittest.IsolatedAsyncioTestCase):
-    async def result(self, writable=True, constructor_error=None):
+    async def result(self, writable=True, constructor_error=None, remote_only=False):
         connection = Connection(writable)
         journal = SimpleNamespace(connection=lambda: connection)
         original = httpx.AsyncClient
-        transport = httpx.MockTransport(lambda request: httpx.Response(200, json={'webSocketDebuggerUrl': 'ws://fixture/devtools'}))
-        with patch.dict('os.environ', {'STACKPILOT_AI_SERVICE_TOKEN': 'fixture'}), \
+        def respond(request):
+            is_remote = request.url.host == 'remote'
+            if remote_only and not is_remote:
+                return httpx.Response(503)
+            if is_remote:
+                self.assertEqual(request.headers['host'], 'localhost')
+            return httpx.Response(200, json={'webSocketDebuggerUrl': 'ws://fixture/devtools'})
+        transport = httpx.MockTransport(respond)
+        env={'STACKPILOT_AI_SERVICE_TOKEN': 'fixture'}
+        if remote_only: env['REMOTE_BROWSER_SANDBOX_URL']='http://remote:9222'
+        with patch.dict('os.environ', env), \
              patch('app.tools.get_db_connection', return_value=Connection()), \
              patch('app.browser_testing.run_state.RunJournal', return_value=journal, side_effect=constructor_error), \
              patch('app.service_readiness.httpx.AsyncClient', side_effect=lambda **kwargs: original(transport=transport, **kwargs)):
@@ -50,3 +59,9 @@ class ServiceReadinessTests(unittest.IsolatedAsyncioTestCase):
         result, _ = await self.result(constructor_error=OSError('missing storage'))
         self.assertFalse(result['ready'])
         self.assertFalse(result['dependencies']['browser_checkpoint_storage'])
+
+    async def test_remote_worker_keeps_service_ready_when_local_worker_is_absent(self):
+        result, _ = await self.result(remote_only=True)
+        self.assertTrue(result['ready'])
+        self.assertFalse(result['browser_modes']['local'])
+        self.assertTrue(result['browser_modes']['remote'])

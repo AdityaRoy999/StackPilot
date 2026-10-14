@@ -12,6 +12,7 @@ public:
     ADD_METHOD_TO(AiController::updateSettings, "/api/v1/ai/settings", drogon::Put);
     ADD_METHOD_TO(AiController::listModels, "/api/v1/ai/models", drogon::Get, drogon::Post);
     ADD_METHOD_TO(AiController::testConnection, "/api/v1/ai/connection-test", drogon::Post);
+    ADD_METHOD_TO(AiController::dictation, "/api/v1/ai/dictation", drogon::Post);
     ADD_METHOD_TO(AiController::chatAgent, "/api/v1/ai/chat", drogon::Post);
     ADD_METHOD_TO(AiController::chatAgentStream, "/api/v1/ai/chat/stream", drogon::Post);
     ADD_METHOD_TO(AiController::stopAgentStream, "/api/v1/ai/chat/stop", drogon::Post);
@@ -35,6 +36,8 @@ public:
 
     void health(const drogon::HttpRequestPtr& req,
                 std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+    void dictation(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void getSettings(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void updateSettings(const drogon::HttpRequestPtr& req,

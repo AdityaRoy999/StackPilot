@@ -45,6 +45,7 @@ struct RepositoryArchetype {
 
 struct BuildResult {
     bool success = false;
+    bool retryableInfrastructureFailure = false;
     std::string logs;
     std::string imageName;
     std::string runtimeUrl;

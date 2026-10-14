@@ -1,0 +1,103 @@
+{
+  "scope": "production frontend, staged demo data; no live writes",
+  "repairEvidence": "tests/artifacts/github-real-healing.json",
+  "repairSummary": "Faithful editorial reconstruction, not a captured original conversation",
+  "shots": {
+    "dashboard": {
+      "path": "public/product-v2/dashboard.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "repository": {
+      "path": "public/product-v2/repository.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "configure": {
+      "path": "public/product-v2/configure.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "review": {
+      "path": "public/product-v2/review.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "stack": {
+      "path": "public/product-v2/stack.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "environments": {
+      "path": "public/product-v2/environments.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "agent": {
+      "path": "public/product-v2/agent.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "deployments": {
+      "path": "public/product-v2/deployments.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "logs": {
+      "path": "public/product-v2/logs.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "runtime": {
+      "path": "public/product-v2/runtime.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "remote-settings": {
+      "path": "public/product-v2/remote-settings.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    },
+    "remote-form": {
+      "path": "public/product-v2/remote-form.png",
+      "viewport": [
+        1600,
+        1000
+      ],
+      "dpr": 2
+    }
+  }
+}

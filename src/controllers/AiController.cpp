@@ -9,6 +9,7 @@
 #include "../services/BuildService.h"
 #include "../services/JobQueueService.h"
 #include "../services/DeploymentOperations.h"
+#include "../services/DeploymentEnvironmentContext.h"
 #include "../utils/AiRedaction.h"
 #include "../utils/AuditLogger.h"
 #include "../utils/JwtHelper.h"
@@ -38,6 +39,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace stackpilot {
 
@@ -882,6 +885,24 @@ void AiController::updateSettings(const drogon::HttpRequestPtr& req,
     }
 }
 
+void AiController::dictation(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+    BlockingTaskRunner::run([this,req,callback=std::move(callback)]() mutable {
+        const auto userId=extractUserId(req);
+        if(userId.empty()){sendError(callback,drogon::k401Unauthorized,"Unauthorized");return;}
+        if(req->body().size()>100000){sendError(callback,drogon::k413RequestEntityTooLarge,"Dictation audio is too large");return;}
+        const auto body=req->getJsonObject();
+        if(!body||!body->isObject()){sendError(callback,drogon::k400BadRequest,"Invalid dictation request");return;}
+        Json::Value payload(Json::objectValue);
+        for(const auto* key:{"action","session_id","sample_rate","sequence","pcm"})if(body->isMember(key))payload[key]=(*body)[key];
+        payload["user_id"]=userId;
+        const auto result=AiServiceClient::instance().postWorkflow("/voice/dictation",payload);
+        if(!result.ok){sendError(callback,result.statusCode>=400&&result.statusCode<=599?static_cast<drogon::HttpStatusCode>(result.statusCode):drogon::k503ServiceUnavailable,result.error.empty()?"Dictation is unavailable":result.error);return;}
+        auto response=drogon::HttpResponse::newHttpJsonResponse(result.body);
+        response->addHeader("Cache-Control","no-store");callback(response);
+    });
+}
+
 void AiController::listModels(const drogon::HttpRequestPtr& req,
                               std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
     // Runs off the event loop: this handler performs a synchronous call to
@@ -1275,6 +1296,8 @@ void AiController::listSessions(const drogon::HttpRequestPtr& req,
         return;
     }
 
+    // Connection-pool waits and history aggregation must not occupy a Drogon event loop.
+    BlockingTaskRunner::run([userId, callback = std::move(callback)]() mutable {
     try {
         auto conn = Database::getInstance().getConnection();
         pqxx::work txn(*conn);
@@ -1282,13 +1305,16 @@ void AiController::listSessions(const drogon::HttpRequestPtr& req,
             "SELECT s.id, s.title, s.session_type, s.project_id, s.memory_summary, s.last_model, "
             "COALESCE(s.status, 'active') AS status, "
             "s.deployment_id, "
-            "COALESCE((SELECT m.metadata->>'provider' FROM ai_messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.created_at DESC LIMIT 1),'') AS last_provider, "
-            "COALESCE((SELECT m.metadata->>'provider_connection_name' FROM ai_messages m WHERE m.session_id=s.id AND m.role='assistant' ORDER BY m.created_at DESC LIMIT 1),'') AS provider_connection_name, "
+            "COALESCE(assistant.metadata->>'provider','') AS last_provider, "
+            "COALESCE(assistant.metadata->>'provider_connection_name','') AS provider_connection_name, "
             "s.created_at, s.updated_at, "
             "(SELECT COUNT(*) FROM ai_messages m WHERE m.session_id = s.id) AS message_count, "
             "COALESCE((SELECT SUBSTRING(m.content FROM 1 FOR 2000) FROM ai_messages m WHERE m.session_id = s.id ORDER BY m.created_at DESC LIMIT 1), '') AS preview "
-            "FROM ai_sessions s WHERE s.user_id = $1 AND s.session_type IN ('agent_chat', 'project_chat', 'sre_incident') "
-            "ORDER BY s.updated_at DESC LIMIT 100",
+            "FROM (SELECT * FROM ai_sessions WHERE user_id = $1 "
+            "AND session_type IN ('agent_chat', 'project_chat', 'sre_incident') ORDER BY updated_at DESC LIMIT 100) s "
+            "LEFT JOIN LATERAL (SELECT m.metadata FROM ai_messages m WHERE m.session_id=s.id AND m.role='assistant' "
+            "ORDER BY m.created_at DESC LIMIT 1) assistant ON true "
+            "ORDER BY s.updated_at DESC",
             userId);
 
         auto sanitizePreview = [](std::string text) -> std::string {
@@ -1335,6 +1361,7 @@ void AiController::listSessions(const drogon::HttpRequestPtr& req,
         spdlog::error("AI sessions list failed: {}", e.what());
         sendError(callback, drogon::k500InternalServerError, "Failed to list AI chats");
     }
+    });
 }
 
 void AiController::getSession(const drogon::HttpRequestPtr& req,
@@ -2391,6 +2418,62 @@ void AiController::executeToolCall(const drogon::HttpRequestPtr& req,
                     else {std::ifstream input(resultFile);input>>result;}
                     std::error_code ignored;fs::remove(requestFile,ignored);fs::remove(resultFile,ignored);
                 }
+            } else if (toolName == "_internal_agent_service_check") {
+                const auto projectId=args.get("project_id", "").asString();
+                const auto depId=args.get("deployment_id", "").asString();
+                const auto key=args.get("key", "").asString();
+                const auto validKey=[](const std::string& name){return std::regex_match(name,std::regex("[A-Za-z_][A-Za-z0-9_]{0,255}"));};
+                if(!validKey(key))throw std::runtime_error("Invalid environment key");
+                const auto access=txn.exec_params("SELECT id FROM projects WHERE id=$1::uuid AND (user_id=$2::uuid OR has_project_access(id,$2::uuid,'admin'))",projectId,userId);
+                if(access.empty())throw std::runtime_error("Project administration access required for connection checks");
+                const auto context=deploymentEnvironmentContext(txn,projectId,depId);
+                const auto environmentId=context["deployment"].get("environment_id", "").asString();
+                const auto resolve=[&](const std::string& name){
+                    if(!validKey(name))throw std::runtime_error("Invalid environment key reference");
+                    const auto rows=txn.exec_params(
+                        "SELECT value_encrypted FROM ("
+                        "SELECT value_encrypted,0 AS priority FROM project_env_vars WHERE project_id=$1::uuid AND key=$3 "
+                        "UNION ALL SELECT v.value_encrypted,1 FROM project_environment_env_vars v JOIN project_environments e ON e.id=v.environment_id "
+                        "WHERE e.project_id=$1::uuid AND v.environment_id=NULLIF($2,'')::uuid AND v.key=$3 "
+                        "UNION ALL SELECT value_encrypted,CASE WHEN environment_id IS NULL THEN 2 ELSE 3 END FROM project_secrets "
+                        "WHERE project_id=$1::uuid AND key=$3 AND (environment_id IS NULL OR environment_id=NULLIF($2,'')::uuid)) candidates "
+                        "ORDER BY priority DESC LIMIT 1",projectId,environmentId,name);
+                    return rows.empty()?std::string():TokenCrypto::decrypt(rows[0][0].as<std::string>());
+                };
+                Json::Value privateRequest(Json::objectValue);
+                privateRequest["key"]=key;privateRequest["value"]=resolve(key);
+                if(args.isMember("path")) {
+                    if(!args["path"].isString()||args["path"].asString().size()>2048)throw std::runtime_error("Invalid health path");
+                    privateRequest["path"]=args["path"];
+                }
+                if(args.isMember("header_keys")) {
+                    if(!args["header_keys"].isObject()||args["header_keys"].size()>8)throw std::runtime_error("Invalid header references");
+                    for(const auto& header:args["header_keys"].getMemberNames()) {
+                        if(!args["header_keys"][header].isString())throw std::runtime_error("Invalid header key reference");
+                        const auto value=resolve(args["header_keys"][header].asString());
+                        if(value.empty())throw std::runtime_error("A referenced credential is not configured");
+                        privateRequest["headers"][header]=value;
+                    }
+                }
+                txn.commit();txnCommitted=true;
+                // mkstemp creates a private file outside any source/agent tree.
+                char requestPath[]="/tmp/stackpilot-service-check-XXXXXX";
+                const int descriptor=mkstemp(requestPath);
+                if(descriptor<0)throw std::runtime_error("Private connection check unavailable");
+                close(descriptor);
+                const std::string resultPath=std::string(requestPath)+".result";
+                struct Cleanup {
+                    std::string request,result;
+                    ~Cleanup(){std::error_code ignored;std::filesystem::remove(request,ignored);std::filesystem::remove(result,ignored);}
+                } cleanup{requestPath,resultPath};
+                {std::ofstream output(requestPath);output<<Json::writeString(Json::StreamWriterBuilder(),privateRequest);
+                 if(!output)throw std::runtime_error("Private connection check unavailable");}
+                std::string ignoredLogs;
+                const auto root=envOrDefault("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT", "/app/deployment-runtime");
+                const auto code=runCommandCaptureExitHelper("timeout 20s python3 "+shellQuoteHelper(root+"/service_connection.py")+" "+shellQuoteHelper(requestPath)+" "+shellQuoteHelper(resultPath)+" 2>/dev/null",ignoredLogs);
+                if(code||!std::filesystem::is_regular_file(resultPath)) {
+                    result["key"]=key;result["status"]="probe_unavailable";result["values_visible"]=false;result["verified"]=false;
+                } else {std::ifstream input(resultPath);input>>result;}
             } else if (toolName == "_internal_agent_workspace") {
                 namespace fs = std::filesystem;
                 std::string depId = normalizeDeploymentId(txn, args.get("deployment_id", "").asString(), userId);
@@ -2425,6 +2508,7 @@ void AiController::executeToolCall(const drogon::HttpRequestPtr& req,
                 result["source_root"] = source.string();
                 result["project_id"] = projectId;
                 result["deployment_id"] = depId;
+                result["project_context"] = deploymentEnvironmentContext(txn, projectId, depId);
             } else if(toolName=="_internal_agent_instance_cleanup") {
                 const auto runId=args.get("run_id","").asString();
                 if(!std::regex_match(runId,std::regex("[a-fA-F0-9-]{36}")))throw std::runtime_error("Invalid agent run identity");

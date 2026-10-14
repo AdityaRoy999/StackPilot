@@ -1,0 +1,44 @@
+[
+  {
+    "start": 0.5,
+    "end": 2.86,
+    "text": "Your code deserves a clearer path to launch.",
+    "file": "voice-0.wav"
+  },
+  {
+    "start": 4.5,
+    "end": 7.805958333333333,
+    "text": "Meet Stack Pilot. Your application delivery cockpit.",
+    "file": "voice-1.wav"
+  },
+  {
+    "start": 10.5,
+    "end": 15.538625,
+    "text": "Connect your repository. Choose an environment. Build, verify, and deploy.",
+    "file": "voice-2.wav"
+  },
+  {
+    "start": 18.5,
+    "end": 23.960625,
+    "text": "Give your AI agent the project context to inspect failures, make repairs, and retry.",
+    "file": "voice-3.wav"
+  },
+  {
+    "start": 26.5,
+    "end": 29.584,
+    "text": "See your runtime, logs, and browser checks together.",
+    "file": "voice-4.wav"
+  },
+  {
+    "start": 34.5,
+    "end": 38.916666666666664,
+    "text": "Connect a remote machine. Open its desktop without leaving Stack Pilot.",
+    "file": "voice-5.wav"
+  },
+  {
+    "start": 42.5,
+    "end": 46.05866666666667,
+    "text": "Your stack. Your control. Start building with Stack Pilot.",
+    "file": "voice-6.wav"
+  }
+]

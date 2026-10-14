@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { readTerminalTheme, useCanvasThemeVersion } from "@/lib/canvas-theme";
 import { isRemotePlatform, platformSocketBase } from "@/lib/remote-platform";
+import { socketTransportBase } from "@/lib/platform-transport";
 
 interface RemoteSshTerminalProps {
   connectionId: string;
@@ -19,9 +20,7 @@ interface RemoteSshTerminalProps {
 
 function getTerminalWsUrl(connectionId: string, cwd: string) {
   if(isRemotePlatform())return `${platformSocketBase()}/ws/ssh-terminal?${new URLSearchParams({connectionId,cwd})}`;
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
-  const base = new URL(apiBase);
-  base.protocol = base.protocol === "https:" ? "wss:" : "ws:";
+  const base = new URL(socketTransportBase(process.env.NEXT_PUBLIC_WS_BASE_URL));
   base.pathname = "/ws/ssh-terminal";
   base.search = new URLSearchParams({ connectionId, cwd }).toString();
   return base.toString();

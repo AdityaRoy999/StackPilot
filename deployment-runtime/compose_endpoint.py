@@ -33,7 +33,7 @@ def resolve(project, model, plan):
     for service in definition['services']:
         if service not in observed or observed[service].get('State') != 'running' or observed[service].get('Health') in {'unhealthy','starting'}:
             raise RuntimeError(f'{service}: service not ready')
-    candidates = []
+    candidates, observations = [], []
     for service, record in observed.items():
         if contract.get('primary_service') and service != contract['primary_service']:
             continue
@@ -47,9 +47,16 @@ def resolve(project, model, plan):
                         if response.status in contract['accepted_statuses']:
                             candidates.append((service,base.replace('127.0.0.1','localhost')))
                             break
-                except (urllib.error.URLError,TimeoutError,OSError): pass
+                        observations.append(f'{service}: HTTP {response.status}')
+                except urllib.error.HTTPError as exc:
+                    observations.append(f'{service}: HTTP {exc.code}')
+                except (urllib.error.URLError,TimeoutError,OSError) as exc:
+                    observations.append(f'{service}: {type(exc).__name__}')
     if len(candidates) != 1:
-        raise RuntimeError('Select primary_service and its health path in stackpilot.json; no ambiguous endpoint will be advertised')
+        if not candidates:
+            reason = '; '.join(dict.fromkeys(observations)) or 'no published TCP endpoint for the selected service'
+            raise RuntimeError(f'No endpoint passed health path {contract["health_path"]!r} with statuses {contract["accepted_statuses"]}: {reason}. Configure primary_service and health.path in stackpilot.json from the application routes, then rebuild; healthy containers alone do not verify this HTTP contract')
+        raise RuntimeError('Multiple HTTP endpoints passed: '+', '.join(service for service,_ in candidates)+'. Select primary_service in stackpilot.json; no ambiguous endpoint will be advertised')
     print('__STACKPILOT_COMPOSE_URL__='+candidates[0][1])
 
 

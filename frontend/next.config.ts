@@ -16,9 +16,18 @@ const nextConfig: NextConfig = {
     "localhost",
     "127.0.0.1",
   ],
+  experimental: { proxyTimeout: 300000 },
   async rewrites() {
     const backend = process.env.STACKPILOT_BACKEND_INTERNAL_URL || "http://127.0.0.1:8090";
-    return [{ source: "/api/v1/remote/:path*", destination: `${backend}/api/v1/remote/:path*` }];
+    const agent = process.env.STACKPILOT_AI_INTERNAL_URL || "http://127.0.0.1:8010";
+    const desktop = process.env.STACKPILOT_RDP_INTERNAL_URL || "http://127.0.0.1:8095";
+    return [
+      { source: "/api/v1/rdp/:path*", destination: `${desktop}/api/v1/rdp/:path*` },
+      { source: "/ws/rdp", destination: `${desktop}/ws/rdp` },
+      { source: "/api/v1/:path*", destination: `${backend}/api/v1/:path*` },
+      { source: "/ws/browser/:path*", destination: `${agent}/ws/browser/:path*` },
+      { source: "/ws/:path*", destination: `${backend}/ws/:path*` },
+    ];
   },
   async redirects() {
     return [
@@ -59,7 +68,7 @@ const nextConfig: NextConfig = {
           },
           {
             key: "Permissions-Policy",
-            value: "camera=(), microphone=(), geolocation=()",
+            value: "camera=(), microphone=(self), geolocation=()",
           },
           ...(isProduction
             ? [

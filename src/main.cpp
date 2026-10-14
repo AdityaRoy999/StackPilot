@@ -494,6 +494,7 @@ int main() {
     const bool requireHttps = getEnvBoolOrDefault("STACKPILOT_REQUIRE_HTTPS", isProductionEnv());
     const bool trustProxyHeaders = getEnvBoolOrDefault("STACKPILOT_TRUST_PROXY_HEADERS", isProductionEnv());
     const int apiRateLimitPerMinute = getEnvIntOrDefault("STACKPILOT_API_RATE_LIMIT_PER_MINUTE", isProductionEnv() ? 240 : 0);
+    const int dictationRateLimitPerMinute = getEnvIntOrDefault("STACKPILOT_DICTATION_RATE_LIMIT_PER_MINUTE", 960);
 
     // Load config from file
     app.loadConfigFile("config.json");
@@ -502,7 +503,7 @@ int main() {
     // ─── CORS Configuration ─────────────────────────────────────
     // 1. Intercept OPTIONS preflight BEFORE Drogon's router touches it
     app.registerPreRoutingAdvice(
-        [allowedOrigins, requireHttps, trustProxyHeaders, apiRateLimitPerMinute](const drogon::HttpRequestPtr& req,
+        [allowedOrigins, requireHttps, trustProxyHeaders, apiRateLimitPerMinute, dictationRateLimitPerMinute](const drogon::HttpRequestPtr& req,
            drogon::AdviceCallback&& callback,
            drogon::AdviceChainCallback&& chainCallback) {
             const std::string corsOrigin = chooseCorsOrigin(req, allowedOrigins);
@@ -531,7 +532,11 @@ int main() {
 
             if (startsWith(req->path(), "/api/")) {
                 int retryAfterSeconds = 0;
-                if (isApiRateLimited(clientIp(req, trustProxyHeaders), apiRateLimitPerMinute, retryAfterSeconds)) {
+                // PCM streaming has its own bounded bucket; it must not consume
+                // the ordinary API allowance while a user dictates a message.
+                const bool dictation = req->path() == "/api/v1/ai/dictation";
+                const auto bucket = (dictation ? "dictation:" : "") + clientIp(req, trustProxyHeaders);
+                if (isApiRateLimited(bucket, dictation ? dictationRateLimitPerMinute : apiRateLimitPerMinute, retryAfterSeconds)) {
                     Json::Value err;
                     err["error"] = "Too many requests. Please wait and try again.";
                     auto resp = drogon::HttpResponse::newHttpJsonResponse(err);

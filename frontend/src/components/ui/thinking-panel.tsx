@@ -171,9 +171,11 @@ export function ThinkingPanel({
       </div>
 
       <div
+        aria-hidden={!isExpanded}
+        inert={!isExpanded}
         className={cn(
           "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
-          !isExpanded && "invisible h-0 opacity-0 pointer-events-none overflow-hidden"
+          !isExpanded && "pointer-events-none"
         )}
         style={{
           gridTemplateRows: isExpanded ? "1fr" : "0fr",

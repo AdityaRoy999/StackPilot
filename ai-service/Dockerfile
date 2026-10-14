@@ -15,6 +15,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git \
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# Bundled CPU recognizer: no browser-vendor speech service or runtime download.
+RUN python -c "import hashlib,io,urllib.request,zipfile; data=urllib.request.urlopen('https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip',timeout=120).read(); assert hashlib.sha256(data).hexdigest()=='30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498'; zipfile.ZipFile(io.BytesIO(data)).extractall('/opt/stackpilot/speech')"
+
 COPY --chown=stackpilot:stackpilot app ./app
 RUN mkdir -p /app/app/.runtime /app/browser-state /app/agent-workspaces && chown stackpilot:stackpilot /app/app/.runtime /app/browser-state /app/agent-workspaces
 

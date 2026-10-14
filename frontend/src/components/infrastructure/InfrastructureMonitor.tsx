@@ -1231,8 +1231,15 @@ export function InfrastructureMonitor() {
           </Select>
         </CardHeader>
         <CardContent>
+          {inventoryQuery.isPending || inventoryQuery.isError || !inventoryQuery.data?.kubernetes.available ? (
+            <div className="space-y-2 rounded-lg border border-dashed border-border bg-muted/20 p-5 text-sm">
+              <p className="font-medium">{inventoryQuery.isPending ? "Loading cluster inventory…" : inventoryQuery.isError ? "Could not load cluster inventory" : "No Kubernetes cluster connected"}</p>
+              <p className="max-w-xl text-muted-foreground">{inventoryQuery.isError ? "Check the target connection, then refresh to try again." : "Select a connected Kubernetes target to explore its workloads. Docker projects appear in the container inventory above."}</p>
+              <Button variant="outline" size="sm" disabled={inventoryQuery.isFetching} onClick={() => inventoryQuery.refetch()}><RefreshCw className="size-4" />Refresh inventory</Button>
+            </div>
+          ) : (
           <Tabs defaultValue="workloads" className="gap-3">
-            <TabsList aria-label="Cluster resources" className="flex group-data-horizontal/tabs:h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto bg-muted/40 [&>[data-slot=tabs-trigger]]:flex-none [&>[data-slot=tabs-trigger]]:px-3">
+            <TabsList aria-label="Cluster resources" className="section-tabs flex group-data-horizontal/tabs:h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto bg-muted/40 [&>[data-slot=tabs-trigger]]:flex-none [&>[data-slot=tabs-trigger]]:px-3">
               <TabsTrigger value="workloads">Workloads</TabsTrigger>
               <TabsTrigger value="pods">Pods</TabsTrigger>
               <TabsTrigger value="services">Services</TabsTrigger>
@@ -1268,7 +1275,7 @@ export function InfrastructureMonitor() {
                       </TableRow>
                     ))}
                     {filteredDeployments.length === 0 ? (
-                      <TableRow><TableCell colSpan={7} className="h-20 text-center text-muted-foreground">No deployments found.</TableCell></TableRow>
+                      <TableRow><TableCell colSpan={7} className="h-20 text-center text-muted-foreground">{namespaceFilter !== "all" ? "No deployments in this namespace." : "This cluster has no deployments yet."}</TableCell></TableRow>
                     ) : null}
                   </TableBody>
                 </Table>
@@ -1447,6 +1454,7 @@ export function InfrastructureMonitor() {
               </div>
             </TabsContent>
           </Tabs>
+          )}
         </CardContent>
       </Card>
 

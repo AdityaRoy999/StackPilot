@@ -20,4 +20,12 @@ describe("tool summaries", () => {
     expect(preview).toEqual({status:"unverified",verification:"0/1 explicit expectations passed",
       checks:[{status:"unverified",reason:"Page unavailable",expectation:{kind:"visible"}}]});
   });
+  it("shows the first failed batch step and its observed mismatch", () => {
+    const preview = JSON.parse(browserResultSummary({status:"failed", results:[
+      {action:"click",status:"passed"},
+      {action:"assert",status:"failed",assertions:[{status:"failed",actual:"◐",expectation:{kind:"text",expected:"Switch theme"}}]},
+    ]}));
+    expect(preview.failed_step.action).toBe("assert");
+    expect(preview.failed_step.checks[0].actual).toBe("◐");
+  });
 });

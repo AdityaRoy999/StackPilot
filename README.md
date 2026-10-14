@@ -47,8 +47,9 @@ Resource use depends on builds, concurrent browsers and deployed applications. W
 - Imports GitHub repositories, authorized local folders, SSH sources and application templates.
 - Builds and deploys web applications, Compose stacks, services and jobs; supports configured package, interactive and native worker workflows.
 - Uses isolated task workspaces and Docker instances for repository inspection and completion, with evidence and release gates.
-- Provides browser testing through local, remote and host browser modes, a live viewer, assertions and scoped approval for consequential actions.
+- Provides browser testing through local, remote and host browser modes, a live viewer, assertions, scoped approval for consequential actions and an optional [Laya/Jev decision server](docs/browser-decisions.md) for confident Fast-mode clicks.
 - Manages environments, deployment history, logs, runtime metrics, secrets, clusters and remote phone access to the dashboard.
+- Uses a consistent Studio dashboard and a [three-step project setup](docs/project-setup.md), with release status based on recorded verification evidence.
 - Offers an authenticated CLI and an MCP server for external development tools.
 
 Repository completion, native workers and advanced runtime combinations require their documented prerequisites. Incomplete requirements, missing credentials, unsupported hardware and failing verification can block a release. **StackPilot cannot guarantee deployment of every repository.** The remaining work is recorded in the [completion plan](docs/stackpilot-completion-plan.md).

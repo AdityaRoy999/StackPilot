@@ -235,19 +235,6 @@ def discover(root, nested=False):
         if sdk:
             if not isinstance(sdk, dict): raise ValueError('global.json sdk must be an object')
             add('dotnet', sdk.get('version'), 'global.json#sdk.version')
-        projects = []
-        scanned = 0
-        for directory, dirs, files in os.walk(root, followlinks=False):
-            directory = Path(directory)
-            dirs[:] = sorted(name for name in dirs if name not in {'.git', 'node_modules', 'obj', 'bin', '.stackpilot-runtime', '.venv', 'venv', 'target', 'dist', 'build'} and not (directory/name).is_symlink())
-            if not nested or len(directory.relative_to(root).parts)>=16: dirs[:] = []
-            scanned += len(files)
-            if scanned>20000:
-                if projects: raise ValueError('.NET discovery file budget exceeded; select a component root')
-                break
-            projects.extend(directory/name for name in sorted(files) if name.endswith('.csproj'))
-            if len(projects)>128: raise ValueError('More than 128 .NET projects; select a component root')
-        projects.sort()
         declared_project = None
         contract_text = read(root, 'stackpilot.json')
         if contract_text:
@@ -255,7 +242,21 @@ def discover(root, nested=False):
             if isinstance(contract, dict) and contract.get('project'):
                 declared_project = contract['project']
                 if not isinstance(declared_project, str) or Path(declared_project).is_absolute() or '..' in Path(declared_project).parts or not (root/declared_project).resolve().is_relative_to(root): raise ValueError('Selected .NET project must remain within the repository')
-                if (root/declared_project) not in projects: raise ValueError('Selected .NET project is not present in bounded discovery')
+                if not read(root, declared_project): raise ValueError('Selected .NET project must be a bounded regular project file')
+        projects = [root/declared_project] if declared_project else []
+        scanned = 0
+        if not declared_project:
+            for directory, dirs, files in os.walk(root, followlinks=False):
+                directory = Path(directory)
+                dirs[:] = sorted(name for name in dirs if name not in {'.git', 'node_modules', 'obj', 'bin', '.stackpilot-runtime', '.venv', 'venv', 'target', 'dist', 'build'} and not (directory/name).is_symlink())
+                if not nested or len(directory.relative_to(root).parts)>=16: dirs[:] = []
+                scanned += len(files)
+                if scanned>20000:
+                    if projects: raise ValueError('.NET discovery file budget exceeded; select a component root')
+                    break
+                projects.extend(directory/name for name in sorted(files) if name.endswith('.csproj'))
+                if len(projects)>128: raise ValueError('More than 128 .NET projects; select a project or component root')
+        projects.sort()
         for path in projects:
             evidence.setdefault('dotnet', [])
             relative = path.relative_to(root).as_posix()
@@ -263,7 +264,7 @@ def discover(root, nested=False):
             for item in xml.iter():
                 if item.tag.rsplit('}', 1)[-1] in {'TargetFramework', 'TargetFrameworks'}:
                     for framework in (item.text or '').split(';'):
-                        match = re.fullmatch(r'(?:netcoreapp|net)(\d+\.\d+)', framework.strip())
+                        match = re.fullmatch(r'(?:netcoreapp|net)(\d+\.\d+)(?:-windows[0-9.]*)?', framework.strip())
                         if match:
                             add('dotnet', match[1], relative+'#TargetFramework', 'minimum')
                             if not declared_project or path == root/declared_project: add('dotnet', match[1], relative+'#TargetFramework', 'runtime')
@@ -293,6 +294,8 @@ def discover(root, nested=False):
         issues = problems.get(kind, [])[:]
         version = None
         runtime = None
+        target_platform = None
+        if kind=='dotnet' and any('-windows' in (read(root, f['source'].split('#')[0]) or '') for f in facts if '#TargetFramework' in f['source']):target_platform='windows'
         try:
             pins = [numeric(f['requirement']) for f in facts if f['mode'] == 'pin']
             if kind == 'java': pins = ['8' if value in {'1.8', '1.8.0'} else value for value in pins]
@@ -327,6 +330,7 @@ def discover(root, nested=False):
         except ValueError as exc: issues.append(str(exc)); version = None
         results.append({'kind': kind, 'version': version, 'image': image(kind, version) if version and kind in DEFAULTS else None,
                         'runtime_version': runtime, 'assumed': not bool(facts), 'evidence': facts,
+                        'target_platform':target_platform,
                         'issues': issues, 'status': 'requires_configuration' if issues or not version else 'selected',
                         'execution_verified': False})
     return results
@@ -367,8 +371,14 @@ def verification_profile(root):
         result.update({'image': selected['image'], 'kind': kind, 'toolchain': selected})
         setup = result['setup']
         if kind == 'python':
+            project = toml_loads(read(root, 'pyproject.toml') or '').get('project', {})
+            extras = project.get('optional-dependencies', {})
+            # Respect the repository's declared test plugins and versions (e.g.
+            # pytest-cov/asyncio). Installing pytest alone is not its test SDK.
+            test_extras = [name for name in ('test', 'tests', 'dev') if name in extras]
+            target = '.['+','.join(test_extras)+']' if test_extras else '.'
             if (root/'requirements.txt').is_file(): setup.append(['python', '-m', 'pip', 'install', '--no-cache-dir', '-r', 'requirements.txt'])
-            elif any((root/name).is_file() for name in ('pyproject.toml', 'setup.py')): setup.append(['python', '-m', 'pip', 'install', '--no-cache-dir', '.'])
+            if any((root/name).is_file() for name in ('pyproject.toml', 'setup.py')): setup.append(['python', '-m', 'pip', 'install', '--no-cache-dir', target])
             if any(root.glob('test*.py')) or (root/'tests').is_dir(): setup.append(['python', '-m', 'pip', 'install', '--no-cache-dir', 'pytest'])
         elif kind == 'node':
             package = json.loads(read(root, 'package.json'))

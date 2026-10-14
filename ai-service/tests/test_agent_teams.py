@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 import unittest
+from unittest.mock import patch, AsyncMock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,7 +32,11 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         self.workspaces = Workspaces(root/'workspaces')
         async def broker(name, args, user):
             if name == '_internal_agent_workspace':
-                return {'project_id':'project-1','deployment_id':'deployment-1','source_root':str(self.source)}
+                return {'project_id':'project-1','deployment_id':'deployment-1','source_root':str(self.source),
+                    'project_context':{'project':{'id':'project-1','name':'Fixture'},
+                        'deployment':{'id':'deployment-1','environment_id':'production','branch':'main','execution_mode':'local'},
+                        'configured_branches':['main','development'],
+                        'effective_env_keys':[{'key':'DATABASE_URL','scope':'environment','environment_id':'production','value':'never-visible'}]}}
             return {'authorized':True}
         self.runtime = TeamRuntime(self.store, self.workspaces, broker=broker)
         self.actor = await self.runtime.attach(SimpleNamespace(user_id='owner',session_id='session',project_id='project-1',
@@ -46,10 +51,50 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.runtime.close()
 
+    async def test_project_context_is_authoritative_key_only_and_available_to_agents(self):
+        context=await self.runtime.handle(self.actor,'get_project_context',{})
+        self.assertEqual(context['deployment']['branch'],'main')
+        self.assertEqual(context['effective_env_keys'][0]['environment_id'],'production')
+        self.assertNotIn('never-visible',json.dumps(context))
+        self.assertFalse(context['values_visible'])
+        with self.assertRaises(PermissionError):
+            await self.runtime.handle(self.actor,'get_project_context',{'project_id':'other-project'})
+
+    async def test_resumed_sre_run_persists_high_reasoning_for_its_workers(self):
+        self.store.release_lead(self.actor.run_id,self.actor.owner)
+        request=SimpleNamespace(user_id='owner',session_id='session',project_id='project-1',
+            deployment_id='deployment-1',provider='fixture',model='fixture',model_mode='fast',
+            provider_overrides={},workflow_type='sre_incident')
+        resumed=await self.runtime.attach(request)
+        self.assertEqual(resumed.run_id,self.actor.run_id)
+        self.assertEqual(json.loads(self.store.run(resumed.run_id)['settings'])['model_mode'],'thinking')
+
+    async def test_service_connection_is_bound_to_authorized_project_and_environment(self):
+        calls=[]
+        async def broker(name,args,user):
+            calls.append((name,args,user))
+            return {'authorized':True,'key':'DATABASE_URL','status':'requires_runtime_probe'}
+        self.runtime.broker=broker
+        result=await self.runtime.handle(self.actor,'check_service_connection',{'key':'DATABASE_URL'})
+        self.assertEqual(result['status'],'requires_runtime_probe')
+        self.assertEqual(calls[-1],('_internal_agent_service_check',
+            {'key':'DATABASE_URL','project_id':'project-1','deployment_id':'deployment-1'},'owner'))
+        with self.assertRaises(PermissionError):
+            await self.runtime.handle(self.actor,'check_service_connection',{'key':'DATABASE_URL','deployment_id':'other-deployment'})
+
     async def spawn(self, goal='Fix a', scope=None, dependencies=None):
         result = await self.runtime.handle(self.actor, 'spawn_agent', {'goal':goal,'role':'Freely selected specialist',
             'write_scope':scope if scope is not None else ['a.py'], 'depends_on':dependencies or []})
         return self.store.task(result['agent_id'], self.actor.run_id)
+
+    async def test_malformed_deployment_contract_preserves_previous_source(self):
+        original='{"version":1,"workload":"web"}'
+        self.workspaces.write(self.actor.run_id,'lead','stackpilot.json',original,['**'])
+        before=self.workspaces.read(self.actor.run_id,'lead','stackpilot.json')
+        for content in ('{"version":1 "workload":"web"}', '[]'):
+            with self.assertRaises(ValueError):
+                self.workspaces.write(self.actor.run_id,'lead','stackpilot.json',content,['**'],before['revision'])
+            self.assertEqual(self.workspaces.read(self.actor.run_id,'lead','stackpilot.json'),before)
 
     async def test_roles_are_free_text_and_spawn_does_not_claim_completion(self):
         task = await self.spawn()
@@ -121,6 +166,20 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
                 safe_path(self.workspaces.directory(self.actor.run_id,task['id']),path)
         with self.assertRaises(PermissionError):
             self.workspaces.write(self.actor.run_id,task['id'],'b.py','wrong',['a.py'],digest(self.source/'b.py'))
+
+    async def test_repair_snapshot_excludes_generated_plans_and_keeps_original_inputs(self):
+        from app.agent_runtime.workspace import copy_source,GENERATED_METADATA
+        for name in GENERATED_METADATA:(self.source/name).write_text('{"entrypoint":["missing.py"]}')
+        (self.source/'stackpilot.json').write_text('{"workload":"desktop"}')
+        (self.source/'Dockerfile').write_text('FROM python:3.12-slim\nCOPY . /app\n')
+        generated=self.source/'.stackpilot-runtime';generated.mkdir();(generated/'launcher.py').write_text('generated=True')
+        target=Path(self.temporary.name)/'clean-source'
+        copy_source(self.source,target)
+        self.assertEqual({path.name for path in target.iterdir()},{'a.py','b.py','stackpilot.json','Dockerfile'})
+        self.assertEqual((target/'Dockerfile').read_bytes(),(self.source/'Dockerfile').read_bytes())
+        for path in (*GENERATED_METADATA,'.stackpilot-runtime/launcher.py','apps/.stackpilot-plan.json'):
+            with self.assertRaisesRegex(PermissionError,'Edit stackpilot.json'):
+                safe_path(target,path)
 
     async def test_conflict_does_not_overwrite_newer_integration_source(self):
         first, second = await self.spawn(), await self.spawn()
@@ -198,6 +257,46 @@ class TeamTests(unittest.IsolatedAsyncioTestCase):
         self.store.acquire_lead(self.actor.run_id,'other-lead')
         with self.assertRaises(PermissionError):
             self.store.fence_lead(self.actor.run_id,self.actor.owner)
+
+    async def test_slow_workspace_setup_renews_its_lead_lease(self):
+        from app.agent_runtime.runtime import renew_lead_lease
+        initialize = self.workspaces.initialize
+        fence = self.store.fence_lead
+        in_setup = False
+        renewals_during_setup = []
+        def slow_initialize(*args):
+            nonlocal in_setup
+            in_setup = True
+            try:
+                time.sleep(.09)
+                return initialize(*args)
+            finally: in_setup = False
+        def record_fence(*args):
+            if in_setup: renewals_during_setup.append(args)
+            return fence(*args)
+        with patch.object(self.workspaces,'initialize',side_effect=slow_initialize), \
+             patch.object(self.store,'fence_lead',side_effect=record_fence), \
+             patch('app.agent_runtime.runtime.renew_lead_lease',new=lambda store,run,owner:renew_lead_lease(store,run,owner,.01)):
+            actor=await self.runtime.attach(SimpleNamespace(user_id='owner',session_id='slow-setup',project_id='project-1',
+                deployment_id='deployment-1',provider='fixture',model='fixture',model_mode='fast',provider_overrides={}))
+        self.assertTrue(renewals_during_setup,'Lease must renew while setup is still running')
+        self.store.release_lead(actor.run_id,actor.owner)
+
+    async def test_revoked_lead_ends_stream_without_dispatching_a_new_action(self):
+        from app import main
+        async def must_not_execute(*args):
+            raise AssertionError('Revoked lead must not dispatch an action')
+            yield ''
+        request=main.AgentRequest(user_id='owner',session_id='session',project_id='project-1',deployment_id='deployment-1',command='/repair',message='Repair deployment')
+        with patch('app.agent_runtime.runtime.get_runtime',return_value=self.runtime), \
+             patch.object(self.runtime,'attach',AsyncMock(return_value=self.actor)), \
+             patch.object(self.store,'fence_lead',side_effect=PermissionError('Lead execution lease revoked')), \
+             patch('app.main._stream_browser_agent_reply',must_not_execute):
+            events=[json.loads(event[6:]) async for event in main.stream_agent_reply(request)]
+        self.assertEqual(events[-1]['status'],'canceled')
+        self.assertTrue(events[-1]['stopped'])
+        self.assertFalse(events[-1]['verified'])
+        self.assertEqual(events[-2]['code'],'agent_execution_revoked')
 
     async def test_file_scope_cannot_be_expanded_to_directory(self):
         self.assertFalse(scope_contains(['src'], 'src/**'))

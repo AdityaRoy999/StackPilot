@@ -12,6 +12,11 @@ from app.tools import execute_tool_call
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_form_submit_needs_separate_outcome_evidence(self):
+        self.assertEqual(action_status({"action": "click", "requires_outcome": True,
+                                        "verification": {"verified": True, "effect_type": "visual_state_change"}}),
+                         "unverified")
+
     def test_dispatch_alone_is_not_a_pass(self):
         self.assertEqual(action_status({"status": "passed"}), "unverified")
         self.assertEqual(action_status({"error": "broken"}), "failed")
@@ -103,7 +108,8 @@ class AsyncBrowserTests(unittest.IsolatedAsyncioTestCase):
                                   discovered_subpages=[], console_logs=[], latest_frame="", capture_screenshot=AsyncMock(return_value=""))
         with patch.dict(browser_manager.sessions, {"unit": session}):
             with patch("app.tools.execute_tool_call", AsyncMock(return_value={"status": "failed", "verification": {"verified": False, "effect_type": "validation_error"}})) as execute:
-                result = await execute_tool_call("browser_interact_batch", {"session_id": "unit", "actions": [{"action": "click"}, {"action": "type"}]}, "user")
+                result = await execute_tool_call("browser_interact_batch", {"session_id": "unit", "actions": [
+                    {"action": "click", "element_id": 1}, {"action": "type", "element_id": 2, "text": "QA"}]}, "user")
                 self.assertEqual(result["status"], "failed")
                 self.assertEqual(result["executed_count"], 1)
                 self.assertEqual(execute.call_args.args[2], "user")

@@ -1,6 +1,7 @@
 "use client";
 import { isRemotePlatform, platformSocketBase, remoteRuntimeHref } from "@/lib/remote-platform";
 import { useRemotePlatform } from "@/lib/use-remote-platform";
+import { socketTransportBase } from "@/lib/platform-transport";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
@@ -252,9 +253,7 @@ interface DeploymentFilters {
 
 function getWebSocketBaseUrl() {
   if (isRemotePlatform()) return platformSocketBase();
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const host = window.location.hostname;
-  return process.env.NEXT_PUBLIC_WS_BASE_URL || `${protocol}//${host}:8090`;
+  return socketTransportBase(process.env.NEXT_PUBLIC_WS_BASE_URL);
 }
 
 function getAuthToken(): string {
@@ -564,6 +563,13 @@ export default function DeploymentsPage() {
   const router = useRouter();
   const { activeWorkspaceId } = useWorkspace();
   const [selectedDeployment, setSelectedDeployment] = useState<string | null>(null);
+  useEffect(() => {
+    const requestedLog = new URLSearchParams(window.location.search).get("logs");
+    if (requestedLog && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestedLog)) {
+      const frame = requestAnimationFrame(() => setSelectedDeployment(requestedLog));
+      return () => cancelAnimationFrame(frame);
+    }
+  }, []);
   const [runtimeDeployment, setRuntimeDeployment] = useState<Deployment | null>(null);
   const [metricsDeployment, setMetricsDeployment] = useState<Deployment | null>(null);
   const [deleteDeployment, setDeleteDeployment] = useState<Deployment | null>(null);
@@ -730,7 +736,7 @@ export default function DeploymentsPage() {
 
   const rollbackMutation = useMutation({
     mutationFn: async (deploymentId: string) => {
-      const res = await api.post(`/api/v1/deployments/${deploymentId}/rollback`);
+      const res = await api.post(`/deployments/${deploymentId}/rollback`);
       return res.data;
     },
     onSuccess: (data: { message?: string } | undefined) => {
@@ -1041,7 +1047,7 @@ export default function DeploymentsPage() {
         </Card>
       ) : (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
-          <Table>
+          <Table className="[&_th]:px-3 [&_td]:px-3">
             <TableHeader>
               <TableRow className="bg-muted/40 hover:bg-muted/40">
                 <TableHead className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Project</TableHead>
@@ -1100,9 +1106,6 @@ export default function DeploymentsPage() {
                         {dep.runtime_snapshot?.archetype === "library" && (
                           <Badge variant="outline" className="border-violet-500/40 bg-violet-500/10 text-violet-400 text-[10px] px-1.5 py-0">Library</Badge>
                         )}
-                        {dep.runtime_snapshot?.archetype === "monorepo" && (
-                          <Badge variant="outline" className="border-blue-500/40 bg-blue-500/10 text-blue-400 text-[10px] px-1.5 py-0">Monorepo</Badge>
-                        )}
                       </div>
                       {dep.environment_name && (
                         <div className="mt-0.5 text-xs text-muted-foreground">
@@ -1140,14 +1143,16 @@ export default function DeploymentsPage() {
                       )}
                     </TableCell>
                     <TableCell className="px-6 py-4">
-                      <span className="text-sm text-muted-foreground">{dep.version}</span>
+                      <span className="whitespace-nowrap text-sm text-muted-foreground" title={dep.version}>
+                        {dep.version?.match(/^release-[0-9a-f-]{36}$/i) ? dep.version.slice(0, 16) : dep.version}
+                      </span>
                     </TableCell>
                     <TableCell className="px-6 py-4 text-sm text-muted-foreground">
                       {new Date(dep.created_at).toLocaleDateString()}
                     </TableCell>
-                    <TableCell className="px-6 py-4 whitespace-nowrap">
-                      <div className="ml-auto w-max max-w-full overflow-x-auto">
-                        <div className="flex w-max items-center justify-end gap-2 whitespace-nowrap pb-1">
+                    <TableCell className="px-6 py-4">
+                      <div className="ml-auto w-max">
+                        <div className="flex flex-nowrap items-center justify-end gap-2 whitespace-nowrap">
                         {dep.trigger_source === "ai_repair" && (dep.status === "queued" || dep.status === "building") && (
                           <span className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary">
                             <AppIcon name="loader2" fallback={Loader2} className="h-3 w-3 animate-spin" />
@@ -1212,53 +1217,27 @@ export default function DeploymentsPage() {
                           variant="ghost" 
                           size="sm" 
                           onClick={() => setSelectedDeployment(dep.id)}
-                          className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          className="shrink-0 gap-2 text-muted-foreground hover:text-foreground hover:bg-muted"
+                          title="Logs"
                         >
-                          <AppIcon name="terminal" fallback={Terminal} className="w-4 h-4 mr-2"  />
-                          Logs
+                          <AppIcon name="terminal" fallback={Terminal} className="w-4 h-4"  />
+                          <span className="sr-only">Logs</span>
                         </Button>
                         {dep.image_name && (
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => setRuntimeDeployment(dep)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            className="shrink-0 gap-2 text-muted-foreground hover:text-foreground hover:bg-muted"
+                            title="Runtime"
                           >
-                            <AppIcon name="server" fallback={Server} className="w-4 h-4 mr-2"  />
-                            Runtime
+                            <AppIcon name="server" fallback={Server} className="w-4 h-4"  />
+                            <span className="sr-only">Runtime</span>
                           </Button>
                         )}
-                        {dep.image_name && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setMetricsDeployment(dep)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          >
-                            <AppIcon name="activity" fallback={Activity} className="w-4 h-4 mr-2"  />
-                            Metrics
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => rollbackMutation.mutate(dep.id)}
-                          disabled={rollbackMutation.isPending}
-                          className="shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted"
-                          title="Rollback to previous healthy deployment checkpoint"
-                        >
-                          <AppIcon name="rotate-ccw" fallback={RotateCcw} className="w-4 h-4 mr-1.5"  />
-                          Rollback
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteDeployment(dep)}
-                          className="shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                        >
-                          <AppIcon name="trash2" fallback={Trash2} className="w-4 h-4 mr-2"  />
-                          Delete
-                        </Button>
+                        {dep.image_name && <Button variant="ghost" size="sm" className="shrink-0 gap-2" title="Metrics" onClick={() => setMetricsDeployment(dep)}><Activity className="size-4" /><span className="sr-only">Metrics</span></Button>}
+                        <Button variant="ghost" size="sm" className="shrink-0 gap-2" title="Rollback" onClick={() => rollbackMutation.mutate(dep.id)} disabled={rollbackMutation.isPending}><RotateCcw className="size-4" /><span className="sr-only">Rollback</span></Button>
+                        <Button variant="ghost" size="sm" className="shrink-0 gap-2 text-destructive hover:text-destructive" title="Delete" onClick={() => setDeleteDeployment(dep)}><Trash2 className="size-4" /><span className="sr-only">Delete</span></Button>
                         </div>
                       </div>
                     </TableCell>
@@ -1313,7 +1292,12 @@ export default function DeploymentsPage() {
         <DeploymentLogsDialog 
           key={selectedDeployment}
           deploymentId={selectedDeployment} 
-          onClose={() => setSelectedDeployment(null)} 
+          onClose={() => {
+            setSelectedDeployment(null);
+            if (new URLSearchParams(window.location.search).has("logs")) {
+              router.replace("/dashboard/deployments", { scroll: false });
+            }
+          }}
           onStartBuild={() => triggerBuildMutation.mutate(selectedDeployment)}
           isStartingBuild={triggerBuildMutation.isPending}
           onCancelBuild={() => cancelDeploymentMutation.mutate(selectedDeployment)}

@@ -1,0 +1,22 @@
+{
+  "name": "stackpilot-launch-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index-v2.tsx --port 3413 --no-open",
+    "studio:v1": "remotion studio src/index.tsx --port 3412 --no-open",
+    "stills": "node tools/launch-render-v2.mjs stills",
+    "render": "node tools/launch-render-v2.mjs render",
+    "render:v1": "node tools/launch-render.mjs render",
+    "render:remotion": "remotion render src/index.tsx StackPilotLaunch out/stackpilot-launch-remotion.mp4 --codec h264 --crf 16"
+  },
+  "dependencies": {
+    "@remotion/captions": "4.0.535",
+    "@remotion/cli": "4.0.535",
+    "playwright": "1.62.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "4.0.535"
+  }
+}

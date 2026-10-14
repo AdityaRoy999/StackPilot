@@ -23,7 +23,7 @@ def explicit_workflow(goal):
             if re.search(r'(?:do\s+not|don.t|never|without|rather\s+than)\s*$',prefix):
                 continue
             verb=match.group('verb').lower()
-            obj=re.split(r'\b(?:and|then|but)\b',match.group('object'),1,flags=re.I)[0]
+            obj=re.split(r'\b(?:and|then|but)\b',match.group('object'),maxsplit=1,flags=re.I)[0]
             terms={w for w in re.findall(r'[\w-]+',obj.lower()) if w not in STOP_WORDS}
             family=FAMILIES.get(verb,{verb})
             matches.append((frozenset(family),frozenset(terms)))
@@ -49,13 +49,13 @@ def refresh_obligations(goal,coverage):
     result=[]
     for review in coverage.get('controls_requiring_review',[]):
         label=str(review.get('label') or '')
-        critical=bool(CRITICAL.search(label) or review.get('type') in {'submit','image'})
-        semantic={k:review.get(k) or '' for k in ('url','tag','role','type','name','input_id','href','form_action','form_method')}
+        critical=bool(CRITICAL.search(label) or review.get('form') is not False and review.get('type') in {'submit','image'})
+        semantic={k:review.get(k) or '' for k in ('url','tag','role','type','name','input_id','href','form_action','form_method','card_context')}
         semantic['label']=' '.join(label.casefold().split())
         identity=hashlib.sha256((digest+'|'+json.dumps(semantic,sort_keys=True,separators=(',',':'))).encode()).hexdigest()[:24]
         states=review.get('native_validation_states') or []
         obligation={**previous.get(identity,{}),'id':identity,'goal_hash':digest,
-            'url':review.get('url'),'label':label,'kind':'critical_review' if critical else 'workflow_review',
+            'url':review.get('url'),'label':label,'card_context':review.get('card_context',''),'kind':'critical_review' if critical else 'workflow_review',
             'reason':previous.get(identity,{}).get('reason') or review.get('reason','Expected workflow outcome remains unverified.')}
         if not critical:
             obligation['state']='native_checks_recorded' if states==[False,True] else 'pending_review'
@@ -109,7 +109,8 @@ async def prepare_explicit_workflow_review(goal,coverage,session):
         return None
     args={'action':'click','element_id':candidates[0]['id'],'session_id':session.session_id,'include_frame':False}
     control=await observe_step(session,args)
-    if not control or str(control.get('label') or control.get('text') or '').strip().casefold()!=label or control.get('url')!=review.get('url'):
+    from ..browser_driver import to_frontend_display_url
+    if not control or str(control.get('label') or control.get('text') or '').strip().casefold()!=label or to_frontend_display_url(control.get('url'))!=review.get('url'):
         obligation.update(state='blocked_stale',reason='The target context changed during observation; no permission or input was prepared.')
         return None
     if control.get('disabled') or not permission_reason(args,control,True):

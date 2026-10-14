@@ -31,6 +31,22 @@ def database(operation):
         connection.close()
 
 
+def close_terminal_runs(cursor):
+    """Fence detached repair workers in the incident transaction, including
+    terminal transitions made by stale-lock reconciliation after a restart.
+    Retryable incidents keep their checkpoints and existing run.
+    """
+    cursor.execute("""UPDATE agent_runs r SET state='canceled',lead_until=0,updated_at=%s
+      FROM deployment_incidents i WHERE r.session_id=i.session_id::text
+      AND r.deployment_id=i.deployment_id::text AND r.state='working'
+      AND r.settings::jsonb->>'deployment_repair'='true'
+      AND i.status IN ('failed','blocked','canceled','healed')
+      AND NOT EXISTS(SELECT 1 FROM deployment_incidents active WHERE active.session_id=i.session_id
+        AND active.status IN ('queued','running','retrying')) RETURNING r.id""", (time.time(),))
+    for row in cursor.fetchall():
+        cursor.execute("UPDATE agent_tasks SET state='canceled',lease_owner='',lease_until=0,updated_at=%s WHERE run_id=%s AND state IN ('queued','running','blocked','submitted')", (time.time(), row[0]))
+
+
 def claim(owner):
     def work(cursor):
         cursor.execute("UPDATE deployment_incidents SET status='retrying',locked_by=NULL,locked_at=NULL,next_run_at=NOW() WHERE status='running' AND locked_at<NOW()-INTERVAL '3 minutes'")
@@ -43,6 +59,7 @@ def claim(owner):
           AND NOT EXISTS(SELECT 1 FROM deployment_jobs j WHERE j.id=d.job_id
             AND j.metadata->>'ai_session_id'=i.session_id::text
             AND j.metadata->>'ai_repair'='true')""")
+        close_terminal_runs(cursor)
         cursor.execute("""UPDATE ai_sessions s SET status=CASE i.status
           WHEN 'healed' THEN 'healed' WHEN 'blocked' THEN 'blocked'
           WHEN 'canceled' THEN 'canceled' WHEN 'failed' THEN 'failed' ELSE 'healing' END,
@@ -82,10 +99,12 @@ def finish(incident, owner, status, evidence, error=''):
         # A separate status publish can fail or the worker can restart between
         # commits, leaving the badge stuck at "healing" forever.
         cursor.execute("UPDATE ai_sessions s SET status=%s,updated_at=NOW() FROM deployment_incidents i WHERE i.id=%s AND s.id=i.session_id",(session_status_for_incident(status),incident['id']))
+        if status in {'failed','blocked','canceled','healed'}:
+            close_terminal_runs(cursor)
         if status in {'failed','blocked'}:
             reason = ('The selected AI model is unavailable (provider HTTP 410). Choose an active model and retry recovery.'
                       if 'HTTP 410' in error else
-                      'Recovery stopped before a verified deployment was produced. Review the deployment logs and recovery steps.')
+                      'Recovery stopped before a verified deployment was produced. '+error[:1000])
             cursor.execute("INSERT INTO ai_messages(session_id,role,content,metadata) SELECT session_id,'assistant',%s,%s::jsonb FROM deployment_incidents WHERE id=%s AND session_id IS NOT NULL",(reason,json.dumps({'healing_event':status,'attempt':incident['attempt']}),incident['id']))
         return True
     return database(work)
@@ -159,7 +178,8 @@ def session(incident, owner):
             (sid, progress, json.dumps({'healing_event':'running','attempt':incident['attempt']})),
         )
         message_id=cursor.fetchone()[0]
-        requires_worker=snapshot.get('deployment_plan',{}).get('requires_worker')
+        plan = snapshot.get('deployment_plan') or {}
+        requires_worker = plan.get('requires_worker') if isinstance(plan, dict) else None
         return sid,message_id,project_id,name,requires_worker
     return database(work)
 
@@ -186,6 +206,15 @@ async def repair(incident, owner):
     provider,base_url,api_key,selected_model=provider_config(
         settings.get('provider'),selected_model,None,settings.get('provider_overrides') or {})
     catalog=await model_catalog(provider,base_url,api_key,selected_model)
+    from .agent_runtime.models import select_repository_planner
+    available={item['id'] for item in catalog.get('models',[])}
+    candidates=[os.getenv('NVIDIA_NIM_AGENT_PLANNER_MODEL',''),os.getenv('NVIDIA_NIM_BROWSER_PLANNER_MODEL','')]
+    if catalog.get('source')=='provider':candidates=[m for m in candidates if m in available]
+    selected_model,notice=select_repository_planner(provider,selected_model,{},candidates)
+    if notice:
+        await asyncio.to_thread(database,lambda cursor:cursor.execute(
+            "INSERT INTO ai_messages(session_id,role,content,metadata) VALUES(%s,'assistant',%s,%s::jsonb)",
+            (sid,notice,json.dumps({'healing_event':'model_fallback','reason':'required_native_tools','attempt':incident['attempt']}))))
     if catalog.get('source')=='provider':
         available=[item['id'] for item in catalog['models']]
         if selected_model and selected_model not in available:
@@ -237,17 +266,25 @@ async def repair(incident, owner):
             raise RuntimeError('Previous repair rebuild is still running; a second repair was not started')
     payload={'user_id':incident['user_id'],'project_id':project_id,'deployment_id':incident['deployment_id'],
              'session_id':sid,'provider':settings.get('provider'),'model':selected_model,
+             'workflow_type':'sre_incident','model_mode':'thinking','agent_access_mode':'full_access',
              'provider_overrides':settings.get('provider_overrides') or {},'allow_agent_questions':False,
              'project':{'id':project_id,'name':name},'deployment':{'id':incident['deployment_id']},
              'runtime':{'incident_id':incident['id']},'message':
              'Diagnose and repair this deployment using observed logs and source. Analyze the repository first. '
+             'Read get_project_context for the selected branch, commit, environment, runtime placement, dotenv keys, and configured variable scopes. Values remain private to the executor, which overlays project variables, selected-environment variables, project credentials, then environment credentials. Preserve the exact environment and branch on every rebuild. Development may use local dependencies while production uses hosted services; local runtime placement does not imply local databases. Use check_service_connection with variable names and credential-key references to diagnose external linking. Fix or create source/configuration files as needed; never fabricate values or silently replace persistent production services with empty local databases. '
+             'Distinguish a build failure from endpoint selection or verification failure; inspect the configured primary_service, health.path, workload, and actual routes before unrelated package changes. In stackpilot.json HTTP health is {"health":{"path":"/actual-route","statuses":[200]}}. Use workload api for a Compose API endpoint; web requires a real rendered application. '
+             'Call get_completion_status first: a repair plan may already preserve the declared production build or original deployed service tests with an admitted SDK. Use that plan instead of inventing replacement checks. Inspect vercel.json, render.yaml and existing hosted-service URLs. A production frontend with external API/database dependencies must retain those connections and API rewrites; do not deploy its development Compose API/database or run acceptance for externally hosted source. Respect deployment_mode=dockerfile and static_frontend when selected by the runtime. Repair deployment readiness first, then unrelated quality improvements in a separate task. A failed declared acceptance check still needs a real fix. '
+             'For worker tests select the component root (for example apps/api), use argv arrays, and prepare declared dependencies in the SAME disposable worker with setup or automatic test preparation. Separate calls lose installed dependencies. Inspect get_execution_capabilities before requesting network or instance resources; available network is a tool option, not a missing prerequisite. '
+             'Acceptance workers start from clean source, without build directories or prior installed dependencies. Inspect the original Dockerfile for required native compilers and SDKs. Create/build native dependencies in setup before testing. If an independent check failed because its frozen SDK/setup was wrong, call verify_agent_source with repair_environment=true, an admitted SDK image, setup argv arrays and the required network flag; this changes only execution prerequisites, never the frozen test commands or expected outputs. Do not keep replaying a missing directory or quote a whole script as a command name. '
              'Preserve the original application behavior and deployment target. A detected CLI must use workload cli with its real argv entrypoint, '
              'not an invented web server. Finite jobs require workload job and an explicit command; packages require a tested build_recipe and explicit outputs. '
              'If the previous inferred workload is wrong, correct the delivery contract rather than rewriting application behavior. '
-             'Add meaningful tests for the original behavior and console_scenarios for interactive input/output; run independent source verification before rebuilding. '
+             'Run the existing independent source verification before rebuilding; add console_scenarios for interactive input/output. Avoid adding unrelated requirements or tests to a narrowly scoped deployment configuration repair. '
              'Do not disable tests, replace the app with a placeholder, suppress build failures or change unrelated files. '
              'Apply the smallest justified fix, call workspace_trigger_rebuild and wait for that exact job. '
-             'Missing infrastructure, signing keys or credentials must be reported as blocked. Failure evidence: '+failure_evidence}
+             'For desktop Python, the existing desktop runtime provides Xvfb, a window manager and a noVNC viewer. Keep the original Python argv entrypoint; do not nest xvfb-run, replace the runtime CMD, add tail loops or invent an HTTP server. Lead file edits are already integrated; integrate_agent_patch only accepts IDs from actual submitted worker patches. '
+             'Missing infrastructure, signing keys or credentials must be reported as blocked. '
+             'Recovery context: '+redact_text(str(incident.get('error') or '')[:2000])+'\nObserved failure evidence: '+failure_evidence}
     token=os.getenv('STACKPILOT_AI_SERVICE_TOKEN','')
     metadata={'reasoning':'','tool_calls':[],'tool_steps':[],'healing_event':'running',
               'healing':{'state':'running','attempt':incident['attempt']}}
@@ -286,8 +323,19 @@ async def repair(incident, owner):
     row=await asyncio.to_thread(database,evidence)
     verified=bool(row and row[1]=='completed' and (row[2] or {}).get('verified') is True and row[3] in {'running','ready'})
     outcome={'job_id':row[0] if row else None,'runtime_verification':row[2] if row else None,'verified':verified}
+    from .agent_runtime.command_failures import failure_summary
+    last_failure = next((call for call in reversed(metadata['tool_calls']) if isinstance(call.get('result'),dict) and
+        (call['result'].get('error') or call['result'].get('status') in {'failed','blocked','denied'} or
+         (call['result'].get('exit_code') is not None and call['result']['exit_code'] != 0))), None)
+    reason = 'Repair has no completed, verified job for this session'
+    if last_failure:
+        result = last_failure['result']
+        detail = {'name':last_failure.get('name'), 'status':result.get('status'),
+                  'exit_code':result.get('exit_code'), 'reason':redact_text(failure_summary(result))}
+        outcome['last_tool_failure'] = detail
+        reason += '; '+str(detail['name'])+': '+detail['reason']
     state='healed' if verified else 'retrying' if incident['attempt']<3 else 'failed'
-    changed=await asyncio.to_thread(finish,incident,owner,state,outcome,'' if verified else 'Repair has no completed, verified job for this session')
+    changed=await asyncio.to_thread(finish,incident,owner,state,outcome,'' if verified else reason)
     if changed:
         if verified:
             await asyncio.to_thread(publish_session_update,incident,'healed')

@@ -16,14 +16,36 @@ class InputRecoveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result['reason'],reason)
             session.send_command.assert_not_awaited()
 
-    async def test_lost_focus_observation_retries_probe_then_inserts_only_once(self):
+    async def test_navigation_target_rechecks_after_neutral_hover(self):
+        blocked={'reason':'occluded','is_occluded':True,'target_in_navigation':True,
+                 'navigation_hover_blocker':False,'blocker':{'tag':'div','dialog':False},
+                 'neutral_pointer':{'x':998,'y':698}}
+        ready={'reason':'ready','is_occluded':False,'x':45,'y':20}
+        session=SimpleNamespace(evaluate=AsyncMock(side_effect=[blocked,ready]),
+                                send_command=AsyncMock(),_notify_listeners=lambda *_: None)
+        result=await prepare_pointer_target(session,1)
+        self.assertEqual(result['reason'],'ready')
+        session.send_command.assert_awaited_once_with('Input.dispatchMouseEvent',
+            {'type':'mouseMoved','x':998,'y':698})
+
+    async def test_dialog_covering_navigation_does_not_move_pointer(self):
+        session=SimpleNamespace(evaluate=AsyncMock(return_value={
+            'reason':'occluded','target_in_navigation':True,
+            'blocker':{'dialog':True},'neutral_pointer':{'x':998,'y':698}}),
+            send_command=AsyncMock())
+        result=await prepare_pointer_target(session,1)
+        self.assertEqual(result['reason'],'occluded')
+        session.send_command.assert_not_awaited()
+
+    async def test_lost_focus_observation_retries_probe_without_replaying_text(self):
         session=BrowserSession('input-recovery')
         session.scroll_to_element=AsyncMock(return_value=True)
         session.send_command=AsyncMock(return_value={})
-        session.evaluate=AsyncMock(side_effect=[None,{'type':'email','value':'','autocomplete':False},'qa@example.com'])
+        responses=[None,{'type':'email','value':'','autocomplete':False},True]+[True]*7+[{'kind':'native','value':'qa@example.com'}]
+        session.evaluate=AsyncMock(side_effect=responses)
         await session.type_text('qa@example.com',element_id=1)
         calls=session.send_command.call_args_list
-        self.assertEqual(sum(c.args[0]=='Input.insertText' for c in calls),1)
+        self.assertEqual(''.join(c.args[1]['text'] for c in calls if c.args[0]=='Input.insertText'),'qa@example.com')
         self.assertEqual(session.evaluate.call_args_list[0],session.evaluate.call_args_list[1])
 
     async def test_missing_or_disabled_input_never_retries_or_dispatches_text(self):

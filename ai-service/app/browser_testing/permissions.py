@@ -16,6 +16,15 @@ from ..agent_runtime.approval import argument_digest
 authorized_browser_step = ContextVar('authorized_browser_step', default=None)
 CRITICAL = re.compile(r'\b(delete|remove|destroy|revoke|reset|purchase|checkout|pay|buy|order|subscribe|unsubscribe|send|submit|publish|transfer|withdraw|confirm\s+(?:booking|payment)|sign\s*out|log\s*out)\b', re.I)
 SAFE_UI = re.compile(r'\b(theme|dark|light|menu|navigation|back|home|view\s+all|show\s+(?:more|less)|expand|collapse|close|dismiss|next|previous|tab)\b', re.I)
+QUERY_UI = re.compile(r'^(?:search(?:\s+(?:trains?|flights?|hotels?|results?|tickets?|products?|jobs?|records?|books?))?|find(?:\s+(?:trains?|flights?|results?|tickets?))?|filter|check availability|show results)$',re.I)
+
+
+def readonly_query(control):
+    """Only a bounded query form; never credentials, uploads or mixed commitment labels."""
+    label=str(control.get('label') or control.get('text') or '').strip()
+    return bool(QUERY_UI.fullmatch(label) and control.get('form_method','get').lower()=='get'
+                and not control.get('sensitive_fields')
+                and not CRITICAL.search(str(control.get('form_action') or '')))
 
 
 def harmless_ui(control):
@@ -25,7 +34,7 @@ def harmless_ui(control):
         return False
     return bool(control.get('tag') == 'summary' or control.get('role') in {'tab','switch','checkbox','radio'}
                 or control.get('aria_controls') or control.get('global')
-                or SAFE_UI.search(label))
+                or SAFE_UI.search(label) or re.match(r'^(?:view|read|details|learn more)\b',label,re.I))
 
 
 PROBE = r"""(() => {
@@ -38,10 +47,16 @@ PROBE = r"""(() => {
  return {id:ref,tag:e.tagName.toLowerCase(),role:e.getAttribute('role')||'',type:e.type||'',
    label:(e.getAttribute('aria-label')||e.innerText||e.textContent||e.placeholder||'').replace(/\s+/g,' ').trim().slice(0,160),
    name:e.name||'',input_id:e.id||'',href:anchor?.getAttribute('href')||'',
-   form:!!f,form_action:f?.getAttribute('action')||'',form_method:f?.method||'',
+   form:!!f,form_id:f ? (f.id || f.getAttribute('name') || ('form_' + [...document.forms].indexOf(f))) : '',
+   form_action:f?.getAttribute('action')||'',form_method:f?.method||'',
    aria_controls:e.getAttribute('aria-controls')||'',global:!!e.closest('nav,[role="navigation"]'),
    disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',url:location.href,
-   native_validity:f ? [...f.elements].filter(n=>n.willValidate).every(n=>n.validity.valid) : null,
+   submit_control:f ? (()=>{const submit=f.querySelector('button:not([type]),button[type="submit"],input[type="submit"],input[type="image"]');
+     return submit ? {label:(submit.getAttribute('aria-label')||submit.innerText||submit.value||'Submit').trim(),
+       tag:submit.tagName.toLowerCase(),role:submit.getAttribute('role')||'',type:submit.type,
+       name:submit.name||'',input_id:submit.id||'',form:true} : null;})() : null,
+    native_validity:f ? [...f.elements].filter(n=>n.willValidate).every(n=>n.validity.valid) : null,
+    sensitive_fields:f ? [...f.elements].some(n=>['password','file'].includes(n.type)) : false,
    _state:JSON.stringify({context:(e.closest('form,[role="dialog"],tr,article')?.innerText||'').slice(0,3000),
        inputs:f?[...f.elements].map(n=>[n.name||n.id,n.type,n.type==='password'?'[redacted]':n.value,n.checked]):[]})};
 })()"""
@@ -74,9 +89,14 @@ def resolve_browser_arguments(session, name, arguments):
 
 async def observe_step(session, arguments):
     action = str(arguments.get('action') or '').lower()
+    if action=='handle_dialog':
+        dialog=getattr(session,'native_dialog',None)
+        if not dialog or dialog.get('dialog_id')!=arguments.get('dialog_id'):return None
+        return {'url':dialog.get('url') or session.current_url,'tag':'native_dialog','type':dialog['type'],
+                'input_id':dialog['dialog_id'],'label':dialog['message'],'state_digest':fingerprint(dialog)}
     if action == 'navigate':
         return {'url':getattr(session,'current_url',''),'href':arguments.get('url',''),'tag':'navigation','label':'Navigate'}
-    if action not in {'click','double_click','right_click','press_key','type','set_checked','toggle_checkbox','select_option','drag_and_drop'}:
+    if action not in {'click','double_click','right_click','press_key','type','choose_option','choose_date','set_checked','toggle_checkbox','select_option','drag_and_drop'}:
         return None
     arguments = resolve_browser_arguments(session,'browser_interact',arguments)
     if arguments.get('element_id') is None:
@@ -94,6 +114,12 @@ async def observe_step(session, arguments):
             target = {'x':arguments.get('end_x'),'y':arguments.get('end_y')}
         probe = await evaluator(PROBE.replace('__ACTION__', json.dumps(target)))
         if isinstance(probe, dict):
+            observed = [c for c in getattr(session,'interactive_elements',[]) if
+                        arguments.get('element_id') is not None and c.get('id') == arguments['element_id'] or
+                        probe.get('input_id') and c.get('input_id') == probe['input_id']]
+            if len(observed) == 1:
+                probe['card_context'] = observed[0].get('card_context','')
+            probe.update(frame_id=getattr(session,'_selected_frame',None),tab_id=getattr(session,'target_id',None))
             state = probe.pop('_state',None)
             if state is not None:
                 probe['state_digest'] = hashlib.sha256(str(state).encode()).hexdigest()
@@ -110,14 +136,20 @@ def permission_reason(action, control, broad_audit=False):
     kind = str(action.get('action') or '').lower()
     if not control or kind in {'hover','scroll_to'}:
         return ''
+    if kind=='handle_dialog':
+        return 'Accepting this native confirmation or prompt may commit a consequential action.' if action.get('accept') and control.get('type')!='alert' else ''
     label = str(control.get('label') or control.get('text') or control.get('aria_label') or '')
-    if kind == 'type':
+    if kind == 'click' and control.get('tag') in {'input','textarea','select'} and control.get('type') not in {'submit','image','button','reset','file'}:
+        # Focusing an ordinary form field is reversible and sends no form data.
+        # The eventual type/submit action still receives its own permission gate.
+        return ''
+    if kind in {'type','choose_option','choose_date'}:
         return 'Entering credentials or uploading a file requires this specific step to be approved.' if control.get('type') in {'password','file'} else ''
     if kind == 'drag_and_drop':
         return 'Dragging into this target can move, upload, or delete content; approve this specific gesture.'
     if kind == 'navigate':
         return 'This destination may invoke a state-changing route.' if CRITICAL.search(str(control.get('href') or '')) else ''
-    if kind in {'set_checked','toggle_checkbox','select_option'} and CRITICAL.search(label):
+    if kind in {'set_checked','toggle_checkbox','select_option','choose_option'} and CRITICAL.search(label):
         return 'Changing this control may affect consent, billing, or account/server state.'
     if kind == 'press_key':
         key = str(action.get('key') or 'Enter').lower()
@@ -130,6 +162,7 @@ def permission_reason(action, control, broad_audit=False):
         if CRITICAL.search(label+' '+str(control.get('href') or '')):
             return 'This control may send data, charge money, publish, or change account/server state.'
         if control.get('form') and (kind == 'press_key' or control.get('type') in {'submit','image'}):
+            if kind!='press_key' and readonly_query(control):return ''
             return 'Submitting this form can send data or change server state.'
         if broad_audit and not control.get('href') and not harmless_ui(control):
             return 'This control has no established harmless UI semantics; approve its specific effect before testing it.'
@@ -138,8 +171,14 @@ def permission_reason(action, control, broad_audit=False):
 
 def fingerprint(control):
     # Values and passwords are deliberately excluded from the permission binding.
-    identity = {k:control.get(k) for k in ('url','tag','role','type','label','text','name','input_id','href','form','form_action','form_method','state_digest','native_validity')}
+    identity = {k:control.get(k) for k in ('url','tag','role','type','label','text','name','input_id','href','form','form_action','form_method','state_digest','native_validity','frame_id','tab_id')}
     return hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+
+def reconciliation_reason(action, control):
+    if action.get('action') in {'click','double_click','right_click','press_key','type','choose_option','choose_date','set_checked','toggle_checkbox','select_option','drag_and_drop'} and control:
+        return 'This workflow was interrupted. Inspect its live outcome first; any further input requires approval of this fresh exact step.'
+    return ''
 
 
 async def approval_requirement(session, name, arguments, broad_audit=False):
@@ -154,7 +193,7 @@ async def approval_requirement(session, name, arguments, broad_audit=False):
         if not isinstance(action,dict):
             continue
         control = await observe_step(session,action)
-        reason = permission_reason(action,control,broad_audit)
+        reason = (reconciliation_reason(action,control) if getattr(session,'campaign_recovery',False) else '') or permission_reason(action,control,broad_audit)
         if reason:
             return {'url':control.get('url') or getattr(session,'current_url',''),
                     'label':control.get('label') or control.get('text') or 'Current control',

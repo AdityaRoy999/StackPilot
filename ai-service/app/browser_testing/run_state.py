@@ -24,7 +24,9 @@ class RunJournal:
         self.path.parent.mkdir(parents=True,exist_ok=True)
         with self.connection() as db:
             db.execute('PRAGMA journal_mode=WAL')
-            db.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, goal_hash TEXT NOT NULL, state TEXT NOT NULL, updated REAL NOT NULL, pending TEXT NOT NULL, checks INTEGER NOT NULL DEFAULT 0)')
+            db.execute('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, goal_hash TEXT NOT NULL, state TEXT NOT NULL, updated REAL NOT NULL, pending TEXT NOT NULL, checks INTEGER NOT NULL DEFAULT 0, outcomes INTEGER NOT NULL DEFAULT 0)')
+            if 'outcomes' not in {row['name'] for row in db.execute('PRAGMA table_info(runs)')}:
+                db.execute('ALTER TABLE runs ADD COLUMN outcomes INTEGER NOT NULL DEFAULT 0')
             db.execute('CREATE INDEX IF NOT EXISTS runs_owner ON runs(owner,updated)')
             db.execute('CREATE TABLE IF NOT EXISTS events (run_id TEXT NOT NULL, serial INTEGER NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(run_id,serial))')
 
@@ -64,9 +66,9 @@ class RunJournal:
         if kind not in allowed:
             return
         with self.connection() as db:
-            row = db.execute('SELECT state,pending,checks FROM runs WHERE id=?',(run_id,)).fetchone()
+            row = db.execute('SELECT state,pending,checks,outcomes FROM runs WHERE id=?',(run_id,)).fetchone()
             pending = json.loads(row['pending'])
-            state,checks = row['state'],row['checks']
+            state,checks,outcome_count = row['state'],row['checks'],row['outcomes']
             safe = {}
             if kind == 'tool_call' and str(event.get('name','')).startswith('browser_'):
                 # Only IDs, tool names and an opaque argument digest are saved.
@@ -80,9 +82,16 @@ class RunJournal:
                 pending = [p for p in pending if p['call_id'] != str(event.get('id',''))]
                 from ..testing_runtime import action_status
                 status = action_status(result)
-                outcomes = result.get('assertions',[]) + [a for step in result.get('results',[]) for a in step.get('assertions',[])]
-                checks += sum(a.get('status') == 'passed' for a in outcomes)
-                safe = {'call_id':str(event.get('id','')),'tool':event['name'],'status':status,'passed_checks':checks}
+                assertions = result.get('assertions',[]) + [a for step in result.get('results',[]) for a in step.get('assertions',[])]
+                checks += sum(a.get('status') == 'passed' for a in assertions)
+                if (result.get('completion_verified') is True or
+                    (event['name']=='browser_assert' and result.get('purpose')=='outcome' and
+                     status=='passed' and assertions and all(a.get('status')=='passed' for a in assertions))):
+                    outcome_count += 1
+                safe = {'call_id':str(event.get('id','')),'tool':event['name'],'status':status,
+                        'passed_checks':checks,'passed_outcomes':outcome_count,
+                        'dispatch_state':str(result.get('dispatch_state') or 'unknown'),
+                        'verification_state':str(result.get('verification_state') or 'unverified')}
                 state = 'recovering' if status == 'failed' else 'observing'
             elif kind == 'browser_timing':
                 safe = {k:event[k] for k in ('phase','iteration','elapsed_ms','first_delta_ms','tool_count','finish_reason','model') if k in event}
@@ -91,7 +100,7 @@ class RunJournal:
             elif kind in {'permission_request','agent_question'}:
                 state = 'waiting_for_user'
             elif kind == 'done':
-                state = 'verified' if event.get('status') == 'verified' and checks > 0 and not pending else (
+                state = 'verified' if event.get('status') == 'verified' and outcome_count > 0 and not pending else (
                     'stopped' if event.get('stopped') else 'waiting_for_user' if state == 'waiting_for_user' else 'unverified')
                 safe = {'state':state}
             elif kind == 'interrupted':
@@ -100,9 +109,9 @@ class RunJournal:
                 return
             serial = db.execute('SELECT COALESCE(MAX(serial),0)+1 FROM events WHERE run_id=?',(run_id,)).fetchone()[0]
             db.execute('INSERT INTO events VALUES(?,?,?,?)',(run_id,serial,kind,json.dumps(safe)))
-            db.execute('UPDATE runs SET state=?,updated=?,pending=?,checks=? WHERE id=?',
-                (state,time.time(),json.dumps(pending),checks,run_id))
+            db.execute('UPDATE runs SET state=?,updated=?,pending=?,checks=?,outcomes=? WHERE id=?',
+                (state,time.time(),json.dumps(pending),checks,outcome_count,run_id))
 
     def state(self,run_id):
         with self.connection() as db:
-            return dict(db.execute('SELECT id,state,pending,checks FROM runs WHERE id=?',(run_id,)).fetchone())
+            return dict(db.execute('SELECT id,state,pending,checks,outcomes FROM runs WHERE id=?',(run_id,)).fetchone())

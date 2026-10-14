@@ -7,6 +7,55 @@ x-stackpilot-logging: &stackpilot-logging
     max-file: ${STACKPILOT_LOG_MAX_FILE:-5}
 
 services:
+  rdp-bridge:
+    image: guacamole/guacd:1.6.0
+    container_name: stackpilot-rdp-bridge
+    restart: unless-stopped
+    networks: [rdp]
+    logging: *stackpilot-logging
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+  rdp-gateway:
+    build: ./rdp-gateway
+    container_name: stackpilot-rdp-gateway
+    restart: unless-stopped
+    networks: [default, rdp]
+    logging: *stackpilot-logging
+    environment:
+      - DB_HOST=postgres
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - BACKEND_INTERNAL_URL=http://backend:8090
+      - GUACD_HOST=rdp-bridge
+      - RDP_ALLOWED_ORIGINS=${RDP_ALLOWED_ORIGINS:-${CORS_ALLOWED_ORIGIN}}
+    ports:
+      - "127.0.0.1:8095:8095"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      rdp-bridge:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8095/health', timeout=5)"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
   remote-gateway:
     build: ./remote-gateway
     container_name: stackpilot-remote-gateway
@@ -208,7 +257,7 @@ services:
       - STACKPILOT_AGENT_RUN_DB=/app/browser-state/browser-runs.sqlite3
       - STACKPILOT_AGENT_WORKER_NETWORK=${STACKPILOT_AGENT_WORKER_NETWORK:-true}
       - STACKPILOT_AGENT_WORKER_IMAGES=${STACKPILOT_AGENT_WORKER_IMAGES:-python:3.12-slim,node:22-bookworm-slim,eclipse-temurin:21-jdk,golang:1.24-bookworm,gcc:14-bookworm,ubuntu:24.04,debian:bookworm-slim,alpine:3.21}
-      - STACKPILOT_AGENT_WORKER_MEMORY=${STACKPILOT_AGENT_WORKER_MEMORY:-512m}
+      - STACKPILOT_AGENT_WORKER_MEMORY=${STACKPILOT_AGENT_WORKER_MEMORY:-1g}
       - STACKPILOT_AGENT_WORKER_FAMILIES=${STACKPILOT_AGENT_WORKER_FAMILIES:-python,node,golang,rust,eclipse-temurin,mcr.microsoft.com/dotnet/sdk,ruby,php,gcc,ubuntu,debian,alpine}
       - STACKPILOT_AGENT_DOCKER_PROVISIONING=${STACKPILOT_AGENT_DOCKER_PROVISIONING:-true}
       - STACKPILOT_AGENT_INSTANCE_ROOT=/app/uploads/agent-instances
@@ -225,7 +274,7 @@ services:
       - BUILD_MAX_LOG_BYTES=${BUILD_MAX_LOG_BYTES:-200000}
       - BUILD_CLONE_TIMEOUT_SECONDS=${BUILD_CLONE_TIMEOUT_SECONDS:-300}
       - BUILD_COMMAND_TIMEOUT_SECONDS=${BUILD_COMMAND_TIMEOUT_SECONDS:-3600}
-      - BUILD_DOCKER_MEMORY=${BUILD_DOCKER_MEMORY:-512m}
+      - BUILD_DOCKER_MEMORY=${BUILD_DOCKER_MEMORY:-1g}
       - STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS=${STACKPILOT_CI_NO_CHECKS_GRACE_SECONDS:-30}
       - STACKPILOT_REQUIRED_CI_POLICY=${STACKPILOT_REQUIRED_CI_POLICY:-}
       - LOCAL_SOURCE_ROOTS=${LOCAL_SOURCE_ROOTS:-/app/local-projects}
@@ -387,6 +436,11 @@ services:
       - STACKPILOT_AI_STREAM_HEADER_TIMEOUT_SECONDS=${STACKPILOT_AI_STREAM_HEADER_TIMEOUT_SECONDS:-30}
       - STACKPILOT_AI_STREAM_IDLE_TIMEOUT_SECONDS=${STACKPILOT_AI_STREAM_IDLE_TIMEOUT_SECONDS:-30}
       - STACKPILOT_AI_BROWSER_PROVIDER_TIMEOUT_SECONDS=${STACKPILOT_AI_BROWSER_PROVIDER_TIMEOUT_SECONDS:-120}
+      - STACKPILOT_BROWSER_DECISION_URL=${STACKPILOT_BROWSER_DECISION_URL:-}
+      - STACKPILOT_BROWSER_DECISION_MODEL=${STACKPILOT_BROWSER_DECISION_MODEL:-}
+      - STACKPILOT_BROWSER_DECISION_KEY=${STACKPILOT_BROWSER_DECISION_KEY:-}
+      - STACKPILOT_BROWSER_DECISION_THRESHOLD=${STACKPILOT_BROWSER_DECISION_THRESHOLD:-0.95}
+      - STACKPILOT_BROWSER_DECISION_TIMEOUT_SECONDS=${STACKPILOT_BROWSER_DECISION_TIMEOUT_SECONDS:-2}
       - BROWSER_MAX_SESSIONS=${BROWSER_MAX_SESSIONS:-4}
       - BROWSER_SESSION_IDLE_SECONDS=${BROWSER_SESSION_IDLE_SECONDS:-900}
       - STACKPILOT_AI_TEST_MAX_ACTIONS=${STACKPILOT_AI_TEST_MAX_ACTIONS:-120}
@@ -539,8 +593,8 @@ services:
       dockerfile: Dockerfile
       target: runner
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8090/api/v1}
-        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8090}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api/v1}
+        NEXT_PUBLIC_WS_BASE_URL: ${NEXT_PUBLIC_WS_BASE_URL:-}
         NEXT_PUBLIC_AI_SERVICE_WS_URL: ${NEXT_PUBLIC_AI_SERVICE_WS_URL:-}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
         NEXT_PUBLIC_GITHUB_CLIENT_ID: ${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
@@ -562,8 +616,8 @@ services:
         required: false
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8090/api/v1}
-      - NEXT_PUBLIC_WS_BASE_URL=${NEXT_PUBLIC_WS_BASE_URL:-ws://localhost:8090}
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-/api/v1}
+      - NEXT_PUBLIC_WS_BASE_URL=${NEXT_PUBLIC_WS_BASE_URL:-}
       - NEXT_PUBLIC_GOOGLE_CLIENT_ID=${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
       - NEXT_PUBLIC_GITHUB_CLIENT_ID=${NEXT_PUBLIC_GITHUB_CLIENT_ID:-}
     ports:
@@ -683,6 +737,7 @@ services:
       - loki
 
 networks:
+  rdp:
   runtime:
     name: ${STACKPILOT_RUNTIME_NETWORK:-stackpilot-runtime}
 

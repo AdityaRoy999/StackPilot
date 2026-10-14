@@ -27,7 +27,8 @@ def recipe(config, workload):
     setup=value.get('runtime_setup',[])
     if not isinstance(setup,list) or len(setup)>16:
         raise ValueError('runtime_setup must be a bounded list of commands')
-    for command in commands + setup + ([value.get('runtime_command')] if workload not in {'artifact','package'} else []):
+    artifact_delivery=workload in {'artifact','package'} or config.get('delivery')=='artifact'
+    for command in commands + setup + ([value.get('runtime_command')] if not artifact_delivery else []):
         if not isinstance(command, list) or not command or any(not isinstance(a, str) or not a or '\0' in a for a in command):
             raise ValueError('Commands must be nonempty executable argument arrays')
     outputs = value.get('outputs')
@@ -39,7 +40,12 @@ def recipe(config, workload):
         path = PurePosixPath(output)
         if path.is_absolute() or '..' in path.parts or path == PurePosixPath('.'):
             raise ValueError('Outputs must remain within a specific build output directory')
-    if workload not in {'web','api','cli','job','package','worker','tcp','grpc','artifact','desktop'}:
+    patterns=value.get('artifact_files',[])
+    if not isinstance(patterns,list) or len(patterns)>32:raise ValueError('artifact_files must be a bounded list')
+    for pattern in patterns:
+        if not isinstance(pattern,str) or not pattern or len(pattern)>512 or '\0' in pattern or '\\' in pattern or PurePosixPath(pattern).is_absolute() or '..' in PurePosixPath(pattern).parts:
+            raise ValueError('Direct artifact pattern must remain within exported outputs')
+    if workload not in {'web','api','cli','job','package','worker','tcp','grpc','artifact','desktop'} and not (workload=='windows' and config.get('adapter')=='dotnet-windows-crossbuild' and artifact_delivery):
         raise ValueError('Portable recipes run on Linux; native mobile/Windows/macOS need their platform adapter')
     return {**value, 'runtime_image': runtime}
 
@@ -52,7 +58,7 @@ def dockerfile(config, workload):
     text = f"FROM {value['image']} AS builder\nWORKDIR /source\n"
     text += 'RUN command -v python3 || (command -v apt-get && apt-get update && apt-get install -y --no-install-recommends python3) || (command -v apk && apk add --no-cache python3)\n'
     text += 'COPY . .\nRUN python3 .stackpilot-runtime/portable_build.py\n'
-    if workload in {'artifact','package'}:
+    if workload in {'artifact','package'} or config.get('delivery')=='artifact':
         text += 'FROM python:3.12-slim\nCOPY --from=builder /stackpilot-output/artifacts /artifacts\n'
         text += 'COPY .stackpilot-runtime/artifact_server.py /preview/server.py\nENV ARTIFACT_ROOT=/artifacts PORT=3000\nUSER 65534:65534\nEXPOSE 3000\nCMD ["python", "/preview/server.py"]\n'
     else:
@@ -117,14 +123,29 @@ def build(root, destination):
     if not count:raise RuntimeError('Build produced no exportable files')
     (destination/'tests.json').write_text(json.dumps(evidence))
     artifacts=destination/'artifacts';artifacts.mkdir()
+    direct=[]
+    for pattern in value.get('artifact_files',[]):
+        if not isinstance(pattern,str) or PurePosixPath(pattern).is_absolute() or '..' in PurePosixPath(pattern).parts or '\\' in pattern:raise ValueError('Direct artifact pattern must remain within exported outputs')
+        matches=list(data.glob(pattern))
+        if not matches:raise ValueError('Declared direct artifact was not produced: '+pattern)
+        for path in matches:
+            if not path.is_file() or path.is_symlink():raise ValueError('Direct artifacts must be regular exported files')
+            if path.name in {'manifest.json','application.zip'} or path.name.startswith('.'):raise ValueError('Direct artifact name is reserved')
+            if (artifacts/path.name).exists():raise ValueError('Duplicate direct artifact basename')
+            shutil.copy2(path,artifacts/path.name);direct.append(path.name)
     with zipfile.ZipFile(artifacts/'application.zip','w',zipfile.ZIP_DEFLATED) as archive:
         for path in data.rglob('*'):
             if path.is_file():archive.write(path,path.relative_to(data))
-    digest=hashlib.sha256()
-    with (artifacts/'application.zip').open('rb') as stream:
-        for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+    def digest_file(path):
+        digest=hashlib.sha256()
+        with path.open('rb') as stream:
+            for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
+        return digest.hexdigest()
+    from artifact_evidence import inspect
+    records={name:inspect(artifacts/name,config.get('target')) for name in ['application.zip',*direct]}
     (artifacts/'manifest.json').write_text(json.dumps({**evidence,'build':'passed','scope':'repository_tests',
-        'artifacts':['application.zip'],'sha256':{'application.zip':digest.hexdigest()},'device_workflows':'unverified'}))
+        'artifacts':['application.zip',*direct],'sha256':{name:digest_file(artifacts/name) for name in ['application.zip',*direct]},'device_workflows':'unverified',
+        'target':config.get('target'),'adapter':config.get('adapter'),'native_execution':'unverified','artifact_metadata':records}))
     return evidence
 
 

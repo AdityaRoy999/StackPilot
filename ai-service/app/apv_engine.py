@@ -65,11 +65,13 @@ class ActionPerceptionVerification:
     @classmethod
     async def capture_snapshot(cls, session: Any) -> PerceptionSnapshot:
         """Captures a lightweight perceptual snapshot of the active page state."""
+        from .browser_testing.overlays import OVERLAY_HELPERS
         url = (session.current_url or "").rstrip("/")
         title = getattr(session, "page_title", "")
         scroll_y = getattr(session, "scroll_y", 0)
 
         js_probe = """(() => {
+            __SP_OVERLAY_HELPERS__
             const isVisible = (e) => {
                 if (!e || !e.isConnected) return false;
                 if (e.closest && e.closest('[aria-hidden="true"],[inert]')) return false;
@@ -79,8 +81,7 @@ class ActionPerceptionVerification:
                 const s = window.getComputedStyle(e);
                 return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
             };
-            const modals = Array.from(document.querySelectorAll('[role="dialog"], dialog[open], .modal.show, [aria-modal="true"]'))
-                .filter(m => isVisible(m));
+            const modals = window.__spOverlay.surfaces();
             const infoKeywords = ['advisory', 'guideline', 'guidelines', 'covid', 'concession', 'disclaimer', 'bulletin', 'announcement', 'railway board', 'please note', 'caution', 'explore beta', 'advertisement', 'copyright', 'all rights reserved'];
             const alerts = Array.from(document.querySelectorAll('[role="alert"], .alert, .toast, .success, .error, [class*="toast"], [class*="alert"], .ui-message-error, .invalid-feedback'))
                 .filter(a => isVisible(a))
@@ -112,12 +113,13 @@ class ActionPerceptionVerification:
                     document.body?.getAttribute('data-theme'),document.body?.className,
                     getComputedStyle(document.documentElement).colorScheme,
                     document.body ? getComputedStyle(document.body).backgroundColor : ''],
-                controlState: Array.from(document.querySelectorAll('input,textarea,select,[aria-selected],[aria-expanded],[aria-checked]'))
+                controlState: Array.from(document.querySelectorAll('input,textarea,select,[aria-selected],[aria-expanded],[aria-checked],[aria-pressed]'))
                     .filter(isVisible).slice(0, 200).map(e => [e.getAttribute('data-sp-id') || e.id || e.name,
                         e.type === 'password' ? '[redacted]' : e.value, e.checked,
-                        e.getAttribute('aria-selected'), e.getAttribute('aria-expanded'), e.getAttribute('aria-checked')])
+                        e.getAttribute('aria-selected'), e.getAttribute('aria-expanded'), e.getAttribute('aria-checked'),
+                        e.getAttribute('aria-pressed')])
             };
-        })()"""
+        })()""".replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS)
 
         res = {}
         try:
@@ -131,7 +133,7 @@ class ActionPerceptionVerification:
 
         captured = bool(val.get("url")) and not res.get("exceptionDetails") if isinstance(res, dict) else False
         raw_live_url = val.get("url", "")
-        if raw_live_url and "chrome-error://" not in raw_live_url:
+        if raw_live_url and "chrome-error://" not in raw_live_url and not getattr(session,'_selected_frame',None):
             try:
                 from .browser_driver import to_frontend_display_url
                 disp = to_frontend_display_url(raw_live_url)
@@ -145,7 +147,7 @@ class ActionPerceptionVerification:
             url = disp.rstrip("/")
 
         live_title = val.get("title", "")
-        if live_title:
+        if live_title and not getattr(session,'_selected_frame',None):
             session.page_title = live_title
             title = live_title
 
@@ -243,6 +245,28 @@ class ActionPerceptionVerification:
                for alert in new_alerts):
             return ActionVerificationResult(action, target, False, "validation_error",
                                             "Validation feedback: " + "; ".join(new_alerts), new_alerts=new_alerts)
+        # Overlay transitions precede form mount/unmount changes.
+        if post.active_modals_count > pre.active_modals_count:
+            return ActionVerificationResult(
+                action=action,
+                target=target,
+                verified=True,
+                effect_type="modal_open",
+                description="Triggered new interactive modal / overlay dialog",
+                pre_snapshot=pre,
+                post_snapshot=post
+            )
+        elif post.active_modals_count < pre.active_modals_count:
+            return ActionVerificationResult(
+                action=action,
+                target=target,
+                verified=True,
+                effect_type="modal_close",
+                description="Dismissed active modal overlay",
+                pre_snapshot=pre,
+                post_snapshot=post
+            )
+
         if pre.control_state != post.control_state:
             return ActionVerificationResult(action, target, True, "control_change",
                                             "Observed form value or selected/expanded control state change.")
@@ -274,28 +298,6 @@ class ActionPerceptionVerification:
                 effect_type="form_submit" if is_form else "alert_emitted",
                 description=f"Received feedback alerts: {', '.join(new_alerts[:2])}",
                 new_alerts=new_alerts,
-                pre_snapshot=pre,
-                post_snapshot=post
-            )
-
-        # 3. Modal Open / Close Check
-        if post.active_modals_count > pre.active_modals_count:
-            return ActionVerificationResult(
-                action=action,
-                target=target,
-                verified=True,
-                effect_type="modal_open",
-                description="Triggered new interactive modal / overlay dialog",
-                pre_snapshot=pre,
-                post_snapshot=post
-            )
-        elif post.active_modals_count < pre.active_modals_count:
-            return ActionVerificationResult(
-                action=action,
-                target=target,
-                verified=True,
-                effect_type="modal_close",
-                description="Dismissed active modal overlay",
                 pre_snapshot=pre,
                 post_snapshot=post
             )

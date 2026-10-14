@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/cyb3rr31a/python-calculator",
+  "commit": "0055e5a9990f511c823f2ba2d4b5943f7e79576f",
+  "branch": "main",
+  "outcome": "healed",
+  "attempts": 1,
+  "fault": "Only stackpilot.json entrypoint points to missing.py; application source unchanged",
+  "platformStatus": "running",
+  "verification": {
+    "artifacts": null,
+    "checks": [
+      {
+        "passed": true,
+        "path": "/",
+        "status": 200
+      }
+    ],
+    "reason": "Declared checks passed; undeclared business and device workflows remain unverified",
+    "scope": "http_contract",
+    "status": "passed",
+    "verified": true
+  },
+  "privateValueAbsent": true,
+  "desktopProof": "tests/artifacts/rdp-desktop-viewer.png",
+  "browserProof": "tests/artifacts/github-standalone-web.png"
+}

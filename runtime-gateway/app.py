@@ -65,11 +65,17 @@ async def forward(path:str,request:Request):
     headers={k:v for k,v in request.headers.items() if k.lower() not in HOP and k.lower() not in {'host','accept-encoding'}}
     headers['host']=request.headers['host'];headers['x-forwarded-host']=request.headers['host']
     headers['x-forwarded-proto']=request.url.scheme
+    length=request.headers.get('content-length')
+    if length is not None:headers['content-length']=length
+    # A stream for an empty GET invents Transfer-Encoding: chunked. Upstreams
+    # that close HTTP/1.0 responses without reading that unexpected body can
+    # reset the socket mid-download. Preserve the caller's actual body framing.
+    body=request.stream() if request.headers.get('transfer-encoding') or length not in {None,'0'} else None
     client=httpx.AsyncClient(timeout=httpx.Timeout(30,connect=5),follow_redirects=False,trust_env=False)
     try:
         url=upstream+'/'+path+('?' + request.url.query if request.url.query else '')
-        response=await client.send(client.build_request(request.method,url,headers=headers,content=request.stream()),stream=True)
-        output=[(k,v) for k,v in response.headers.multi_items() if k.lower() not in HOP]
+        response=await client.send(client.build_request(request.method,url,headers=headers,content=body),stream=True)
+        output=[(k,v) for k,v in response.headers.multi_items() if k.lower() not in HOP or k.lower()=='content-length']
         # Preserve repeated Set-Cookie headers and the application origin.
         output=[(k,v.replace(upstream,str(request.base_url).rstrip('/')) if k.lower()=='location' and v.startswith(upstream+'/') else v) for k,v in output]
         async def chunks():

@@ -1192,7 +1192,9 @@ void DeploymentController::createDeployment(
             callback(resp); return;
         }
 
-        std::string version = trim((*body).isMember("version") ? (*body)["version"].asString() : "v1.0.0");
+        const std::string deploymentIdentity = drogon::utils::getUuid();
+        std::string version = trim((*body).isMember("version") ? (*body)["version"].asString() : "");
+        if (version.empty()) version = "release-" + deploymentIdentity;
         std::string commitHash = trim((*body).isMember("commit_hash") ? (*body)["commit_hash"].asString() : "");
         std::string commitSha = trim((*body).isMember("commit_sha") ? (*body)["commit_sha"].asString() : "");
         std::string branch = trim((*body).isMember("branch") ? (*body)["branch"].asString() : "");
@@ -1232,8 +1234,7 @@ void DeploymentController::createDeployment(
                 if (branch.empty()) {
                     branch = defaultEnvRows[0]["branch"].as<std::string>();
                 }
-                ciRequired = ciRequired || (triggerSource == "github_push" && projectSourceType == "github" &&
-                                            !projectRepoUrl.empty() && !commitSha.empty() &&
+                ciRequired = ciRequired || (projectSourceType == "github" && !projectRepoUrl.empty() &&
                                             defaultEnvRows[0]["require_ci"].as<bool>());
             }
         }
@@ -1254,8 +1255,7 @@ void DeploymentController::createDeployment(
             if (branch.empty()) {
                 branch = envRows[0]["branch"].as<std::string>();
             }
-            ciRequired = ciRequired || (triggerSource == "github_push" && projectSourceType == "github" &&
-                                        !projectRepoUrl.empty() && !commitSha.empty() &&
+            ciRequired = ciRequired || (projectSourceType == "github" && !projectRepoUrl.empty() &&
                                         envRows[0]["require_ci"].as<bool>());
         }
 
@@ -1264,6 +1264,13 @@ void DeploymentController::createDeployment(
         }
 
         if (!sourceArtifactId.empty()) {
+            if (ciRequired && projectSourceType == "github") {
+                Json::Value err;
+                err["error"] = "This environment requires GitHub CI. Commit workspace changes to the repository before deploying; CI for the original commit cannot verify an edited source archive.";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp); return;
+            }
             auto artifactRows = txn.exec_params(
                 "SELECT id FROM source_artifacts WHERE id = $1 AND user_id = $2",
                 sourceArtifactId,
@@ -1279,8 +1286,8 @@ void DeploymentController::createDeployment(
 
         auto result = txn.exec_params(
             "INSERT INTO deployments "
-            "(project_id, version, commit_hash, environment_id, source_artifact_id, branch, commit_sha, trigger_source, github_delivery_id, ci_required, ci_status) "
-            "VALUES ($1, $2, $3, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10, $11) "
+            "(project_id, version, commit_hash, environment_id, source_artifact_id, branch, commit_sha, trigger_source, github_delivery_id, ci_required, ci_status, id) "
+            "VALUES ($1, $2, $3, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid, $6, $7, $8, $9, $10, $11, $12::uuid) "
             "RETURNING id, status, version, commit_hash, branch, commit_sha, trigger_source, ci_required, ci_status, logs, created_at",
             projectId,
             version,
@@ -1292,7 +1299,8 @@ void DeploymentController::createDeployment(
             triggerSource,
             githubDeliveryId,
             ciRequired,
-            ciRequired ? "pending" : "not_required"
+            ciRequired ? "pending" : "not_required",
+            deploymentIdentity
         );
         txn.commit();
 

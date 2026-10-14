@@ -4,17 +4,20 @@ import * as React from "react";
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
 import { cn } from "@/lib/utils";
+const TooltipDescriptionContext = React.createContext<string | undefined>(undefined);
 
 function TooltipProvider(props: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delay={250} closeDelay={80} {...props} />;
 }
 
 function Tooltip(props: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
+  const descriptionId = React.useId();
+  return <TooltipDescriptionContext.Provider value={descriptionId}><TooltipPrimitive.Root data-slot="tooltip" {...props} /></TooltipDescriptionContext.Provider>;
 }
 
 function TooltipTrigger(props: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
-  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
+  const descriptionId = React.useContext(TooltipDescriptionContext);
+  return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} aria-describedby={[props["aria-describedby"], descriptionId].filter(Boolean).join(" ") || undefined} />;
 }
 
 type TooltipContentProps = React.ComponentProps<typeof TooltipPrimitive.Popup> & {
@@ -28,11 +31,14 @@ function TooltipContent({
   sideOffset = 8,
   ...props
 }: TooltipContentProps) {
+  const descriptionId = React.useContext(TooltipDescriptionContext);
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner side={side} sideOffset={sideOffset} className="z-[2147483647]">
         <TooltipPrimitive.Popup
           data-slot="tooltip-content"
+          role="tooltip"
+          id={descriptionId}
           className={cn(
             "z-[2147483647] max-w-60 rounded-md border border-border bg-popover px-3 py-1.5 text-xs font-medium text-popover-foreground shadow-md",
             "data-[side=bottom]:animate-in data-[side=bottom]:slide-in-from-top-1",

@@ -139,7 +139,7 @@ def registry(*, probe=False, purpose='deployment'):
         'enabled': enabled, 'capabilities': sorted(capabilities), 'observation': observation,
         'images': _list('STACKPILOT_AGENT_WORKER_IMAGES', DEFAULT_IMAGES), 'versioned_image_families': families,
         'distribution_profiles': profiles,
-        'limits': {'memory': os.getenv('STACKPILOT_AGENT_WORKER_MEMORY', '512m'), 'command_timeout_seconds': 300,
+        'limits': {'memory': os.getenv('STACKPILOT_AGENT_WORKER_MEMORY', '1g'), 'command_timeout_seconds': 300,
                    'instance_memory_mb': int(_bounded_environment('STACKPILOT_AGENT_INSTANCE_MEMORY_MB', min(512, maximum_memory), 1, maximum_memory)),
                    'instance_max_memory_mb': maximum_memory,
                    'instance_cpus': int(_bounded_environment('STACKPILOT_AGENT_INSTANCE_CPUS', 1, 1, maximum_cpus)),

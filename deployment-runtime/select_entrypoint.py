@@ -92,17 +92,17 @@ def dotnet_project(root):
     config=json.loads((root/'stackpilot.json').read_text()) if (root/'stackpilot.json').is_file() else {}
     declared=config.get('project')
     candidates=[]
-    for path in root.glob('**/*.csproj'):
-        if any(p in {'obj','bin'} for p in path.parts):continue
+    paths=[root/declared] if isinstance(declared,str) else root.glob('**/*.csproj')
+    if declared and (not isinstance(declared,str) or Path(declared).is_absolute() or '..' in Path(declared).parts):raise ValueError('Selected .NET project must remain within source root')
+    for path in paths:
+        if any(p in {'obj','bin'} for p in path.relative_to(root).parts):continue
+        if not path.resolve().is_relative_to(root) or not path.is_file() or path.stat().st_size>1024*1024 or any(p.is_symlink() for p in [path,*path.parents] if p.is_relative_to(root)):raise ValueError('Selected .NET project must be a bounded regular file within source root')
         xml=ET.parse(path).getroot()
-        values={e.tag.rsplit('}',1)[-1]:e.text for e in xml.iter()}
+        values={e.tag.rsplit('}',1)[-1]:(e.text or '') for e in xml.iter()}
         if values.get('IsTestProject','').lower()=='true':continue
         if xml.get('Sdk','').startswith('Microsoft.NET.Sdk.Web') or values.get('OutputType') in {'Exe','WinExe'}:
-            candidates.append(path)
-    if declared:
-        path=(root/declared).resolve()
-        if not path.is_relative_to(root) or path not in candidates:raise ValueError('Declared .NET project must be a runnable project within the source root')
-        return path
+            candidates.append(path.resolve())
+        if len(candidates)>128:raise ValueError('Too many executable .NET projects; select project in stackpilot.json')
     if len(candidates)!=1:raise ValueError('Multiple or no executable .NET projects; declare project in stackpilot.json')
     return candidates[0]
 

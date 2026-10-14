@@ -117,6 +117,30 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
     }
 
     const std::string userMessage = (*body)["message"].asString();
+    Json::Value audioAttachment(Json::nullValue);
+    if (body->isMember("audio_attachment")) {
+        const auto& audio = (*body)["audio_attachment"];
+        // Base64 adds roughly one third to the recording's byte size.
+        const bool valid = audio.isObject() && audio["data_url"].isString() &&
+            audio["mime_type"].isString() &&
+            (!audio.isMember("duration_ms") || audio["duration_ms"].isInt64()) &&
+            audio["data_url"].asString().size() <= 12 * 1024 * 1024 &&
+            audio["data_url"].asString().rfind("data:audio/", 0) == 0 &&
+            audio["data_url"].asString().find(";base64,") != std::string::npos &&
+            audio["mime_type"].asString().rfind("audio/", 0) == 0 &&
+            audio.get("duration_ms", 0).asInt64() >= 0 &&
+            audio.get("duration_ms", 0).asInt64() <= 10 * 60 * 1000;
+        if (!valid) {
+            Json::Value error; error["error"] = "The voice recording is invalid or too large.";
+            auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+            response->setStatusCode(drogon::k400BadRequest);
+            callback(response);
+            return;
+        }
+        for (const auto* field : {"data_url", "mime_type", "duration_ms"}) {
+            if (audio.isMember(field)) audioAttachment[field] = audio[field];
+        }
+    }
     const bool background=body->get("background",false).asBool();
     std::string remoteId=background?body->get("request_id","").asString():drogon::utils::getUuid();
     if(background && (!std::regex_match(remoteId,std::regex("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")) || userMessage.size()>32000)){
@@ -396,13 +420,20 @@ void AiController::chatAgentStream(const drogon::HttpRequestPtr& req,
             const auto prior=txn.exec_params("SELECT id FROM ai_messages WHERE session_id=$1 AND role='assistant' ORDER BY created_at DESC LIMIT 1",sessionId);
             if(!prior.empty())payload["continuation_message_id"]=prior[0][0].as<std::string>();
         }
+        Json::Value userMetadata(Json::objectValue);
+        if (continuation) userMetadata["continuation"] = true;
+        // Voice recordings are persisted with the user message so the chat can
+        // replay them after a refresh. Bound the data URL and retain only the
+        // media fields needed by the player; the transcript remains the model
+        // input in `content`.
+        if (!audioAttachment.isNull()) userMetadata["audio_attachment"] = audioAttachment;
         txn.exec_params(
             "INSERT INTO ai_messages (session_id, role, content, metadata) VALUES ($1, 'user', $2, $3::jsonb)",
-            sessionId, userMessage, continuation ? "{\"continuation\":true}" : "{}");
+            sessionId, userMessage, strings::compactJson(userMetadata));
 
         const auto historyRows = txn.exec_params(
             "SELECT role, content, metadata FROM ("
-            "SELECT role, content, metadata, created_at FROM ai_messages WHERE session_id = $1 "
+            "SELECT role, content, metadata - 'audio_attachment' AS metadata, created_at FROM ai_messages WHERE session_id = $1 "
             "ORDER BY created_at DESC LIMIT 24"
             ") recent ORDER BY created_at ASC",
             sessionId);
@@ -719,6 +750,7 @@ void AiController::stopAgentStream(const drogon::HttpRequestPtr& req,
 
         Json::Value stopPayload(Json::objectValue);
         stopPayload["session_id"] = sessionId;
+        stopPayload["user_id"] = uid;
 
         const auto result = AiServiceClient::instance().postWorkflow("/chat/agent/stop", stopPayload);
         if(result.ok){try{auto conn=Database::getInstance().getConnection();pqxx::work tx(*conn);tx.exec_params("UPDATE remote_runs SET state='cancelled',updated_at=NOW() WHERE session_id::text=$1 AND user_id=$2 AND state IN ('awaiting_approval','awaiting_input')",sessionId,uid);tx.commit();}catch(...){}}

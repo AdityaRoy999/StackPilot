@@ -21,7 +21,7 @@ import threading
 import time
 import uuid
 
-from agent_process import SKIP, allowed, inventory, lease_valid
+from agent_process import SKIP, allowed, inventory, lease_valid, capture_output
 from agent_image import stage
 from sandbox_capabilities import select
 
@@ -59,7 +59,7 @@ def ceiling(name, default, maximum):
 def bounded(spec, key, default, maximum):
     value = spec.get(key, min(default, maximum))
     if type(value) is not int or not 1 <= value <= maximum:
-        raise ValueError(key+' exceeds operator instance limit')
+        raise ValueError(key+' exceeds operator instance limit '+str(maximum)+'; inspect get_execution_capabilities and retry with admitted resources')
     return value
 
 
@@ -71,9 +71,12 @@ def options(spec):
         raise ValueError('Worker network capability is unavailable; request it explicitly')
     maximum_memory = ceiling('MAX_MEMORY_MB', 4096, 65536)
     maximum_cpus = ceiling('MAX_CPUS', 8, 128)
+    cpus = spec.get('cpus', ceiling('CPUS', 1, maximum_cpus))
+    if type(cpus) not in {int, float} or not 0.1 <= cpus <= maximum_cpus:
+        raise ValueError('cpus must be between 0.1 and operator instance limit '+str(maximum_cpus)+'; inspect get_execution_capabilities before retrying')
     return {'ttl_seconds': bounded(spec, 'ttl_seconds', 3600, ceiling('MAX_TTL_SECONDS', 3600, 86400)),
             'memory_mb': bounded(spec, 'memory_mb', ceiling('MEMORY_MB', min(512, maximum_memory), maximum_memory), maximum_memory),
-            'cpus': bounded(spec, 'cpus', ceiling('CPUS', 1, maximum_cpus), maximum_cpus),
+            'cpus': cpus,
             'pids_limit': bounded(spec, 'pids_limit', 128, ceiling('PIDS_LIMIT', 128, 2048)),
             'network': network}
 
@@ -524,8 +527,7 @@ def execute(source, spec):
             def drain():
                 with process.stdout:
                     while block := process.stdout.read(4096):
-                        remaining = 65536-len(captured)
-                        if remaining > 0: captured.extend(block[:remaining])
+                        capture_output(captured, block)
             reader = threading.Thread(target=drain, daemon=True); reader.start()
             started = time.monotonic(); checked = 0; timed_out = False
             while process.poll() is None:

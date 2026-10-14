@@ -41,7 +41,7 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
     Names, language and numeric labels do not determine action priority.
     """
     ordered = sorted(elements or [], key=lambda el: (
-        not bool(el.get("is_in_viewport")), bool(el.get("is_occluded"))))
+        not bool(el.get('is_inside_modal')), not bool(el.get("is_in_viewport")), bool(el.get("is_occluded"))))
 
     compacted = []
     for el in ordered[offset:offset + max_count]:
@@ -65,11 +65,13 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
             item["checked"] = bool(el.get("checked"))
         if el.get("disabled"):
             item["disabled"] = True
-        for key in ("required", "invalid", "expanded", "options"):
+        for key in ("editor_kind", "required", "invalid", "expanded", "selected", "pressed", "options", "aria_controls", "min", "max", "readonly", "has_popup", "is_inside_modal", "card_context", "form_id"):
             if el.get(key) is not None:
                 item[key] = el[key]
         if el.get("href"):
             item["href"] = el.get("href")
+        if el.get("download"):
+            item["download"] = True
         if el.get("box"):
             item["box"] = el.get("box")
         if el.get("is_external"):
@@ -87,6 +89,26 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
 
 
 AGENT_TOOLS = [
+    {'type':'function','function':{
+        'name':'browser_start_campaign',
+        'description':'Start durable background website testing for large sites or multi-hour runs. Queues discovery and bounded workflow scenarios, saves coverage/evidence and resumes after safe interruptions. The chat returns immediately; monitor its campaign card. Completion is not exhaustive coverage.',
+        'parameters':{'type':'object','properties':{
+            'session_id':{'type':'string'},'max_pages':{'type':'integer','minimum':1,'maximum':10000},
+            'max_seconds':{'type':'integer','minimum':60,'maximum':86400},'max_actions':{'type':'integer','minimum':1,'maximum':100000},
+            'max_tokens':{'type':'integer','minimum':100,'maximum':10000000}},'additionalProperties':False}}},
+    {'type':'function','function':{
+        'name':'browser_campaign_status','description':'Read saved progress and scope of this chat\'s background campaign.',
+        'parameters':{'type':'object','properties':{'session_id':{'type':'string'},'campaign_id':{'type':'string'}},'required':['campaign_id'],'additionalProperties':False}}},
+    {'type':'function','function':{
+        'name':'browser_campaign_control','description':'Pause, resume, cancel or reconcile a campaign. Reconcile inspects an interrupted workflow before further input; it does not authorize replay of a submission.',
+        'parameters':{'type':'object','properties':{'session_id':{'type':'string'},'campaign_id':{'type':'string'},'action':{'type':'string','enum':['pause','resume','cancel','reconcile']}},'required':['campaign_id','action'],'additionalProperties':False}}},
+    {
+        'type':'function','function':{
+            'name':'browser_read_editor',
+            'description':'Read the document of one observed source editor (Ace, CodeMirror, Monaco or native/contenteditable), preserving code whitespace. Use after typing failures before any retry. Does not execute code; verify compiler output separately.',
+            'parameters':{'type':'object','properties':{'session_id':{'type':'string'},'element_id':{'type':'integer','minimum':0}},'required':['element_id'],'additionalProperties':False}
+        }
+    },
     {
         "type":"function",
         "function":{
@@ -105,15 +127,15 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "browser_observe",
-            "description": "Refresh semantic controls and capture a fresh screenshot without changing the page. Controls are paginated: use next_offset while has_more is true to inspect controls omitted from the first page. Image reasoning requires a configured vision model lane.",
-            "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}}, "additionalProperties": False}
+            "description": "Refresh semantic controls and capture a fresh screenshot without changing the page. For a specific workflow, query observed names with scope=viewport or overlay instead of scanning unrelated footer links. Controls are paginated: use next_offset while has_more is true to inspect remaining controls once; preserve all controls in each page. Image reasoning requires a configured vision model lane.",
+            "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}, "query":{"type":"string","minLength":1,"maxLength":120,"description":"Literal case-insensitive search across current control names, placeholders, roles and context; no invented selector."}, "scope":{"type":"string","enum":["page","viewport","overlay"],"description":"page includes all discovered controls; viewport excludes off-screen controls; overlay includes only active dialog controls."}, "include_frame":{"type":"boolean","description":"Request a fresh visual observation when DOM evidence is insufficient; requires an image-capable lane."}}, "additionalProperties": False}
         }
     },
     {
         "type": "function",
         "function": {
             "name": "browser_assert",
-            "description": "Check explicit expected outcomes against the live page, retrying until a bounded deadline. Use kind=validity and expected=false/true for negative/positive native input validation without submitting. Verify values, selected dates, exact results, persistence or expected validation errors. A DOM change alone is not an assertion. Does not mutate or navigate the page.",
+            "description": "Check explicit expected outcomes against the live page. Page title/url take no target. visible/in_viewport take a target but no expected field. Use accessible_name for icon buttons with aria-label; text checks visible text. Use validity with expected=false/true for native validation. Does not mutate or navigate.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -125,7 +147,7 @@ AGENT_TOOLS = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "kind": {"type": "string", "enum": ["text", "value", "visible", "in_viewport", "absent", "checked", "validity", "url", "title"]},
+                                "kind": {"type": "string", "enum": ["text", "accessible_name", "value", "editor_value", "visible", "in_viewport", "absent", "checked", "validity", "expanded", "selected", "pressed", "focused", "url", "title"]},
                                 "selector": {"type": "string", "description": "Only an actual observed CSS selector, never a number from the control list. Prefer element_id. Must resolve uniquely except absent checks."},
                                 "element_id": {"type": "integer", "description": "Copy the control's observed element_id integer here. It is an opaque tool reference, NOT a DOM id or CSS selector. Required for asserting observed controls unless an actual unique CSS selector is known."},
                                 "expected": {"anyOf": [{"type": "string"}, {"type": "boolean"}]},
@@ -451,7 +473,11 @@ AGENT_TOOLS = [
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string", "description": "Session identifier (defaults to 'default')"},
-                    "action": {"type": "string", "enum": ["click", "hover", "double_click", "right_click", "drag_and_drop", "type", "scroll", "scroll_to", "navigate_back", "get_theme", "press_key", "navigate", "toggle_checkbox", "set_checked", "select_option"], "description": "Action to perform"},
+                    "action": {"type": "string", "enum": ["click", "hover", "double_click", "right_click", "drag_and_drop", "type", "scroll", "scroll_to", "navigate_back", "navigate_forward", "return_to_parent", "get_theme", "press_key", "navigate", "toggle_checkbox", "set_checked", "select_option", "choose_option", "choose_date", "handle_dialog", "switch_tab", "switch_frame"], "description": "Use navigate_back/navigate_forward for actual history and return_to_parent for detail/modal recovery; observe fresh targets afterwards. Use choose_option for a whole autocomplete transaction, choose_date for a verified calendar date, handle_dialog for a currently observed native dialog, and switch_tab/switch_frame for an observed session-owned surface."},
+                    "option_text":{"type":"string","description":"Exact observed autocomplete label; ambiguous partial names produce a question."},
+                    "format":{"type":"string","enum":["YYYY-MM-DD","DD/MM/YYYY","MM/DD/YYYY"]},
+                    "dialog_id":{"type":"string"}, "accept":{"type":"boolean"},
+                    "target_id":{"type":"string"}, "frame_id":{"type":"string"},
                     "checked": {"type":"boolean", "description":"Desired state for set_checked; idempotent, never blindly toggles"},
                     "element_id": {"type": "integer", "description": "Element ID [1], [2] from the page element list (for click, hover, type, or scroll_to)"},
                     "field": {"type": "string", "description": "Name, placeholder, or ID of form field to type into (e.g. 'name', 'email', 'message')"},
@@ -487,11 +513,17 @@ AGENT_TOOLS = [
                     "complete_task": {"type":"boolean", "description":"All requested work is included and the final assert step verifies it; false for intermediate batches or broad audits"},
                     "actions": {
                         "type": "array",
-                        "description": "Ordered list of actions to execute sequentially in rapid local burst",
+                        "minItems": 1,
+                        "maxItems": 8,
+                        "description": "Ordered list of 1–8 actions, including assertions. Split longer workflows into multiple batches.",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "action": {"type": "string", "enum": ["click", "hover", "type", "scroll", "scroll_to", "press_key", "navigate", "select_option", "toggle_checkbox", "set_checked", "get_theme", "assert"], "description": "Observed action or read-only theme observation; use assert for explicit expected outcomes. Navigation must be followed by page assertions, then a fresh observation before using element IDs."},
+                                "action": {"type": "string", "enum": ["click", "hover", "type", "scroll", "scroll_to", "press_key", "navigate", "navigate_back", "navigate_forward", "return_to_parent", "select_option", "choose_option", "choose_date", "toggle_checkbox", "set_checked", "get_theme", "assert", "switch_tab", "switch_frame", "handle_dialog"], "description": "Use assert for explicit outcomes. Navigation/tab/frame changes invalidate controls: observe fresh element IDs before further input. Tab IDs are target_id strings, never element IDs."},
+                                "target_id":{"type":"string"},
+                                "frame_id":{"type":"string"},
+                                "dialog_id":{"type":"string"},
+                                "accept":{"type":"boolean"},
                                 "url": {"type":"string", "description":"Explicit same-origin destination for navigate"},
                                 "checked": {"type":"boolean"},
                                 "expectations": {"type": "array", "items": {"type": "object"}, "description": "Explicit browser_assert expectations for action=assert"},
@@ -500,6 +532,8 @@ AGENT_TOOLS = [
                                 "element_id": {"type": "integer", "description": "Copy the current observed integer tool reference, never a DOM id string or CSS selector"},
                                 "text": {"type": "string", "description": "Text to type"},
                                 "auto_select_suggestion": {"type": "string", "description": "Explicit autocomplete option text; must match uniquely"},
+                                "option_text": {"type":"string"},
+                                "format": {"type":"string","enum":["YYYY-MM-DD","DD/MM/YYYY","MM/DD/YYYY"]},
                                 "scroll_y": {"type": "integer"},
                                 "delta_y": {"type": "integer"},
                                 "field": {"type": "string", "description": "Field name or placeholder"},
@@ -924,9 +958,45 @@ async def _execute_legacy_tool(tool_name: str, arguments: Dict[str, Any], user_i
         return await _execute_tool_call(tool_name, arguments, user_id)
     from .browser_driver import browser_manager
     from .tool_progress import leased_session
+    from .browser_testing.campaigns import campaign_scope, active_campaign_session
     session_id = str(arguments.get('session_id') or 'default')
+    scope=campaign_scope.get()
+    active=active_campaign_session(session_id)
+    if active and (not scope or scope[1]!=active) and tool_name not in {'browser_campaign_status','browser_campaign_control','browser_start_campaign','browser_observe','browser_inspect_console','browser_read_editor'}:
+        return {'status':'failed','error':'A background campaign owns this browser. Pause it before sending another action.'}
+    async def execute():
+        active_session = browser_manager.sessions.get(session_id)
+        before_inputs = getattr(active_session, 'dispatched_inputs', 0)
+        if active_session and tool_name == 'browser_interact':
+            active_session._pending_consequential_dispatch = None
+        result = None
+        dispatched = False
+        try:
+            if scope:
+                result=await scope[0].record_tool(tool_name,arguments,lambda:_execute_tool_call(tool_name,arguments,user_id))
+            else:
+                result=await _execute_tool_call(tool_name,arguments,user_id)
+        finally:
+            # Cancellation or transport failure after input is an uncertain
+            # outcome, never permission to replay the same consequential step.
+            session=browser_manager.sessions.get(session_id)
+            pending = getattr(session, '_pending_consequential_dispatch', None)
+            dispatched = tool_name == 'browser_interact' and pending and getattr(session, 'dispatched_inputs', 0) > before_inputs
+            if dispatched:
+                recorded = getattr(session, 'completed_consequential_inputs', None)
+                if recorded is None:
+                    recorded = session.completed_consequential_inputs = {}
+                if len(recorded) >= 256:
+                    recorded.pop(next(iter(recorded)))
+                recorded[pending] = True
+        if dispatched:
+            result['consequential_dispatch'] = 'dispatched_once'
+            result['hint'] = result.get('hint','') + ' Verify observed confirmation or rejection. Do not repeat this operation after a failed check.'
+        tracker=getattr(session,'operation_recovery',None)
+        if tracker and tool_name=='browser_interact': tracker.record(session,arguments,result)
+        return result
     if leased_session.get() == session_id:
-        return await _execute_tool_call(tool_name, arguments, user_id)
+        return await execute()
     lock = browser_manager.operation_locks.setdefault(session_id, asyncio.Lock())
     async with lock:
         browser_manager.busy_sessions.add(session_id)
@@ -935,7 +1005,7 @@ async def _execute_legacy_tool(tool_name: str, arguments: Dict[str, Any], user_i
             session = browser_manager.sessions.get(session_id)
             if session:
                 session.last_used = time.monotonic()
-            return await _execute_tool_call(tool_name, arguments, user_id)
+            return await execute()
         finally:
             session = browser_manager.sessions.get(session_id)
             if session:
@@ -946,6 +1016,21 @@ async def _execute_legacy_tool(tool_name: str, arguments: Dict[str, Any], user_i
 
 async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     """Execute a tool by calling SearXNG/web or the C++ backend."""
+    if tool_name in {'browser_start_campaign','browser_campaign_status','browser_campaign_control'}:
+        from .browser_testing.campaigns import get_campaign_runtime
+        from .browser_driver import browser_manager
+        runtime=get_campaign_runtime();sid=str(arguments.get('session_id') or 'default')
+        try:
+            if tool_name=='browser_start_campaign':
+                session=browser_manager.sessions.get(sid)
+                request=getattr(session,'campaign_request',None)
+                if not request or request.user_id!=user_id:
+                    return {'status':'failed','error':'Start the campaign from an authorized browser chat with a website target.'}
+                return await runtime.start(request,{k:v for k,v in arguments.items() if k.startswith('max_')})
+            if tool_name=='browser_campaign_control':
+                return await runtime.control(arguments.get('campaign_id',''),user_id,arguments.get('action'),sid)
+            return await asyncio.to_thread(runtime.store.status,arguments.get('campaign_id',''),user_id,sid)
+        except (ValueError,PermissionError) as exc: return {'status':'failed','error':str(exc)}
     if tool_name in {"list_functions", "list_tools", "get_tools"}:
         return {"tools": [t["function"]["name"] for t in AGENT_TOOLS]}
 
@@ -1017,7 +1102,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             arch_str = arch_val.value if hasattr(arch_val, "value") else str(arch_val)
             pda_depth_val = getattr(session.pda, "depth", 1) if hasattr(session, "pda") else 1
             skg_summary_val = session.skg.get_summary() if hasattr(session, "skg") else {}
-
+            from .browser_testing.widgets import observe_widgets
             return {
                 "status": "already_connected" if already_open else "connected",
                 "session_id": session_id,
@@ -1029,6 +1114,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 "site_graph_summary": skg_summary_val,
                 "interactive_elements_count": len(page_state.get("elements", [])),
                 "interactive_elements": _compact_interactive_elements(page_state.get("elements", [])),
+                "widget_state": await observe_widgets(session),
                 "subpages": page_state.get("subpages", []),
                 "console_errors_count": len([l for l in session.console_logs if l.get("type") == "error"]),
                 "frame": frame_url,
@@ -1058,26 +1144,72 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             return {'status':'failed','action':'site_audit','error':'Invalid UI controls/hover contract; no input executed.'}
         auditor = SiteAuditor(session,execute_tool_call,user_id,
             arguments.get('max_pages',25),arguments.get('max_actions',120),arguments.get('max_seconds',120),arguments.get('include_hover',True),
-            include_frame=arguments.get('include_frame',True) is not False)
+            include_frame=arguments.get('include_frame',True) is not False,
+            autonomous=(arguments.get('autonomous',False) is True
+                        and getattr(session,'agent_access_mode',None) == 'full_access'
+                        and getattr(session,'allow_agent_questions',True) is False))
         return await auditor.run(ids)
+
+    if tool_name == 'browser_read_editor':
+        from .browser_driver import browser_manager
+        from .browser_testing.editors import read_editor
+        session=browser_manager.sessions.get(str(arguments.get('session_id') or 'default'))
+        ref=arguments.get('element_id')
+        if not session or not session.is_connected or type(ref) is not int or not any(e.get('id')==ref for e in session.interactive_elements):
+            return {'status':'failed','error':'Select one current observed editor element_id.'}
+        if any(e.get('id')==ref and e.get('type')=='password' for e in session.interactive_elements):
+            return {'status':'failed','error':'Password documents are not exposed.'}
+        document=await read_editor(session,ref)
+        if not document or document.get('value') is None:
+            return {'status':'failed','error':'The target does not expose an editor document. Observe the source editor, not the output pane.'}
+        tracker=getattr(session,'operation_recovery',None)
+        if tracker: tracker.editor_readback(session,ref)
+        return {'status':'observed','editor_kind':document['kind'],'readonly':document['readonly'],
+                'text':document['value'][:32000],'truncated':len(document['value'])>32000}
 
     if tool_name == "browser_observe":
         from .browser_driver import browser_manager
         offset = arguments.get("offset", 0)
         if type(offset) is not int or offset < 0:
             return {"status": "failed", "action": "observe", "error": "offset must be a nonnegative integer."}
+        query = arguments.get('query')
+        scope = arguments.get('scope', 'page')
+        if query is not None and (not isinstance(query, str) or not query.strip() or len(query) > 120):
+            return {'status':'failed','action':'observe','error':'query must be a nonempty string of at most 120 characters.'}
+        if scope not in ('page', 'viewport', 'overlay'):
+            return {'status':'failed','action':'observe','error':'scope must be page, viewport or overlay.'}
         session = browser_manager.sessions.get(str(arguments.get("session_id") or "default"))
         if not session or not session.is_connected:
             return {"status": "unverified", "action": "observe", "reason": "No connected browser session."}
+        if getattr(session,'native_dialog',None):
+            return {'status':'observed','action':'observe','widget_state':{'native_dialog':session.native_dialog},
+                    'interactive_elements':[],'total_controls':0,'has_more':False,'visual_captured':False}
         try:
-            await session.extract_interactive_tree()
+            observation = await session.extract_interactive_tree()
+            if isinstance(observation, dict) and observation.get('fresh') is False:
+                return {'status':'unverified','action':'observe',
+                        'reason':'A fresh page observation was unavailable. Cached controls are not current evidence.',
+                        'interactive_elements':[], 'visual_captured':False}
             frame = await session.capture_screenshot(quality=60, use_cache=False) if arguments.get('include_frame',True) else None
-            controls = _compact_interactive_elements(session.interactive_elements, offset=offset)
-            total = len(session.interactive_elements or [])
+            from .browser_testing.widgets import observe_widgets
+            widgets=await observe_widgets(session)
+            matches = session.interactive_elements or []
+            if scope == 'viewport':
+                matches = [e for e in matches if e.get('is_in_viewport')]
+            elif scope == 'overlay':
+                matches = [e for e in matches if e.get('is_inside_modal')]
+            if query is not None:
+                search = query.strip().casefold()
+                fields = ('text', 'aria_label', 'name', 'placeholder', 'role', 'type', 'form_id', 'card_context')
+                matches = [e for e in matches if any(search in str(e.get(key) or '').casefold() for key in fields)]
+            controls = _compact_interactive_elements(matches, offset=offset)
+            total = len(matches)
             has_more = offset + len(controls) < total
             return {"status": "observed", "action": "observe", "url": session.current_url,
-                    "title": session.page_title, "interactive_elements": controls,
-                    "total_controls": total, "offset": offset, "has_more": has_more,
+                    "title": session.page_title, "interactive_elements": controls, "widget_state":widgets,
+                    "downloads": list(getattr(session, 'download_events', {}).values())[-5:],
+                    "total_controls": total, "page_total_controls": len(session.interactive_elements or []),
+                    "query":query, "scope":scope, "offset": offset, "has_more": has_more,
                     "next_offset": offset + len(controls) if has_more else None,
                     "visual_captured": bool(frame), "frame": f"data:image/jpeg;base64,{frame}" if frame else ""}
         except Exception:
@@ -1089,7 +1221,13 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
         session = browser_manager.sessions.get(str(arguments.get("session_id") or "default"))
         if not session or not session.is_connected:
             return {"status": "unverified", "action": "assert", "reason": "No connected browser session to assert against."}
-        return await assert_browser_state(session, arguments.get("expectations"), arguments.get("timeout_seconds", 5), arguments.get("purpose", "checkpoint"))
+        expectations = arguments.get("expectations")
+        purpose = arguments.get("purpose")
+        if purpose is None and isinstance(expectations, list):
+            nested = {item.get("purpose") for item in expectations if isinstance(item, dict) and item.get("purpose")}
+            if len(nested) == 1:
+                purpose = nested.pop()
+        return await assert_browser_state(session, expectations, arguments.get("timeout_seconds", 5), purpose or "checkpoint")
 
     if tool_name == "browser_interact":
         session_id = str(arguments.get("session_id") or "default")
@@ -1102,15 +1240,56 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             else:
                 session = browser_manager.sessions[session_id]
 
-            if not session.interactive_elements:
+            if getattr(session,'native_dialog',None) and action!='handle_dialog':
+                return {'status':'failed','action':action,'error':'Resolve the observed native dialog before page input.',
+                        'widget_state':{'native_dialog':session.native_dialog}}
+            if not session.interactive_elements and action!='handle_dialog':
                 try:
                     await session.extract_interactive_tree()
                 except Exception:
                     pass
-
+            from .browser_testing.outcomes import outcome_guard_for
+            guard = outcome_guard_for(session)
+            if guard:
+                guard.observe(session.interactive_elements, session.current_url, session.page_title)
+            session.last_target_resolution_ms = 0
             ref = arguments.get('element_id')
-            targeted_actions = {'click','hover','double_click','right_click','type','scroll_to','select_option','toggle_checkbox','set_checked'}
-            if action in targeted_actions and ref is not None and not any(str(e.get('id')) == str(ref) for e in session.interactive_elements):
+            targeted_actions = {'click','hover','double_click','right_click','type','scroll_to','select_option','toggle_checkbox','set_checked','choose_option','choose_date','press_key'}
+            if action in targeted_actions and type(ref) is int:
+                from .browser_testing.targets import resolve_target_reference
+                resolve_started = time.monotonic()
+                resolution = await resolve_target_reference(session, ref)
+                session.last_target_resolution_ms = round((time.monotonic()-resolve_started)*1000,1)
+                if resolution['status'] != 'ready':
+                    from .browser_testing.widgets import observe_widgets
+                    try:
+                        observation = await session.extract_interactive_tree()
+                        if isinstance(observation, dict) and observation.get('fresh') is False:
+                            raise RuntimeError('Fresh observation unavailable')
+                        widgets = await observe_widgets(session)
+                        controls = _compact_interactive_elements(session.interactive_elements)
+                    except Exception:
+                        widgets, controls = {'status':'unverified'}, []
+                    prior = getattr(session, 'overlay_target_history', {}).get(ref)
+                    overlay = widgets.get('active_overlay')
+                    dismissed = bool(prior and 'active_overlay' in widgets and
+                                     (not overlay or overlay.get('id') != prior.get('overlay_id')))
+                    return {**resolution, 'action':action,
+                            'target':(prior or {}).get('target', {}).get('text') or
+                                     getattr(session,'observed_targets',{}).get(ref,(None,{}))[1].get('text'),
+                            'widget_state':widgets,
+                            'interactive_elements':controls,
+                            'recovery':{'reason':'dismissed_overlay' if dismissed else 'stale_target',
+                                **({'previous_overlay':prior} if prior else {}),
+                                'hint':('The target belonged to a dismissed or replaced workflow. Restore that workflow '
+                                        'through a current observed launcher before filling its field.' if dismissed else
+                                        'Use only these current control references. Search a specific workflow with '
+                                        'browser_observe query and scope=viewport or overlay; do not reuse historical IDs.')},
+                            'timing':{'target_resolve_ms':session.last_target_resolution_ms}}
+                if resolution['element_id'] != ref:
+                    arguments = {**arguments, 'element_id':resolution['element_id']}
+                    ref = resolution['element_id']
+            elif action in targeted_actions and ref is not None and not any(str(e.get('id')) == str(ref) for e in session.interactive_elements):
                 return {'status':'stale_element','action':action,'error':'Observed element reference is no longer current. Observe and select the current target; no input was dispatched.'}
             if action in targeted_actions and ref is None:
                 fields = ('name','placeholder','input_id') if action == 'type' else ('text','href','aria_label')
@@ -1125,26 +1304,77 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     if candidates:
                         arguments = {**arguments,'element_id':candidates[0]['id']}
                         ref = candidates[0]['id']
+            tracker=getattr(session,'operation_recovery',None)
+            if tracker:
+                blocked=tracker.blocked(session,arguments)
+                if blocked: return blocked
             pointer_target = None
+            from .browser_testing.widgets import focus_target, choose_option, choose_date, observe_widgets
+            if action == 'press_key' and ref is not None:
+                # Approval and dispatch must describe the same focused control.
+                await focus_target(session,ref)
             # Enforce approval below the planner, including nested batches,
             # coordinate clicks and Enter. Chat text/authorize-all cannot grant it.
             from .browser_testing.permissions import observe_step, permission_reason, authorized
             control = await observe_step(session, arguments)
+            from .browser_testing.campaigns import campaign_scope
+            scope=campaign_scope.get()
+            if scope and control and action in {'click','double_click','press_key'}:
+                from .browser_testing.site_audit import canonical_url
+                campaign_job=await asyncio.to_thread(scope[0].store.job,scope[1],user_id)
+                root=campaign_job['payload']['custom_url']
+                destinations=[control.get('href')]
+                if (action=='press_key' and str(arguments.get('key','')).lower()=='enter') or control.get('type')=='submit':
+                    destinations.append(control.get('form_action'))
+                if any(value and (not canonical_url(value,session.current_url) or not canonical_url(value,root)) for value in destinations):
+                    return {'status':'blocked','action':action,'error':'This control leaves the authorized campaign origin; no input dispatched.'}
             if control and control.get('disabled') and action in {'click','double_click','right_click','press_key'} and ref is not None:
+                from .browser_testing.actionability import prepare_pointer_target
+                recovery = await prepare_pointer_target(session,int(ref))
+                if recovery.get('disabled'):
+                    return {'status':'failed','action':action,'error':'Target is disabled; no input was dispatched.',
+                            'recovery':recovery,'hint':'Resolve the observed prerequisites and observe again. Never force-enable this control.'}
+            if (control and control.get('form') and control.get('native_validity') is False
+                    and control.get('type') in {'submit','image'}
+                    and not re.search(r'\b(?:negative|invalid|validation|rejection)\b',
+                                      (getattr(session,'task_context',None) or {}).get('goal',''), re.I)):
                 from .browser_testing.actionability import inspect_actionability
-                recovery = await inspect_actionability(session,int(ref))
-                return {'status':'failed','action':action,'error':'Target is disabled; no input was dispatched.',
-                        'recovery':recovery,'hint':'Resolve the observed prerequisites and observe again. Never force-enable this control.'}
-            reason = permission_reason(arguments, control, getattr(session, 'audit_read_only', False))
-            if reason and not authorized(arguments, control):
+                recovery = await inspect_actionability(session,int(ref)) if ref is not None else {}
+                return {'status':'failed','action':action,
+                        'error':'The observed form has invalid required fields. No input was dispatched.',
+                        'recovery':recovery,
+                        'hint':'Fill each required field from the task facts. Ask for a missing real-world fact when questions are enabled; in autonomous mode record the prerequisite and continue independent tests.'}
+            from .browser_testing.permissions import reconciliation_reason
+            from .browser_testing.submissions import preflight_submission
+            blocked_submission, submission_key = preflight_submission(session, arguments, control)
+            if blocked_submission:
+                return blocked_submission
+            recovering=getattr(session,'campaign_recovery',False)
+            reason = (reconciliation_reason(arguments,control) if recovering else '') or permission_reason(arguments, control, getattr(session, 'audit_read_only', False))
+            # Full access is an explicit user setting. Keep stale-target and
+            # action identity checks, but do not emit a second permission gate
+            # for a step the user has already authorized at the agent level.
+            access_granted = getattr(session, 'agent_access_mode', None) == 'full_access' and not recovering
+            if reason and not authorized(arguments, control) and not access_granted:
                 return {'status':'requires_approval','action':action,
                         'error':reason+' No input was dispatched.', 'approval_required':True,
                         'target':(control or {}).get('label','Current control')}
+            if reason and hasattr(session,'consequential_dispatches'):
+                from .browser_testing.permissions import fingerprint
+                key=(getattr(session,'target_id',''),getattr(session,'_selected_frame',None),action,fingerprint(control))
+                prior=session.consequential_dispatches.get(key)
+                if prior is not None and session.dispatched_inputs>prior and not authorized(arguments,control):
+                    return {'status':'blocked','action':action,
+                            'error':'This consequential step was already dispatched on the same observed state. Verify its result before any retry; no input was dispatched.',
+                            'verification':{'verified':False,'effect_type':'replay_prevented'}}
+                if len(session.consequential_dispatches)>=256:session.consequential_dispatches.pop(next(iter(session.consequential_dispatches)))
+                session.consequential_dispatches[key]=session.dispatched_inputs
             if action in {'click','double_click','right_click'} and control is None:
                 return {'status':'stale_element','action':action,'error':'No unique current target could be observed. Use an observed element_id or explicit x/y coordinates; no input was dispatched.',
                         'interactive_elements':_compact_interactive_elements(session.interactive_elements)}
             if getattr(session,'audit_read_only',False) and action == 'press_key' and control is None:
                 return {'status':'blocked','action':action,'error':'Current target semantics could not be observed. No input dispatched; observe the page before selecting this action.'}
+            session._pending_consequential_dispatch = submission_key
             if action in {'hover','double_click','right_click'} and ref is not None:
                 from .browser_testing.actionability import inspect_actionability
                 await session.scroll_to_element(int(ref))
@@ -1153,10 +1383,28 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     or (action != 'hover' and pointer_target.get('disabled'))):
                     return {'status':'failed','action':action,'error':'Target is not currently actionable; no input was dispatched.','recovery':pointer_target}
 
+            if action in {'choose_option','choose_date','handle_dialog','switch_tab','switch_frame'}:
+                if action=='choose_option': result=await choose_option(session,arguments)
+                elif action=='choose_date':
+                    async def widget_dispatch(step):
+                        await session.extract_interactive_tree()
+                        return await execute_tool_call('browser_interact',{**step,'session_id':session_id,'include_frame':False},user_id)
+                    result=await choose_date(session,arguments,widget_dispatch)
+                elif action=='handle_dialog': result=await session.handle_native_dialog(arguments)
+                elif action=='switch_frame': result=await session.switch_frame(arguments.get('frame_id'))
+                else: result=await session.switch_tab(arguments.get('target_id'))
+                if not getattr(session,'native_dialog',None):await session.extract_interactive_tree()
+                return {**result,'action':action,'widget_state':await observe_widgets(session),
+                        'interactive_elements':_compact_interactive_elements(session.interactive_elements)}
             label = ""
             target_name = ""
             hover_portals = []
             session.last_action_verification = None
+            if action in {'navigate_back', 'navigate_forward', 'return_to_parent'}:
+                result = await getattr(session, action)()
+                return {**result, 'interactive_elements': _compact_interactive_elements(session.interactive_elements),
+                        'widget_state': await observe_widgets(session),
+                        'hint': 'Navigation invalidates prior controls. Use these fresh references; a history boundary needs a different recovery action.'}
             pre_snapshot = await ActionPerceptionVerification.capture_snapshot(session) if action not in {"click", "set_checked"} else None
             pre_action_url = (session.current_url or "").rstrip("/")
             x = arguments.get("x")
@@ -1189,6 +1437,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                                     "error": "Click target could not be dispatched.",
                                     "recovery": getattr(session, "last_actionability", {}),
                                     "interactive_elements": _compact_interactive_elements(session.interactive_elements),
+                                    "widget_state": await observe_widgets(session),
                                     "hint": "Read recovery.reason, blocker and invalid_fields. Resolve that observed state and retry; no input was dispatched. Never force-enable or remove a dialog.",
                                     "verification": session.last_action_verification}
                     else:
@@ -1396,7 +1645,11 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     }
                 target_name = url
                 label = f"Navigate to {url}"
-                await session.navigate(url)
+                try:
+                    await session.navigate(url)
+                except RuntimeError as exc:
+                    return {'status':'failed','action':'navigate','target':url,
+                            'error':str(exc),'verified':False}
 
             elif action == "set_checked":
                 from .browser_testing.assertions import assert_browser_state
@@ -1436,6 +1689,10 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 return {"error": f"Unknown action '{action}'. Supported: click, hover, double_click, right_click, drag_and_drop, type, scroll, scroll_to, navigate_back, get_theme, press_key, navigate, toggle_checkbox, select_option."}
 
             # Ensure fresh interactive tree on mutation actions so subsequent agent decisions reflect live DOM changes
+            if getattr(session,'native_dialog',None):
+                return {'status':'observed','action':action,'verification':session.last_action_verification,
+                        'widget_state':await observe_widgets(session),'interactive_elements':[],
+                        'hint':'Resolve this observed native dialog before any further page operation.'}
             mutation_actions = {"type", "click", "hover", "double_click", "right_click", "drag_and_drop", "scroll", "scroll_to", "select_option", "toggle_checkbox", "press_key", "navigate", "navigate_back"}
             if (action in mutation_actions and not session.last_action_verification) or not session.interactive_elements:
                 try:
@@ -1449,6 +1706,10 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     "elements": session.interactive_elements,
                     "subpages": session.discovered_subpages,
                 }
+            if getattr(session,'native_dialog',None):
+                return {'status':'observed','action':action,'verification':session.last_action_verification,
+                        'widget_state':await observe_widgets(session),'interactive_elements':[],
+                        'hint':'Resolve this observed native dialog before any further page operation.'}
             if pre_snapshot is not None:
                 post_snapshot = await ActionPerceptionVerification.capture_snapshot(session)
                 session.last_action_verification = ActionPerceptionVerification.verify_action_outcome(
@@ -1470,6 +1731,16 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 som_url = f"data:image/jpeg;base64,{som_data}" if som_data else frame_url
             else:
                 som_url = frame_url
+
+            widgets = await observe_widgets(session)
+            focused_id = widgets.get('focused_id')
+            if (action == 'click' and widgets.get('popup_options') and
+                focused_id and not any(item.get('id') == focused_id for item in tree.get('elements', []))):
+                # A React picker can mount after click_element's first DOM
+                # scan. Return its newly focused input in this same tool
+                # result so the next action has an observed target ID.
+                tree = {**tree, 'elements': session.interactive_elements,
+                        'subpages': session.discovered_subpages}
 
             clean_target = target_name or label or action
 
@@ -1512,40 +1783,62 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 "archetype": arch_str,
                 "pda_depth": pda_depth_val,
                 "verification": getattr(session, "last_action_verification", None),
+                "download": getattr(session, "last_download", None) if action == "click" else None,
+                "timing": ({'target_resolve_ms':getattr(session,'last_target_resolution_ms',0)} |
+                           (getattr(session,'last_action_timing',{}) if action == 'click' else {})),
                 "elements_count": len(tree.get("elements", [])),
                 "interactive_elements": _compact_interactive_elements(tree.get("elements", [])),
+                "widget_state": widgets,
                 "subpages": tree.get("subpages", []),
                 "spawned_portals": hover_portals,
                 "console_errors_count": len([l for l in session.console_logs if l.get("type") == "error"]),
                 "hint": hint_interact,
             }
+            if action in {'click','press_key'} and control and control.get('form') and (
+                control.get('type') in {'submit','image'} or
+                str(control.get('label') or '').lower().startswith(('send','submit','pay','book','purchase'))
+            ):
+                ret_payload['requires_outcome'] = True
+                ret_payload['hint'] += ' This form action is dispatched but remains unverified until its actual response is asserted.'
             ret_payload["status"] = action_status(ret_payload)
+            if effect_type == 'download_inprogress':
+                ret_payload['hint'] += ' The download has started. Observe its completion state; do not click the control again.'
             if action == "type":
                 ret_payload["autocomplete_suggestions"] = getattr(session, "last_autocomplete_suggestions", [])[:15]
                 ret_payload["hint"] += " Typing is not a committed autocomplete selection. If options remain, choose a current option ID and assert the committed value before submitting."
             return ret_payload
         except Exception as e:
-            return {"error": f"Browser interaction failed: {str(e)}"}
+            result={"status":"failed","action":action,"error": f"Browser interaction failed: {str(e)}"}
+            return result
 
     if tool_name == "browser_interact_batch":
         session_id = str(arguments.get("session_id") or "default")
         actions = arguments.get("actions", [])
-        if not isinstance(actions, list) or not 1 <= len(actions) <= 8:
-            return {"status": "failed", "error": "Provide 1–8 actions per bounded batch."}
-        from .browser_testing.transactions import validate_batch, completion_evidence
-        problem = validate_batch(actions, arguments.get('complete_task', False))
+        from .browser_driver import browser_manager
+        from .browser_testing.transactions import (validate_batch, completion_evidence,
+            continue_batch_after, compile_batch, scene_changed, page_assertion)
+        existing = browser_manager.sessions.get(session_id)
+        original_count = len(actions) if isinstance(actions, list) else 0
+        actions = compile_batch(actions, getattr(existing, 'interactive_elements', ()))
+        problem = validate_batch(actions, arguments.get('complete_task', False), max_actions=32)
         if problem:
             return {'status':'failed','action':'batch','executed_count':0,'error':problem}
 
         try:
-            from .browser_driver import browser_manager
             if session_id not in browser_manager.sessions or not browser_manager.sessions[session_id].is_connected:
                 session = await browser_manager.get_or_create_session(session_id=session_id)
             else:
                 session = browser_manager.sessions[session_id]
 
+            from .browser_testing.outcomes import outcome_guard_for
+            guard = outcome_guard_for(session)
+            if guard:
+                guard.observe(session.interactive_elements, session.current_url, session.page_title)
             results = []
-            for act_obj in actions:
+            boundary = False
+            for step_index, act_obj in enumerate(actions):
+                if boundary and not page_assertion(act_obj):
+                    break
                 if not isinstance(act_obj, dict):
                     return {"status": "failed", "error": "Each batch action must be an object."}
                 sub_action = str(act_obj.get("action", "")).lower()
@@ -1558,8 +1851,10 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     "target": sub_res.get("target") or sub_res.get("action"),
                     "status": action_status(sub_res),
                     "verification": sub_res.get("verification"),
+                    "timing": sub_res.get("timing"),
                     "assertions": sub_res.get("assertions", []),
                     "purpose": sub_res.get("purpose"),
+                    **({key: sub_res[key] for key in ('requested_purpose', 'completion_reason') if key in sub_res}),
                     "error": sub_res.get("error"),
                     "recovery": sub_res.get("recovery"),
                     "hint": sub_res.get("hint"),
@@ -1569,8 +1864,9 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 from .tool_progress import snapshot_step
                 await snapshot_step(session, "browser_assert" if sub_action == "assert" else "browser_interact", sub_args, sub_res,
                                     include_frame=arguments.get('include_frame',True) is not False)
-                if sub_res.get('approval_required') or action_status(sub_res) == "failed" or (sub_action == "assert" and action_status(sub_res) != "passed"):
+                if sub_res.get('approval_required') or not continue_batch_after(results[-1]):
                     break
+                boundary = boundary or scene_changed(sub_res)
 
             tree = {
                 "url": session.current_url,
@@ -1589,7 +1885,10 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     "passed" if len(results) == len(actions) and all(r["status"] == "passed" for r in results) else "unverified"),
                 "action": "batch",
                 "batch_size": len(actions),
+                "planned_count": original_count,
+                "compiled_count": len(actions),
                 "executed_count": len(results),
+                "remaining_count": len(actions) - len(results),
                 "results": results,
                 "url": session.current_url,
                 "title": tree.get("title", ""),
@@ -1600,6 +1899,13 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 "frame": frame_url,
             }
             payload['completion_verified'] = completion_evidence(actions, results, arguments.get('complete_task', False))
+            if guard:
+                payload = guard.tool_result('browser_interact_batch', {**arguments, 'actions': actions}, payload)
+            if len(results) < len(actions):
+                payload['hint'] = ('The batch stopped at a changed scene or an unverified step. Use the returned current controls '
+                    'to continue the remaining workflow; do not replay executed steps.')
+            if payload['completion_verified']:
+                payload['status'] = 'passed'
             return payload
         except Exception as e:
             return {"error": f"Batch interaction failed: {str(e)}"}
