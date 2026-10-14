@@ -147,7 +147,7 @@ class StreamBufferTests(unittest.IsolatedAsyncioTestCase):
             session.is_connected = False
             await asyncio.wait_for(task,0.3)
         connect.assert_not_awaited()
-    async def test_idle_video_fallback_keeps_capturing_current_tab_without_navigation(self):
+    async def test_idle_video_fallback_does_not_flood_cdp_with_screenshots(self):
         from fastapi import WebSocketDisconnect
         from app.main import websocket_browser_stream
         stop = asyncio.Event()
@@ -165,11 +165,15 @@ class StreamBufferTests(unittest.IsolatedAsyncioTestCase):
                     return json.dumps({"type": "stream_recover"})
                 await stop.wait()
                 raise WebSocketDisconnect()
+        async def capture_screenshot(**_):
+            session._last_frame_time = __import__('time').time()
+            return '/9j/'
         session = SimpleNamespace(
             session_id="fallback", is_connected=True, h264_active=True, current_url="https://fixture.invalid/",
             page_title="Fixture", interactive_elements=[], latest_frame=None, _frame_seq=8,
+            _last_frame_time=0.0, _jpeg_streaming=True,
             add_listener=lambda _: None, remove_listener=lambda _: None,
-            start_jpeg_stream=AsyncMock(side_effect=RuntimeError("Screencast is already active")), capture_screenshot=AsyncMock(return_value="/9j/"))
+            start_jpeg_stream=AsyncMock(side_effect=RuntimeError("Screencast is already active")), capture_screenshot=AsyncMock(side_effect=capture_screenshot))
         with patch.dict(browser_manager.sessions, {"fallback": session}, clear=True), \
              patch('app.browser_ticket.verify',return_value={'control':True,'expires':__import__('time').time()+300}), \
              patch.object(browser_manager, "activate_display", AsyncMock()), \
@@ -177,13 +181,14 @@ class StreamBufferTests(unittest.IsolatedAsyncioTestCase):
             task = asyncio.create_task(websocket_browser_stream(Socket(), "fallback"))
             try:
                 async with asyncio.timeout(2):
-                    while sum(m.get("type") == "frame" for m in messages) < 3:
+                    while not any(m.get("type") == "stream_health" for m in messages):
                         await asyncio.sleep(0.05)
             finally:
                 stop.set()
                 await asyncio.wait_for(task, 1)
             navigate.assert_not_awaited()
-        self.assertGreaterEqual(session.capture_screenshot.await_count, 3)
+        self.assertEqual(session.capture_screenshot.await_count, 1)
+        self.assertEqual(sum(m.get("type") == "frame" for m in messages), 1)
         self.assertTrue(any(m.get("type") == "stream_reset" for m in messages))
         self.assertTrue(any(m.get("type") == "stream_health" for m in messages))
 

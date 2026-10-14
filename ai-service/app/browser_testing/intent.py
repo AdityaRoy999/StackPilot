@@ -2,12 +2,28 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
+def is_broad_browser_goal(goal: str) -> bool:
+    """A bare testing command refers to the selected site, not one control."""
+    normalized = re.sub(r"https?://\S+|www\.\S+", " ", goal.lower())
+    normalized = re.sub(r"\b[\w-]+\.(?:com|org|in|io|co|net|dev|ai|app|edu|me)(?:/\S*)?", " ", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" /.,!?\n\t")
+    if normalized in {"test", "test it", "test this", "test all", "audit", "audit it", "audit this"}:
+        return True
+    return any(term in normalized for term in (
+        "full site", "entire site", "whole site", "all pages", "everything", "100%",
+        "crawl all", "crawl site", "comprehensive site", "full scan", "audit all", "full coverage",
+        "test the website", "test this website", "test website", "test the site", "test this site",
+        "test site", "website testing", "website end to end", "end-to-end website",
+        "website audit", "audit the website", "audit this website"))
+
+
 def is_task_followup(message: str) -> bool:
-    return message.strip().lower() in {'continue','continue testing','resume testing','continue the test'} or message.startswith(("[System] User answered", "Selection for ", "Confirmed: Approve execution of browser_")) or any(
+    return message.strip().lower() in {'continue','continue testing','resume testing','continue the test','approve this browser step and continue the website test.'} or message.startswith(("[System] User answered", "Selection for ", "Confirmed: Approve execution of browser_")) or any(
         line.strip().lower().startswith(("from_selection:", "to_selection:"))
         for line in message.splitlines())
 
@@ -57,6 +73,10 @@ def task_contract_prompt(context: dict) -> str:
         "Use browser_assert with purpose='checkpoint' for intermediate values and purpose='outcome' "
         "for the requested terminal results, including route/date/query identity and persistence "
         "where observable. A click, page mutation, listing card or URL alone is not task completion. "
+        "An unchanged action button label, focus, or unchanged page title is a checkpoint, "
+        "not proof that the requested action succeeded. Never replace a failed workflow "
+        "outcome with an easier unrelated assertion to finish. For section navigation, "
+        "assert the destination section in_viewport, not the navigation button's text. "
         "Expected validation rejection can PASS a negative test when its exact expected outcome is asserted. "
         "Use browser_observe for fresh visual layout and semantic controls when current observations are insufficient. "
         "If the user asks for a website audit, state a finite coverage plan and list untested areas.\n"

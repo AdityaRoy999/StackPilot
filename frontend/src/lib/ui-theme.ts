@@ -8,6 +8,7 @@ import { injectCustomThemeStyles } from "@/lib/custom-themes";
 // via the `class` attribute). It lives on <html data-ui-theme="...">, and the
 // CSS in globals.css keys every design token off that attribute.
 export const UI_THEMES = [
+  "studio",
   "radix",
   "shadcn",
   "apple",
@@ -32,7 +33,7 @@ export const UI_THEMES = [
 ] as const;
 export type UiTheme = (typeof UI_THEMES)[number] | (string & {});
 
-export const DEFAULT_UI_THEME: UiTheme = "radix";
+export const DEFAULT_UI_THEME: UiTheme = "studio";
 export const UI_THEME_STORAGE_KEY = "stackpilot.ui-theme";
 
 export interface UiThemeMeta {
@@ -44,6 +45,12 @@ export interface UiThemeMeta {
 }
 
 export const UI_THEME_META: UiThemeMeta[] = [
+  {
+    id: "studio",
+    name: "Studio",
+    description: "A quiet developer workspace with monochrome surfaces, fine grid lines, compact controls, and clearly structured cards.",
+    swatches: ["#fafafa", "#ffffff", "#18181b"],
+  },
   {
     id: "radix",
     name: "Radix UI",

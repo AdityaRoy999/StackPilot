@@ -166,6 +166,50 @@ def foreground(package):
     return bool(re.search(r'(?:mResumedActivity:|topResumedActivity=|ResumedActivity:).*\s'+re.escape(package)+r'/',text))
 
 
+def apk_package(apk):
+    """Read the actual manifest before deciding whether installation is owned."""
+    suffix='.exe' if os.name=='nt' else ''
+    tools=sorted((SDK/'build-tools').glob('*/aapt'+suffix),
+                 key=lambda path:tuple(int(n) for n in re.findall(r'\d+',path.parent.name)))
+    if not tools:raise RuntimeError('Android SDK build-tools aapt is required to identify the APK')
+    result=subprocess.run([str(tools[-1]),'dump','badging',str(apk)],capture_output=True,timeout=20,
+                          creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+    if result.returncode:raise RuntimeError('APK manifest could not be read')
+    output=result.stdout.decode('utf-8',errors='replace')
+    match=re.search(r"^package: name='([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)'",output,re.M)
+    if not match:raise RuntimeError('APK manifest has no valid application ID')
+    return match[1]
+
+
+async def application_ui(package,timeout=30):
+    """Require actual app UI; recover only bounded known emulator OS dialogs."""
+    deadline=time.monotonic()+timeout
+    recovered=[]
+    while True:
+        observation=await asyncio.to_thread(nodes)
+        if any(n.get('resource-id') in {'android:id/aerr_wait','android:id/aerr_close'} for n in observation):
+            windows=await asyncio.to_thread(adb,'shell','dumpsys','window',timeout=8)
+            focused=re.search(r'mCurrentFocus=Window\{[^\n]*Application Not Responding:\s*([A-Za-z0-9_.]+)',windows)
+            system=focused[1] if focused else None
+            allowed={'com.google.android.apps.nexuslauncher','com.android.launcher3','com.android.launcher','com.android.systemui'}
+            if not focused:
+                # UIAutomator and the current window are separate snapshots.
+                # After dismissal the older tree can still contain the dialog.
+                pass
+            elif SERIAL=='emulator-5580' and system in allowed and system not in recovered:
+                x,y=target(observation,{'resource_id':'android:id/aerr_close'})
+                await asyncio.to_thread(adb,'shell','input','tap',str(x),str(y))
+                recovered.append(system)
+            elif system==package:
+                raise RuntimeError('Native application is not responding')
+            else:
+                raise RuntimeError('Android worker has an unresolved system error dialog')
+        elif any(n.get('package')==package for n in observation) and await asyncio.to_thread(foreground,package):
+            return recovered
+        if time.monotonic()>=deadline:raise RuntimeError('No application UI was observed before the startup deadline')
+        await asyncio.sleep(.25)
+
+
 def validate_scenarios(scenarios):
     if not isinstance(scenarios,list) or len(scenarios)>20:raise ValueError('Native scenarios must be a bounded list')
     total=0
@@ -233,6 +277,9 @@ async def verify(request:Request):
                         if size>artifact['size']:raise RuntimeError('APK exceeds declared size')
                         digest.update(chunk);output.write(chunk)
         if size!=artifact['size'] or digest.hexdigest()!=artifact['sha256']:raise RuntimeError('APK integrity check failed')
+        manifest_package=await asyncio.to_thread(apk_package,apk)
+        if package and package!=manifest_package:raise ValueError('Declared app_id does not match the APK manifest')
+        package=manifest_package
         # Only remove packages installed by this worker on its own emulator.
         remember_active(None)
         if active:
@@ -248,14 +295,14 @@ async def verify(request:Request):
             before.discard('package:'+package)
         await asyncio.to_thread(adb,'install','-r','-t',str(apk),timeout=90)
         after=set((await asyncio.to_thread(adb,'shell','pm','list','packages','-3')).splitlines())
-        if not package:
-            added=after-before
-            if len(added)!=1:raise ValueError('Declare app_id when APK package discovery is ambiguous')
-            package=added.pop().removeprefix('package:')
         if 'package:'+package not in after:raise ValueError('Declared app_id does not match an installed APK')
         known.add(package)
         temporary=ROOT/'installed.pending.json';temporary.write_text(json.dumps(sorted(known)))
         os.replace(temporary,ROOT/'installed.json')
+        # Retain exact install ownership even if launch/readiness later fails,
+        # so deployment cleanup can remove a partially installed candidate.
+        active={'deployment_id':deployment,'package':package,'artifact_digest':artifact['sha256']}
+        remember_active(active)
         await asyncio.to_thread(adb,'shell','pm','clear',package)
         resolved=await asyncio.to_thread(adb,'shell','cmd','package','resolve-activity','--brief','-a','android.intent.action.MAIN','-c','android.intent.category.LAUNCHER',package)
         component=resolved.splitlines()[-1]
@@ -267,15 +314,7 @@ async def verify(request:Request):
         while not await asyncio.to_thread(foreground,package):
             if time.monotonic()>deadline:raise RuntimeError('Application did not reach the foreground')
             await asyncio.sleep(.25)
-        observation=await asyncio.to_thread(nodes)
-        # A cold emulator can show a system ANR dialog while services warm up.
-        # Wait once, then require the real app UI; never treat the dialog as ready.
-        if any(n.get('resource-id')=='android:id/aerr_wait' for n in observation):
-            x,y=target(observation,{'resource_id':'android:id/aerr_wait'})
-            await asyncio.to_thread(adb,'shell','input','tap',str(x),str(y))
-            observation=await asyncio.to_thread(nodes)
-        if not any(n.get('package')==package for n in observation):raise RuntimeError('No application UI was observed')
-        active={'deployment_id':deployment,'package':package,'artifact_digest':artifact['sha256']}
+        startup_recovery=await application_ui(package)
         evidence=[]
         for scenario in scenarios:
             steps=[]
@@ -285,7 +324,7 @@ async def verify(request:Request):
         screenshot=await asyncio.to_thread(adb,'exec-out','screencap','-p',binary=True)
         (directory/'launch.png').write_bytes(screenshot)
         proof={'verified':True,'status':'passed','scope':'native_scenarios' if evidence else 'native_launch',
-               **active,'serial':SERIAL,'scenarios':evidence,'workflow_verified':bool(evidence),
+               **active,'serial':SERIAL,'scenarios':evidence,'workflow_verified':bool(evidence),'startup_recovery':startup_recovery,
                'preview_available':True,'screen_capture':'launch.png'}
         (directory/'result.json').write_text(json.dumps(proof))
         remember_active(active)

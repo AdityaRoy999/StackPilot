@@ -6,6 +6,7 @@ import * as peerLibrary from "@/lib/browser-peer";
 import * as sinkLibrary from "@/lib/browser-video-sink";
 import * as cursorLibrary from "@/lib/browser-cursor";
 import { InteractiveBrowserCanvas } from "./InteractiveBrowserCanvas";
+import { browserRecording } from "@/lib/browser-recording";
 
 vi.mock("@/lib/api", () => ({ default: { get: vi.fn() } }));
 vi.mock("@/lib/platform-icons", async () => import("lucide-react"));
@@ -52,7 +53,8 @@ it("zooms without reconnecting and maps manual taps and swipes to the unchanged 
   const inputs = (type: string) => socket.send.mock.calls.map(([raw]) => JSON.parse(raw)).filter(message => message.type === type);
   await act(async () => screen.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 205, clientY: 239 })));
   expect(inputs("user_click")).toHaveLength(0);
-  await act(async () => (host.querySelector('[aria-label="Take browser control"]') as HTMLButtonElement).click());
+  await act(async () => (host.querySelector('[aria-label="Browser options"]') as HTMLButtonElement).click());
+  await act(async () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === "Take browser control")!.click());
   await act(async () => screen.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 205, clientY: 239 })));
   expect(inputs("user_click")).toEqual([expect.objectContaining({ x: 320, y: 360 })]);
   screen.setPointerCapture = vi.fn();
@@ -94,11 +96,13 @@ it("keeps the viewer connected after socket open and telemetry updates", async (
   const socket = Socket.instances[0];
   await act(async () => socket.onopen!());
   expect(host.textContent).not.toContain("Connecting to Live Screencast");
-  expect(host.textContent).toContain("Live • Idle");
+  expect(host.querySelector('[data-browser-toolbar]')!.textContent).toContain("Live");
+  expect(host.querySelector('[data-browser-toolbar]')!.textContent).not.toContain("RTT");
+  expect(host.querySelector('[data-browser-toolbar]')!.textContent).not.toContain("fps");
   expect(socket.send).toHaveBeenCalledWith(expect.stringContaining('"type":"attach"'));
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
   expect(host.textContent).not.toContain("Connecting to Live Screencast");
-  expect(host.textContent).toContain("Live • Idle");
+  expect(host.querySelector('[data-browser-toolbar]')!.textContent).toContain("Live");
   await act(async () => socket.onclose!({ code: 1000 }));
   expect(host.textContent).toContain("Connecting to Live Screencast");
 });
@@ -191,6 +195,17 @@ it("moves the cursor without React commits per packet and honors reduced motion"
   expect(cursor.style.transform).toBe("translate3d(497px, 497px, 0)");
   expect(cursor.style.visibility).toBe("visible");
   expect(cursor.className).not.toContain("transition-all");
+  const type = (phase: string) => socket.onmessage!({ data: JSON.stringify({ type: "cursor_action", action: "type", phase, label: "Typing" }) });
+  await act(async () => type("started"));
+  expect(cursor.dataset.typing).toBe("true");
+  const beforeTyping = commits.mock.calls.length;
+  await act(async () => { for (let i = 0; i < 50; i++) type("progress"); });
+  expect(commits).toHaveBeenCalledTimes(beforeTyping);
+  await act(async () => type("applied"));
+  expect(cursor.dataset.typing).toBe("false");
+  await act(async () => type("started"));
+  await act(async () => socket.onmessage!({ data: JSON.stringify({ type: "testing_stopped" }) }));
+  expect(cursor.dataset.typing).toBe("false");
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
   const feedback = socket.send.mock.calls.map(([message]) => JSON.parse(message)).find(message => message.type === "stream_feedback");
   expect(feedback).toMatchObject({ frames_presented: 0, gap_ms: 0, presentation_interval_ms: 0 });
@@ -259,16 +274,20 @@ it("does not show a testing-completed banner when a recorded run is stopped", as
   const host = document.createElement("div"); document.body.append(host);
   const root = createRoot(host); roots.push(root);
   await act(async () => root.render(<InteractiveBrowserCanvas sessionId="stopped-replay-fixture" isOpen />));
+  const recording = browserRecording("stopped-replay-fixture");
+  await act(async () => recording.start("stopped-test"));
   const socket = Socket.latest;
   await act(async () => socket.onopen!());
   for (let i = 1; i <= 6; i++) {
     await act(async () => { await vi.advanceTimersByTimeAsync(110); socket.onmessage!({data:JSON.stringify({type:"frame",data:"eA==",seq:i})}); });
   }
-  expect(host.textContent).toContain("Replay (");
+  expect(host.textContent).toContain("Recording ");
   await act(async () => socket.onmessage!({ data: JSON.stringify({ type: "testing_stopped" }) }));
+  expect(host.querySelector('[aria-label="Replay browser test"]')).not.toBeNull();
   expect(host.textContent).not.toContain("AI Testing Session Completed");
   await act(async () => socket.onmessage!({ data: JSON.stringify({ type: "testing_completed" }) }));
-  expect(host.textContent).toContain("AI Testing Session Completed");
+  expect(host.textContent).not.toContain("AI Testing Session Completed");
+  expect(recording.status).toBe("stopped");
   await act(async () => socket.onmessage!({ data: JSON.stringify({ type: "testing_stopped" }) }));
   expect(host.textContent).not.toContain("AI Testing Session Completed");
 });
@@ -323,8 +342,69 @@ async function rtcRecoveryFixture() {
   const capabilities = () => message({ type: "stream_capabilities", webrtc: true });
   const negotiationIds = (ws = socket) => ws.send.mock.calls.map(([raw]) => JSON.parse(raw))
     .filter(msg => msg.type === "rtc_offer").map(msg => msg.negotiation_id as string);
-  return { host, socket, Socket, message, capabilities, negotiationIds, peers, hooks, sinks, createPeer };
+  return { host, root, socket, Socket, message, capabilities, negotiationIds, peers, hooks, sinks, createPeer };
 }
+
+it("records WebRTC video, exposes replay on phones, and freezes it while the live session stays connected", async () => {
+  const qa = await rtcRecoveryFixture();
+  const recording = browserRecording("rtc-recovery-fixture");
+  const video = qa.host.querySelector("video")!;
+  Object.defineProperty(video, "videoWidth", { value: 1280 });
+  Object.defineProperty(video, "videoHeight", { value: 720 });
+  const drawImage = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback => callback(new Blob(["rtc"], { type: "image/jpeg" })));
+  await act(async () => recording.start("rtc-recording-test"));
+  await qa.capabilities();
+  await act(async () => { qa.hooks[0].acquire(); qa.hooks[0].presented(); });
+  expect(recording.frames).toHaveLength(1);
+  await act(async () => recording.finish("completed"));
+  const count = recording.frames.length;
+  expect(qa.host.textContent).toContain("AI Testing Session Completed");
+  const replay = qa.host.querySelector('[aria-label="Replay browser test"]') as HTMLButtonElement;
+  expect(replay.disabled).toBe(false);
+  expect(replay.className).not.toMatch(/\bhidden\b/);
+  await act(async () => { await vi.advanceTimersByTimeAsync(400); qa.hooks[0].presented(); });
+  expect(recording.frames).toHaveLength(count);
+  expect(qa.socket.close).not.toHaveBeenCalled();
+  expect(qa.peers[0].close).not.toHaveBeenCalled();
+  expect(drawImage).toHaveBeenCalledWith(video, 0, 0, 720, 405);
+});
+
+it("records H.264 native video independently of incoming JPEG packets", async () => {
+  const qa = await rtcRecoveryFixture();
+  const recording = browserRecording("rtc-recovery-fixture");
+  const video = qa.host.querySelector("video")!;
+  Object.defineProperty(video, "videoWidth", { value: 1280 });
+  Object.defineProperty(video, "videoHeight", { value: 720 });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(callback => callback(new Blob(["h264"], { type: "image/jpeg" })));
+  await act(async () => { recording.start("h264-recording-test"); qa.sinks.mock.calls[0][1](1); });
+  expect(recording.frames).toHaveLength(1);
+  await act(async () => recording.finish("completed"));
+  expect(qa.host.querySelector('[aria-label="Replay browser test"]')).not.toBeNull();
+});
+
+it("keeps replay across closing and reopening the viewer and checks chat authorization before playback", async () => {
+  const qa = await rtcRecoveryFixture();
+  const recording = browserRecording("rtc-recovery-fixture");
+  await act(async () => {
+    recording.start("remount-replay-test");
+    recording.recordToolResult({frame:"data:image/jpeg;base64,eA==",url:"https://fixture.invalid"});
+    recording.finish("completed");
+  });
+  await act(async () => qa.root.render(null));
+  await act(async () => qa.root.render(<InteractiveBrowserCanvas sessionId="rtc-recovery-fixture" isOpen />));
+  expect((qa.host.querySelector('[aria-label="Replay browser test"]') as HTMLButtonElement).disabled).toBe(false);
+  expect(recording.frames).toHaveLength(1);
+  await act(async () => qa.root.render(null));
+  vi.mocked(api.get).mockRejectedValue({response:{status:404}});
+  await act(async () => qa.root.render(<InteractiveBrowserCanvas sessionId="rtc-recovery-fixture" isOpen />));
+  const button = qa.host.querySelector('[aria-label="Replay browser test"]') as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  await act(async () => button.click());
+  expect(qa.host.textContent).not.toContain("Replay Mode");
+});
 
 it("isolates the live video from parent chat updates while applying real viewer changes", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -1,0 +1,1 @@
+export const THEME={base:'#0a0a0a',mesh:'#152126',surface:'#171717',edge:'#303030',text:'#f5f5f5',muted:'#a3a3a3',cyan:'#00b8e6',violet:'#b2a4f4',amber:'#edb779',green:'#79ccb0',font:'Jakarta',mono:'JetBrains',grainOpacity:0.035};

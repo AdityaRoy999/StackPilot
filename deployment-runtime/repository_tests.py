@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import ast
 try:
     from repository_toolchains import wrapper_command
 except ModuleNotFoundError:
@@ -24,6 +25,14 @@ def commands(root):
             # CI=true disables interactive watch modes in common test runners.
             return [['node',str(root/'.stackpilot-runtime/node_tasks.cjs'),'test']]
     if any(root.glob('test*.py')) or (root/'tests').is_dir() and any((root/name).is_file() for name in ('requirements.txt','pyproject.toml','setup.py')):
+        files=[*root.glob('test*.py'),*(root/'tests').glob('**/*.py')]
+        imports=set()
+        for path in files[:256]:
+            if path.is_symlink() or path.stat().st_size>1024*1024:continue
+            tree=ast.parse(path.read_text(encoding='utf-8-sig'))
+            imports.update(n.module.split('.')[0] for n in ast.walk(tree) if isinstance(n,ast.ImportFrom) and n.module)
+            imports.update(a.name.split('.')[0] for n in ast.walk(tree) if isinstance(n,ast.Import) for a in n.names)
+        if 'unittest' in imports and 'pytest' not in imports:return [['python','-m','unittest','discover','-s','tests' if (root/'tests').is_dir() else '.']]
         return [['python','-m','pytest','-q']]
     if (root/'go.mod').is_file():return [['go','test','./...']]
     if (root/'Cargo.toml').is_file():return [['cargo','test',*(['--locked'] if (root/'Cargo.lock').is_file() else [])]]

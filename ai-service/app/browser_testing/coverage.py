@@ -36,5 +36,5 @@ def reconcile_native_validation(coverage, result, current_url, controls):
 
 def coverage_obligations(coverage):
     """Return exact recorded gaps; a passed field check never completes a send."""
-    return [{k:r[k] for k in ('url','label','tag','type','reason','native_validation_states') if k in r}
+    return [{k:r[k] for k in ('url','label','card_context','tag','type','reason','native_validation_states') if k in r}
             for r in (coverage or {}).get('controls_requiring_review',[])][:60]

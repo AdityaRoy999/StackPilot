@@ -26,5 +26,19 @@ export function browserResultSummary(result: Record<string, unknown>): string {
   if (Array.isArray(result.assertions)) summary.checks = result.assertions.map(check => ({
     status: check.status, reason: check.reason, expectation: check.expectation,
   }));
+  if (Array.isArray(result.results)) {
+    const failed = result.results.find((step: unknown) =>
+      !!step && typeof step === "object" && (step as Record<string, unknown>).status !== "passed"
+    ) as Record<string, unknown> | undefined;
+    if (failed) {
+      summary.failed_step = {
+        action: failed.action,
+        error: failed.error,
+        checks: Array.isArray(failed.assertions)
+          ? failed.assertions.filter((check: { status?: string }) => check.status !== "passed")
+          : undefined,
+      };
+    }
+  }
   return JSON.stringify(summary, null, 2);
 }

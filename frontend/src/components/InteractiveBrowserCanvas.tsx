@@ -2,7 +2,8 @@
 
 import api from "@/lib/api";
 import { browserSocketUrl } from "@/lib/browser-sandbox";
-import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { browserRecording, type RecordedFrame, type RecordingStatus } from "@/lib/browser-recording";
 import { LiveVideoDecoder } from "@/lib/browser-video";
 import { BrowserLatency } from "@/lib/browser-latency";
 import { BrowserCursorMotion } from "@/lib/browser-cursor";
@@ -11,12 +12,10 @@ import { LivePageState } from "@/lib/browser-page-state";
 import { createNativeVideoSink, type NativeVideoSink } from "@/lib/browser-video-sink";
 import {
   Activity,
-  Bot,
   CheckCircle2,
   ChevronDown,
   Copy,
   Eye,
-  EyeOff,
   Film,
   Globe,
   Loader2,
@@ -33,6 +32,7 @@ import {
   X,
   Zap,
 } from "@/lib/platform-icons";
+import { MoreHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,20 +59,7 @@ export interface ConsoleLogItem {
   timestamp: number;
 }
 
-export interface RecordedFrame {
-  id: number;
-  blob: Blob;
-  cursor: {
-    x: number;
-    y: number;
-    visible: boolean;
-    action?: string;
-  };
-  ripples: Array<{ id: number; x: number; y: number; type?: string }>;
-  url: string;
-  pageTitle: string;
-  timestamp: number;
-}
+export type { RecordedFrame } from "@/lib/browser-recording";
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -161,7 +148,12 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
 
   // Playback & Session Recording State
   const recordedFramesRef = useRef<RecordedFrame[]>([]);
+  const recording = useMemo(() => browserRecording(sessionId), [sessionId]);
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>(recording.status);
+  const [recordingStorageError, setRecordingStorageError] = useState("");
+  const completionShownRef = useRef("");
   const [hasRecording, setHasRecording] = useState(false);
+  const [replayAuthorized, setReplayAuthorized] = useState(false);
   const [isPlaybackMode, setIsPlaybackMode] = useState(false);
   const isPlaybackModeRef = useRef(false);
   const [playbackIndex, setPlaybackIndex] = useState(0);
@@ -169,9 +161,28 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [showCompletionPrompt, setShowCompletionPrompt] = useState(false);
   const [recordedDurationSec, setRecordedDurationSec] = useState(0);
-  const lastRecordedTimeRef = useRef(0);
-  const recordingBytesRef = useRef(0);
   const playbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const update = () => {
+      recordedFramesRef.current = recording.frames;
+      setHasRecording(recording.frames.length > 0);
+      setRecordedDurationSec(Math.round(recording.durationSec));
+      setRecordingStatus(recording.status);
+      setRecordingStorageError(recording.storageError);
+      if (recording.status === "recording") {
+        setShowCompletionPrompt(false);
+        isPlaybackModeRef.current = false;
+        setIsPlaybackMode(false);
+        setIsPlaying(false);
+      } else if (recording.status === "completed" && recording.frames.length && completionShownRef.current !== recording.runId) {
+        completionShownRef.current = recording.runId;
+        setShowCompletionPrompt(true);
+      }
+    };
+    update();
+    return recording.subscribe(update);
+  }, [recording]);
 
   useEffect(() => {
     isPlaybackModeRef.current = isPlaybackMode;
@@ -229,6 +240,8 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       node.style.transform = transform;
       lastCursorPaintRef.current = transform;
     }
+    const glyph = node.querySelector<HTMLElement>("[data-cursor-lean]");
+    if (glyph) glyph.style.transform = `rotate(${reducedMotionRef.current ? 0 : cursorMotionRef.current.tilt(now)}deg)`;
   }, []);
   const attachCursorNode = useCallback((node: HTMLDivElement | null) => {
     cursorNodeRef.current = node;
@@ -368,6 +381,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
     if (!isOpen) return;
     setConnected(false);
     setConnectionError(null);
+    setReplayAuthorized(false);
 
     if (previousSessionRef.current !== sessionId) {
       previousSessionRef.current = sessionId;
@@ -378,11 +392,8 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       setUrlInput(initialUrlRef.current);
       setPageTitle("");
       setElements([]);
-      recordedFramesRef.current = [];
-      recordingBytesRef.current = 0;
       cursorVisibleRef.current = false;
       setCursorVisible(false);
-      setHasRecording(false);
       isPlaybackModeRef.current = false;
       setIsPlaybackMode(false);
       setIsPlaying(false);
@@ -412,11 +423,21 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
     let rtcHasTrack = false;
     let h264Failed = false;
     let actualMode = sandboxMode;
+    let hasPresented = false;
     let requestPresentation = () => {};
-    const onPresented = () => {
+    const frameContext = () => ({ cursor: { ...cursorMotionRef.current.position(performance.now()), visible: cursorVisibleRef.current, action: cursorActionRef.current,
+      typing: cursorNodeRef.current?.dataset.typing === "true" },
+      ripples: clickRipplesRef.current, url: currentUrlRef.current, pageTitle: pageTitleRef.current });
+    const onPresented = (source: HTMLVideoElement | HTMLCanvasElement | null = videoRef.current) => {
+      hasPresented = true;
       presentedFeedbackRef.current++;
       lastPresentedAt = performance.now();
       latencyRef.current.presented(lastPresentedAt);
+      if (source && !isPlaybackModeRef.current) {
+        const width = source instanceof HTMLVideoElement ? source.videoWidth : source.width;
+        const height = source instanceof HTMLVideoElement ? source.videoHeight : source.height;
+        recording.recordVisual(source, width, height, frameContext());
+      }
     };
     const detachNativeVideo = () => {
       nativeGeneration++;
@@ -533,43 +554,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       run();
     };
 
-    // Record incoming frames into the playback buffer
-    const recordFrame = (jpegBlob: Blob) => {
-      // Do not mutate or shift playback buffer while user is inspecting replay
-      if (isPlaybackModeRef.current) return;
-      const now = Date.now();
-      if (now - lastRecordedTimeRef.current < 100) {
-        return;
-      }
-      lastRecordedTimeRef.current = now;
-
-      const frame: RecordedFrame = {
-        id: now,
-        blob: jpegBlob,
-        cursor: {
-          x: cursorPosRef.current.x,
-          y: cursorPosRef.current.y,
-          visible: cursorVisibleRef.current,
-          action: cursorActionRef.current,
-        },
-        ripples: [...clickRipplesRef.current],
-        url: currentUrlRef.current,
-        pageTitle: pageTitleRef.current,
-        timestamp: now,
-      };
-
-      const buffer = recordedFramesRef.current;
-      buffer.push(frame);
-      recordingBytesRef.current += jpegBlob.size;
-      while (buffer.length > 600 || recordingBytesRef.current > 32 * 1024 * 1024) {
-        recordingBytesRef.current -= buffer.shift()!.blob.size;
-      }
-      if (buffer.length >= 5) {
-        setHasRecording(true);
-        const dur = (buffer[buffer.length - 1].timestamp - buffer[0].timestamp) / 1000;
-        setRecordedDurationSec(Math.max(1, Math.round(dur)));
-      }
-    };
+    const recordFrame = (jpegBlob: Blob) => recording.recordBlob(jpegBlob, frameContext());
 
     // Direct main-thread WebCodecs and ImageBitmap decoding (bypasses worker thread-hop ping-pong)
     workerRef.current = null;
@@ -582,6 +567,8 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       try {
         const capability = await api.get(`/ai/browser-ticket/${encodeURIComponent(sessionId)}`);
         if (isDisposed || generation !== connectionGeneration) return;
+        setReplayAuthorized(true);
+        void recording.restore();
         const wsUrl = new URL(getWsUrl());
         wsUrl.searchParams.set("ticket", capability.data.ticket);
         const ws = new WebSocket(wsUrl.toString());
@@ -637,6 +624,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
 
         ws.onclose = event => {
           if (isDisposed || activeWs !== ws) return;
+          if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = "false";
           stopRtc(false, false);
           detachNativeVideo();
           decodeGeneration++;
@@ -653,6 +641,11 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
             return;
           }
           if (event.code === 1008) {
+            recording.finish("unverified");
+            setReplayAuthorized(false);
+            isPlaybackModeRef.current = false;
+            setIsPlaybackMode(false);
+            setIsPlaying(false);
             setConnectionError("This browser session is no longer authorized. Start a new chat or retry.");
             return;
           }
@@ -711,7 +704,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
                 if (ctx) {
                   ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
                   frameCountRef.current += 1;
-                  onPresented();
+                  onPresented(canvas);
                 }
               } catch {
               } finally {
@@ -731,7 +724,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
                 if (ctx) {
                   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
                   frameCountRef.current += 1;
-                  onPresented();
+                  onPresented(canvas);
                 }
               } catch {
               } finally {
@@ -957,10 +950,26 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
                   setCursorVisible(true);
                 }
                 const duration = reducedMotionRef.current || msg.action !== "move" ? 0
-                  : typeof msg.duration_ms === "number" ? msg.duration_ms : 48;
-                cursorMotionRef.current.move(msg.x, msg.y, performance.now(), duration);
+                  : typeof msg.duration_ms === "number" ? msg.duration_ms : 140;
+                cursorMotionRef.current.move(msg.x, msg.y, performance.now(), duration, msg.path);
                 paintCursor(performance.now());
                 requestPresentation();
+              }
+              // Progress packets update only DOM attributes. No React work per keystroke.
+              const cursorNode = cursorNodeRef.current;
+              if (cursorNode) {
+                if (msg.action === "type") {
+                  cursorNode.dataset.typing = msg.phase === "started" || msg.phase === "progress" ? "true" : "false";
+                } else if (msg.action !== "move") {
+                  cursorNode.dataset.typing = "false";
+                }
+                if (["click", "double_click", "right_click"].includes(msg.action) && !reducedMotionRef.current) {
+                  const feedback = cursorNode.querySelector<HTMLElement>("[data-cursor-feedback]");
+                  // Replace an old press; never accumulate animation objects.
+                  feedback?.getAnimations?.().forEach(animation => animation.cancel());
+                  feedback?.animate?.([{ transform: "scale(1)" }, { transform: "scale(.82)", offset: .3 }, { transform: "scale(1)" }],
+                    { duration: 180, easing: "cubic-bezier(.2,.8,.2,1)" });
+                }
               }
               if (msg.label) {
                 if (cursorActionRef.current !== msg.label) {
@@ -970,6 +979,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
                 if (cursorLabelTimeout) clearTimeout(cursorLabelTimeout);
                 cursorLabelTimeout = setTimeout(() => {
                   if (!isDisposed) {
+                    if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = "false";
                     cursorActionRef.current = "";
                     setCursorAction("");
                   }
@@ -1006,10 +1016,11 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
             } else if (msg.type === "navigated" && msg.url) {
               updateLivePage(msg);
             } else if (msg.type === "testing_completed") {
-              if (recordedFramesRef.current.length >= 6) {
-                setShowCompletionPrompt(true);
-              }
+              if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = "false";
+              recording.finish("completed");
             } else if (msg.type === "testing_stopped") {
+              if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = "false";
+              recording.finish("stopped");
               setShowCompletionPrompt(false);
             }
           } catch (e) {
@@ -1027,6 +1038,19 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
     };
 
     connect();
+    // Static pages and CSS-hidden mobile panels may not produce compositor
+    // callbacks. Sample the latest decoded image and cursor without reconnecting
+    // or touching the live decoder. The recording gate caps encoding at 5 fps.
+    const replaySampling = setInterval(() => {
+      if (isDisposed || recording.status !== "recording" || isPlaybackModeRef.current) return;
+      const video = videoRef.current;
+      if (video?.srcObject && video.videoWidth > 0) {
+        recording.recordVisual(video, video.videoWidth, video.videoHeight, frameContext());
+      } else if (hasPresented && canvasRef.current) {
+        const canvas = canvasRef.current;
+        recording.recordVisual(canvas, canvas.width, canvas.height, frameContext());
+      }
+    }, 200);
     let feedbackPending = false;
     const feedback = setInterval(async () => {
       const socket = activeWs;
@@ -1058,7 +1082,11 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       else if (now - lastPacketAt > 6000 && activeWs?.readyState === WebSocket.OPEN) activeWs.close();
     }, 1000);
 
-    const handleBrowserStop = () => {
+    const forThisSession = (event: Event) => (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId === sessionId;
+    const handleBrowserStop = (event: Event) => {
+      if (!forThisSession(event)) return;
+      if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = "false";
+      recording.finish("stopped");
       setShowCompletionPrompt(false);
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(
@@ -1069,13 +1097,15 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       }
     };
 
-    const handleTestCompleted = () => {
-      if (recordedFramesRef.current.length >= 6) {
-        setShowCompletionPrompt(true);
+    const handleTestCompleted = (event: Event) => {
+      if (forThisSession(event)) {
+        if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = "false";
+        recording.finish("completed");
       }
     };
 
-    const handleStreamStart = () => {
+    const handleStreamStart = (event: Event) => {
+      if (!forThisSession(event)) return;
       setShowCompletionPrompt(false);
       if (isPlaybackModeRef.current) {
         setIsPlaybackMode(false);
@@ -1096,6 +1126,11 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
 
     return () => {
       isDisposed = true;
+      if (cursorNodeRef.current) {
+        cursorNodeRef.current.dataset.typing = "false";
+        cursorNodeRef.current.querySelector<HTMLElement>("[data-cursor-feedback]")?.getAnimations?.().forEach(animation => animation.cancel());
+      }
+      clearInterval(replaySampling);
       clearInterval(feedback);
       if (cursorLabelTimeout) clearTimeout(cursorLabelTimeout);
       rippleTimeouts.forEach(clearTimeout);
@@ -1143,11 +1178,11 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       }
       wsRef.current = null;
     };
-  }, [isOpen, getWsUrl, sandboxMode, connectionAttempt, paintCursor, updateNativeVideoVisibility]);
+  }, [isOpen, getWsUrl, sandboxMode, connectionAttempt, paintCursor, updateNativeVideoVisibility, recording, sessionId]);
 
   // ─── Playback Engine ───
   const enterPlaybackMode = () => {
-    if (!recordedFramesRef.current.length) return;
+    if (!replayAuthorized || !recordedFramesRef.current.length || recording.status === "recording") return;
     isPlaybackModeRef.current = true;
     setIsPlaybackMode(true);
     setPlaybackIndex(0);
@@ -1181,6 +1216,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
   useEffect(() => {
     const point = isPlaybackMode ? recordedFramesRef.current[playbackIndex]?.cursor : cursorPosRef.current;
     if (point) cursorMotionRef.current.move(point.x, point.y, performance.now(), 0);
+    if (cursorNodeRef.current) cursorNodeRef.current.dataset.typing = isPlaybackMode && recordedFramesRef.current[playbackIndex]?.cursor.typing ? "true" : "false";
     paintCursor(performance.now());
   }, [isPlaybackMode, playbackIndex, paintCursor]);
 
@@ -1239,9 +1275,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
     let interval = 60;
     if (currentFrame && nextFrame) {
       const delta = nextFrame.timestamp - currentFrame.timestamp;
-      if (delta > 10 && delta < 600) {
-        interval = delta;
-      }
+      if (delta > 0) interval = delta;
     }
     const scaledInterval = Math.max(15, Math.round(interval / playbackSpeed));
 
@@ -1431,29 +1465,13 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
       )}
     >
       {/* ─── Top Control Bar ─── */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-1 gap-y-1 px-2 py-1.5 sm:gap-y-2 sm:py-2 sm:px-3 border-b border-border/60 bg-muted/40 text-xs select-none">
+      <div data-browser-toolbar className="flex shrink-0 flex-wrap items-center gap-2 px-2 py-1.5 sm:px-3 border-b border-border/60 bg-muted/40 text-xs select-none">
         {/* Left: Status & Mode Badges */}
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 sm:flex-none sm:gap-2">
           {!isPlaybackMode ? (
-            <div title="Observed video presentation callbacks per second; a high rate alone does not prove smooth frame pacing." className="flex min-w-0 max-w-full items-center gap-1.5 px-2 py-1 rounded-md bg-background/80 border border-border/60 font-medium sm:flex-wrap">
-              <span
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  connected ? "bg-emerald-500 animate-pulse shadow-sm shadow-emerald-500/50" : "bg-amber-500"
-                )}
-              />
-              <span className="truncate font-mono text-[11px] text-foreground/90">
-                {connected ? (fps > 0 ? `Live • ${fps} fps · ${transport}` : networkFps > 0 ? "Recovering video…" : "Live • Idle") : connectionError ? "Browser unavailable" : "Connecting..."}
-              </span>
-              {connected && rttMs > 0 && (
-                <>
-                  <span className="hidden text-muted-foreground/60 sm:inline">•</span>
-                  <span title={`Control round-trip time, measured on the client clock. Last WebSocket packet delivery estimate: ${latencyMs}ms; excludes capture/encoding/display and assumes synchronized clocks.`} className="hidden font-mono text-[10px] text-muted-foreground sm:inline">RTT {rttMs}ms</span>
-                </>
-              )}
-              {connected && inputLatencyMs > 0 && (
-                <span title="p95 input-to-next-presented-frame after acknowledgment. Includes dispatch and display waiting; does not prove the page visibly responded." className="hidden font-mono text-[10px] text-muted-foreground sm:inline">Input {inputLatencyMs}ms</span>
-              )}
+            <div role="status" className="flex items-center gap-1.5 px-1 text-xs font-medium">
+              <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", connected ? "bg-emerald-500" : "bg-amber-500")} />
+              <span>{connected ? (fps === 0 && networkFps > 0 ? "Recovering video…" : "Live") : connectionError ? "Unavailable" : "Connecting…"}</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5">
@@ -1477,69 +1495,26 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
           )}
 
           {/* Replay Mode Trigger when recording is available */}
-          {hasRecording && !isPlaybackMode && (
+          {(hasRecording || recordingStatus !== "idle") && !isPlaybackMode && (
             <Button
               size="sm"
               variant="outline"
-              className="hidden h-7 px-2.5 text-xs font-semibold gap-1.5 border-purple-500/50 bg-purple-500/10 hover:bg-purple-500/25 text-purple-300 transition-all shadow-sm sm:inline-flex"
+              className="h-11 px-2 text-xs font-semibold gap-1.5 sm:h-7 border-border bg-background/80 hover:bg-muted text-foreground transition-all"
               onClick={enterPlaybackMode}
-              title="Watch session recording replay with AI cursor"
+              disabled={!replayAuthorized || !hasRecording || recordingStatus === "recording"}
+              aria-label={recordingStatus === "recording" ? "Recording browser test" : "Replay browser test"}
+              title={recordingStatus === "recording" ? "Recording this test. Replay becomes available when it finishes or pauses." : recordingStorageError || "Watch the recorded browser test with AI cursor"}
             >
               <Film className="h-3.5 w-3.5 text-purple-400" />
-              <span>Replay ({recordedDurationSec}s)</span>
+              <span>{recordingStatus === "recording" ? `Recording ${formatTime(recordedDurationSec)}` : hasRecording ? "Replay" : "No recorded frames"}</span>
             </Button>
           )}
 
-          {!isPlaybackMode && (
-            <Button
-              size="icon"
-              variant={takeOver ? "default" : "outline"}
-              className={cn(
-                "hidden h-7 w-7 transition-all shadow-sm shrink-0 sm:inline-flex",
-                takeOver
-                  ? "bg-amber-500 hover:bg-amber-600 text-black border-amber-400"
-                  : "bg-background/80 text-foreground/80 hover:text-foreground hover:bg-muted"
-              )}
-              onClick={() => {
-                const nextState = !takeOver;
-                setTakeOver(nextState);
-                if (nextState) {
-                  toast.info("Human Take Over Active", {
-                    description: "Click and scroll directly inside the screen to interact.",
-                  });
-                } else {
-                  toast.success("AI Autopilot Restored", {
-                    description: "The AI agent is driving the browser session.",
-                  });
-                }
-              }}
-              title={takeOver ? "Human Driving (Click to return to AI Autopilot)" : "AI Driving (Click to take over manual control)"}
-              aria-label={takeOver ? "Return control to AI" : "Take browser control"}
-            >
-              {takeOver ? (
-                <User className="h-3.5 w-3.5 text-black" />
-              ) : (
-                <Bot className="h-3.5 w-3.5 text-sky-400" />
-              )}
-            </Button>
-          )}
 
-          {!isPlaybackMode && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="hidden h-7 w-7 text-muted-foreground hover:text-foreground sm:inline-flex"
-              onClick={() => setShowElementTags(!showElementTags)}
-              title={showElementTags ? "Hide Element IDs" : "Show Element IDs"}
-              aria-label={showElementTags ? "Hide Element IDs" : "Show Element IDs"}
-            >
-              {showElementTags ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 opacity-50" />}
-            </Button>
-          )}
         </div>
 
         {/* Center: Address Bar */}
-        <form onSubmit={handleNavigate} className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:flex-1 sm:min-w-[160px] max-w-xl sm:mx-2">
+        <form onSubmit={handleNavigate} className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:flex-1 sm:mx-1">
           <div className="relative flex items-center">
             <Globe className="absolute left-2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <Input
@@ -1571,39 +1546,27 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
         {/* Right: Window Controls */}
         <div className="flex items-center gap-1">
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="icon" variant="ghost" className="h-11 w-11 sm:hidden" aria-label="Browser options" />}>
-              <ChevronDown className="h-4 w-4" />
+            <DropdownMenuTrigger render={<Button size="icon" variant="ghost" className="h-11 w-11 sm:h-7 sm:w-7" aria-label="Browser options" />}>
+              <MoreHorizontal className="h-4 w-4" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52 [&>[role=menuitem]]:min-h-11">
+            <DropdownMenuContent align="end" className="w-52 [&>[role=menuitem]]:min-h-11 sm:[&>[role=menuitem]]:min-h-8">
               <DropdownMenuItem onClick={() => setTakeOver(value => !value)}><User className="h-4 w-4" />{takeOver ? "Return control to AI" : "Take browser control"}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowElementTags(value => !value)}><Eye className="h-4 w-4" />{showElementTags ? "Hide Element IDs" : "Show Element IDs"}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowConsole(value => !value)}><Terminal className="h-4 w-4" />{showConsole ? "Hide console" : "Show console"}</DropdownMenuItem>
-              {hasRecording && !isPlaybackMode && <DropdownMenuItem onClick={enterPlaybackMode}><Film className="h-4 w-4" />Replay session</DropdownMenuItem>}
+              {connected && <div aria-label="Stream diagnostics" className="border-t border-border px-2 py-2 text-xs text-muted-foreground">
+                <p>{fps} fps · {transport}</p>
+                <p title="Control round-trip time measured on this client">RTT {rttMs} ms</p>
+                {inputLatencyMs > 0 && <p title="p95 input acknowledgment to next presented frame">Input {inputLatencyMs} ms</p>}
+                <p title="Last packet delivery estimate; assumes synchronized clocks">Packet estimate {latencyMs} ms</p>
+              </div>}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button
-            size="sm"
-            variant="ghost"
-            className={cn(
-              "hidden h-7 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground sm:inline-flex",
-              showConsole && "text-primary font-medium"
-            )}
-            onClick={() => setShowConsole(!showConsole)}
-          >
-            <Terminal className="h-3.5 w-3.5" />
-            <span>Console</span>
-            {consoleLogs.filter((l) => l.type === "error").length > 0 && (
-              <Badge variant="destructive" className="h-4 px-1 text-[9px]">
-                {consoleLogs.filter((l) => l.type === "error").length}
-              </Badge>
-            )}
-          </Button>
 
           {!embedded && (
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+              className="h-11 w-11 shrink-0 text-muted-foreground hover:text-foreground sm:h-7 sm:w-7"
               onClick={() => setIsMaximized(!isMaximized)}
               aria-label={isMaximized ? "Restore browser" : "Maximize browser"}
             >
@@ -1615,7 +1578,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
             <Button
               size={closeLabel ? "sm" : "icon"}
               variant="ghost"
-              className={cn("h-7 shrink-0 text-muted-foreground hover:text-foreground", closeLabel ? "gap-1.5 px-2 text-xs" : "w-7")}
+              className={cn("h-11 shrink-0 text-muted-foreground hover:text-foreground sm:h-7", closeLabel ? "gap-1.5 px-2 text-xs" : "w-11 sm:w-7")}
               onClick={onClose}
               aria-label="Close browser"
             >
@@ -1668,7 +1631,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
           />
 
           {/* Interactive Element Tags Overlay */}
-          {showElementTags &&
+          {showElementTags && !isPlaybackMode &&
             elements.map((el) => {
               if (el.x < 0 || el.y < 0 || el.x > 1280 || el.y > 720) return null;
               const left = `${(el.x / 1280) * 100}%`;
@@ -1703,12 +1666,14 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
                 visibility: (isPlaybackMode ? currentPlaybackFrame?.cursor.visible : cursorVisible && !takeOver) ? "visible" : "hidden",
                 willChange: "transform",
               }}
-              className="absolute left-0 top-0 pointer-events-none z-30"
+              className="browser-agent-cursor absolute left-0 top-0 pointer-events-none z-30"
             >
               <div className="relative">
+                <div data-cursor-lean className="origin-[3px_3px]">
+                <div data-cursor-feedback className="origin-[3px_3px]">
                 <svg
                   className={cn(
-                    "w-6 h-6",
+                    "browser-cursor-arrow w-6 h-6",
                     isPlaybackMode
                       ? "drop-shadow-[0_2px_8px_rgba(168,85,247,0.85)]"
                       : "drop-shadow-[0_2px_8px_rgba(56,189,248,0.7)]"
@@ -1725,6 +1690,13 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
                     strokeLinejoin="round"
                   />
                 </svg>
+                <svg className="browser-cursor-caret absolute left-0 top-0 h-6 w-6" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M3 3v17M0 3h6M0 20h6" stroke="white" strokeWidth="3.5" strokeLinecap="round" />
+                  <path d="M3 3v17M0 3h6M0 20h6" stroke="currentColor" className="text-sky-400" strokeWidth="1.5" strokeLinecap="round" />
+                  <circle className="browser-cursor-keybeat text-sky-400" cx="11" cy="18" r="2" fill="currentColor" />
+                </svg>
+                </div>
+                </div>
 
                 {(isPlaybackMode ? currentPlaybackFrame?.cursor.action : cursorAction) && (
                   <div
@@ -1835,6 +1807,7 @@ export const InteractiveBrowserCanvas = memo(function InteractiveBrowserCanvas({
           aria-label={zoom === 1 ? "Fit browser to screen" : `Zoom browser ${zoom} times`}
           onClick={() => setViewZoom(zoom)}>{zoom === 1 ? "Fit" : `${zoom}×`}</Button>)}
       </div>
+      {recordingStorageError && hasRecording && <p role="status" className="px-2 py-1 text-[11px] text-muted-foreground">{recordingStorageError}</p>}
 
       {/* ─── Modern Playback Control Dock ─── */}
       {isPlaybackMode && (

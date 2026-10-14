@@ -21,8 +21,10 @@ class PointerMotionTests(unittest.IsolatedAsyncioTestCase):
         session._notify_listeners.assert_called_once()
         event = session._notify_listeners.call_args.args[0]
         self.assertEqual((event['x'], event['y']), (10, 20))
-        self.assertLessEqual(event['duration_ms'], 120)
+        self.assertLessEqual(event['duration_ms'], 180)
         self.assertGreater(event['duration_ms'], 0)
+        self.assertLessEqual(len(event['path']),15)
+        self.assertEqual(event['path'][-1],[10,20])
         self.assertEqual(session.send_command.await_args.args,
                          ('Input.dispatchMouseEvent', {'type': 'mouseMoved', 'x': 10, 'y': 20, 'buttons': 0}))
         self.assertEqual((session.cursor_x, session.cursor_y), (10, 20))
@@ -41,6 +43,17 @@ class PointerMotionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(clicked['phase'], 'applied')
         self.assertEqual(clicked['duration_ms'], 0)
 
+    async def test_fast_remote_click_uses_one_native_move_with_smooth_viewer_path(self):
+        session = self.session()
+        session.cursor_x, session.cursor_y = 0, 0
+        await session._move_pointer(500, 400, 'Click', fast_mode=True)
+        move = session._notify_listeners.call_args.args[0]
+        self.assertGreater(len(move['path']), 2)
+        self.assertGreater(move['duration_ms'], 0)
+        self.assertEqual(session.send_command.await_count, 1)
+        session.send_command_nowait.assert_not_called()
+        self.assertEqual(session.send_command.await_args.args[1]['x'], 500)
+
     async def test_failed_final_move_never_dispatches_or_reports_a_click(self):
         session = self.session()
         session.send_command.side_effect = RuntimeError('CDP unavailable')
@@ -48,6 +61,16 @@ class PointerMotionTests(unittest.IsolatedAsyncioTestCase):
             await session.click(10, 20, fast_mode=True)
         self.assertEqual(session.send_command.await_count, 1)
         self.assertEqual([call.args[0]['action'] for call in session._notify_listeners.call_args_list], ['move'])
+
+    async def test_stop_generation_during_final_ack_prevents_the_click(self):
+        session=self.session()
+        async def dispatch(name,params):
+            if params['type']=='mouseMoved': session._input_generation+=1
+            return {}
+        session.send_command.side_effect=dispatch
+        with self.assertRaises(asyncio.CancelledError):
+            await session.click(123,234,fast_mode=True,exact_coords=True)
+        self.assertFalse(any(c.args[1]['type']=='mousePressed' for c in session.send_command.call_args_list))
 
     async def test_cancelled_motion_does_not_continue_to_click(self):
         session = self.session()

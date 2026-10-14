@@ -6,9 +6,10 @@ import { Loader2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 import { destinationAfterLogin } from "@/lib/onboarding";
+import { apiTransportBase } from "@/lib/platform-transport";
 
 function backendGitHubCallbackUrl(code: string, state: string) {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
+  const apiBase = apiTransportBase();
   const base = apiBase.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
   const params = new URLSearchParams({ code, state });
   return `${base}/api/v1/auth/github/callback?${params.toString()}`;

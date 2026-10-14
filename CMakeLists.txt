@@ -77,6 +77,7 @@ if(STACKPILOT_BUILD_TESTS)
         src/utils/JwtHelper.cpp
         src/db/Database.cpp
         src/services/ComposeKubernetesPlanner.cpp
+        src/services/ProjectStackInspector.cpp
         src/utils/RuntimeRateLimiter.cpp
         src/utils/Authz.cpp
         src/services/DriftDetector.cpp

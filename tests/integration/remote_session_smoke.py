@@ -104,7 +104,14 @@ def main():
         outsider.call('POST','/auth/register',dict(username='remote-outsider-'+tag,email='outsider-'+tag+'@example.test',password=password))
         pairing=owner.call('POST','/remote/pairings',{})
         credential='sp_remote_'+secrets.token_hex(32)
-        claim=phone.call('POST','/remote/connect',dict(secret=pairing['secret'],name='Qualification phone'),token=credential)
+        phone.call('POST','/remote/connect',dict(secret=pairing['secret'],name='Qualification phone',timezone={'invalid':True}),token=credential,expected=(400,))
+        phone.call('POST','/remote/connect',dict(secret=pairing['secret'],name='Qualification phone',location_label='x'*161),token=credential,expected=(400,))
+        claim=phone.call('POST','/remote/connect',dict(secret=pairing['secret'],name='Qualification phone',location_label='Fixture home',timezone='Asia/Kolkata'),token=credential)
+        listed=owner.call('GET','/remote/devices')['devices']
+        assert len(listed)==1 and listed[0]['location_label']=='Fixture home' and listed[0]['timezone']=='Asia/Kolkata'
+        assert listed[0]['user_agent'] and listed[0]['request_count']=='0'
+        assert all(key not in listed[0] for key in ('token_hash','secret','token'))
+        assert outsider.call('GET','/remote/devices')['devices']==[]
         assert phone.call('GET','/remote/device',token=credential)['status']=='pending'
         phone.call('GET','/remote/api/ai/sessions',token=credential,expected=(401,))
         phone.call('POST','/remote/connect',dict(secret=pairing['secret'],name='Replay'),token='sp_remote_'+secrets.token_hex(32),expected=(410,))
@@ -174,6 +181,8 @@ def main():
         assert any(event['type']=='agent_question' for event in question_progress['events'])
         phone.call('POST','/remote/api/ai/chat/stop',dict(session_id=session),token=credential)
         assert phone.call('GET','/remote/runs/'+question['run_id'],token=credential)['run']['state']=='cancelled'
+        assert int(owner.call('GET','/remote/devices')['devices'][0]['request_count'])>0
+        assert owner.call('GET','/remote/runs')['runs'][0]['device_id']==claim['id']
         owner.call('POST','/remote/devices',dict(id=claim['id'],action='revoke'))
         phone.call('GET','/remote/api/ai/sessions',token=credential,expected=(401,))
         phone.call('GET','/remote/runs',token=credential,expected=(401,))

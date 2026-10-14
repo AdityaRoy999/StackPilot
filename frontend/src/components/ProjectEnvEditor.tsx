@@ -1,52 +1,16 @@
 "use client";
 
-import { ChangeEvent, useEffect, useRef } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import { Plus, Trash2, Upload } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { mergeEnvVariables, parseEnvText } from "@/lib/env-files";
 
 export interface ProjectEnvVar {
   key: string;
   value: string;
-}
-
-function parseEnvText(text: string): ProjectEnvVar[] {
-  const lines = text.split(/\r?\n/);
-  const envVars: ProjectEnvVar[] = [];
-  const seen = new Set<string>();
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-
-    const exportLine = line.startsWith("export ") ? line.slice(7).trim() : line;
-    const separator = exportLine.indexOf("=");
-    if (separator <= 0) {
-      continue;
-    }
-
-    const key = exportLine.slice(0, separator).trim();
-    let value = exportLine.slice(separator + 1);
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    envVars.push({ key, value });
-  }
-
-  return envVars.sort((left, right) => left.key.localeCompare(right.key));
 }
 
 interface ProjectEnvEditorProps {
@@ -58,13 +22,16 @@ interface ProjectEnvEditorProps {
 
 export function ProjectEnvEditor({
   title = "Environment Variables",
-  description = "Add key/value pairs manually or upload an existing env file.",
+  description = "Select env files or add variables manually. Later files override matching keys.",
   envVars,
   onChange,
 }: ProjectEnvEditorProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const firstKeyInputRef = useRef<HTMLInputElement | null>(null);
   const focusNewRowRef = useRef(false);
+  const [importing, setImporting] = useState(false);
+  const [importedFiles, setImportedFiles] = useState<string[]>([]);
+  const [importError, setImportError] = useState("");
 
   useEffect(() => {
     if (!focusNewRowRef.current) {
@@ -90,15 +57,25 @@ export function ProjectEnvEditor({
   const removeRow = (index: number) => onChange(envVars.filter((_, rowIndex) => rowIndex !== index));
 
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    setImportError("");
+    setImporting(true);
+    try {
+      if (files.length > 10 || files.some(file => file.size > 1024 * 1024)) throw new Error("Select up to 10 env files, each under 1 MB.");
+      const parsed = await Promise.all(files.map(async file => parseEnvText(await file.text())));
+      if (parsed.some(variables => !variables.length)) throw new Error("Each selected file must contain at least one KEY=value variable.");
+      const merged = mergeEnvVariables(envVars, ...parsed);
+      if (merged.length > 1000) throw new Error("Import up to 1,000 variables at a time.");
+      onChange(merged);
+      setImportedFiles(files.map(file => file.name));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "The env files could not be read.");
+    } finally {
+      setImporting(false);
+      input.value = "";
     }
-
-    const contents = await file.text();
-    const parsed = parseEnvText(contents);
-    onChange(parsed);
-    event.target.value = "";
   };
 
   return (
@@ -116,7 +93,8 @@ export function ProjectEnvEditor({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".env,.production,.local,.txt"
+            multiple
+            aria-label="Select env files"
             className="hidden"
             onChange={handleFileUpload}
           />
@@ -126,9 +104,10 @@ export function ProjectEnvEditor({
             size="sm"
             className="min-w-[132px] justify-center"
             onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
           >
             <AppIcon name="upload" fallback={Upload} className="mr-2 h-4 w-4"  />
-            Upload Env File
+            {importing ? "Reading files…" : "Select env files"}
           </Button>
           <Button
             type="button"
@@ -136,11 +115,14 @@ export function ProjectEnvEditor({
             size="sm"
             className="min-w-[132px] justify-center"
             onClick={addRow}
+            disabled={importing}
           >
             <AppIcon name="plus" fallback={Plus} className="mr-2 h-4 w-4"  />
             Add Variable
           </Button>
         </div>
+        {!!importedFiles.length && <p role="status" className="break-words text-xs text-muted-foreground">Imported {importedFiles.join(", ")}</p>}
+        {importError && <p role="alert" className="text-sm text-destructive">{importError}</p>}
       </div>
 
       <div className="space-y-2">
@@ -151,7 +133,7 @@ export function ProjectEnvEditor({
         ) : (
           envVars.map((envVar, index) => (
             <div
-              key={`${envVar.key}-${index}`}
+              key={index}
               className="grid gap-2 md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)_auto] md:items-center"
             >
               <Input
@@ -161,6 +143,8 @@ export function ProjectEnvEditor({
                 placeholder="EMAILJS_SERVICE_ID"
                 autoComplete="off"
                 className="min-w-0"
+                aria-label={`Variable ${index + 1} name`}
+                disabled={importing}
               />
               <Input
                 value={envVar.value}
@@ -168,6 +152,8 @@ export function ProjectEnvEditor({
                 placeholder="value"
                 autoComplete="off"
                 className="min-w-0"
+                aria-label={`Variable ${index + 1} value`}
+                disabled={importing}
               />
               <Button
                 type="button"
@@ -175,6 +161,8 @@ export function ProjectEnvEditor({
                 size="icon"
                 className="justify-self-start md:justify-self-end"
                 onClick={() => removeRow(index)}
+                aria-label={`Remove variable ${index + 1}`}
+                disabled={importing}
               >
                 <AppIcon name="trash2" fallback={Trash2} className="h-4 w-4"  />
               </Button>

@@ -69,6 +69,7 @@ COPY tests/unit/cpp ./tests/unit/cpp
 COPY deployment-runtime ./deployment-runtime
 COPY ai-service/app/repository_discovery.py ./deployment-runtime/repository_discovery.py
 COPY ai-service/app/repository_toolchains.py ./deployment-runtime/repository_toolchains.py
+COPY ai-service/app/hosted_frontend.py ./deployment-runtime/hosted_frontend.py
 
 RUN cmake -B build-tests -S . -DSTACKPILOT_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug && \
     cmake --build build-tests --target stackpilot_unit_tests --parallel 2
@@ -80,6 +81,10 @@ CMD ["/app/build-tests/stackpilot_unit_tests"]
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime
 # ---------------------------------------------------------------------------
+# Pull the exact Kubernetes client from its official multi-architecture image.
+# The digest pins the bytes while avoiding a separate large curl download.
+FROM registry.k8s.io/kubectl:v1.37.1@sha256:b7cab618e281b1ee7484e7b706a96e2135fbb6e072c2a573a7dab4e87d7f2385 AS kubectl-client
+
 # Must match the builder's distro (Ubuntu 22.04) so the copied binary's glibc
 # and library sonames resolve.
 FROM ubuntu:22.04 AS runtime
@@ -128,15 +133,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# A clean checkout must build without a machine-local binary. Pin the release
-# and verify the upstream checksum for the target architecture.
-ARG KUBECTL_VERSION=v1.37.1
-RUN arch="$(dpkg --print-architecture)" \
-    && curl -fsSL --retry 3 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl" -o /tmp/kubectl \
-    && curl -fsSL --retry 3 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl.sha256" -o /tmp/kubectl.sha256 \
-    && echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum --check \
-    && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
-    && rm /tmp/kubectl /tmp/kubectl.sha256
+COPY --from=kubectl-client /bin/kubectl /usr/local/bin/kubectl
 
 RUN curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -o /tmp/packages-microsoft-prod.deb \
     && dpkg -i /tmp/packages-microsoft-prod.deb \
@@ -162,6 +159,7 @@ COPY --chown=10001:10001 config.json ./config.json
 COPY --chown=10001:10001 deployment-runtime ./deployment-runtime
 COPY --chown=10001:10001 ai-service/app/repository_discovery.py ./deployment-runtime/repository_discovery.py
 COPY --chown=10001:10001 ai-service/app/repository_toolchains.py ./deployment-runtime/repository_toolchains.py
+COPY --chown=10001:10001 ai-service/app/hosted_frontend.py ./deployment-runtime/hosted_frontend.py
 
 # `static` is an intentionally empty document_root. Drogon serves unmatched
 # paths from it, so it must NOT be /app — that exposed uploads/builds (cloned

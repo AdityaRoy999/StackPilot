@@ -48,6 +48,9 @@ def judge_render(state):
 
 async def verify_runtime(url, contract=None, *, deployment_id=None):
     contract = contract or {}
+    # The host emulator downloads from the allocated host port. Container-side
+    # HTTP checks may use an internal Docker name, which the host cannot reach.
+    native_artifact_url = url
     # This endpoint receives server-generated contracts through service auth.
     # A stable preview must still traverse the gateway to qualify route publication.
     if urlsplit(url).hostname in {'localhost', '127.0.0.1', '::1'} and contract.get('runtime_internal_url'):
@@ -61,26 +64,34 @@ async def verify_runtime(url, contract=None, *, deployment_id=None):
             if components[0].get('process_checks'):
                 return {'status':'unverified','verified':False,'scope':'component_contracts',
                         'reason':'Declared worker process checks require broker container observations'}
-            return await verify_runtime(url,ordinary,deployment_id=deployment_id)
+            return await verify_runtime(native_artifact_url,ordinary,deployment_id=deployment_id)
         return await verify_components(url,contract,deployment_id=deployment_id)
     scope = contract.get('verification_scope', 'render_smoke')
     if scope != 'render_smoke':
         result=await verify_contract(url, contract)
         if result.get('verified') and contract.get('workload')=='android':
+            if contract.get('android',{}).get('format','apk') in {'aab','aar'}:
+                if contract.get('native_preview_required') or contract.get('native_scenarios'):
+                    return {**result,'verified':False,'status':'unverified','reason':'Native Android preview requires a selected installable APK'}
+                return {**result,'native':{'status':'not_applicable','verified':False,'reason':'This Android distribution format is not directly installable'},'workflow_verified':False}
             worker=os.getenv('STACKPILOT_ANDROID_WORKER_URL','').rstrip('/')
             if worker and deployment_id:
                 artifacts=[a for a in result.get('artifacts',[]) if a['name'].endswith('.apk')]
                 if len(artifacts)!=1:
+                    if not contract.get('native_preview_required') and not contract.get('native_scenarios'):
+                        return {**result,'native':{'status':'requires_selection','verified':False,'reason':'Select one APK for native verification'},'workflow_verified':False}
                     return {**result,'verified':False,'status':'unverified','reason':'Select a single APK for the Android device lane'}
                 try:
                     async with httpx.AsyncClient(timeout=180,trust_env=False) as client:
                         response=await client.post(worker+'/verify',headers={'x-stackpilot-service-token':os.getenv('STACKPILOT_AI_SERVICE_TOKEN','')},
-                            json={'deployment_id':deployment_id,'artifact_url':url,'artifact':artifacts[0],
+                            json={'deployment_id':deployment_id,'artifact_url':native_artifact_url,'artifact':artifacts[0],
                                   'app_id':contract.get('app_id'),'native_scenarios':contract.get('native_scenarios',[])})
                         response.raise_for_status();native=response.json()
                     return {**result,'native':native,'verified':native.get('verified') is True,
                             'status':native.get('status','unverified'),'workflow_verified':native.get('workflow_verified',False),
                             'reason':native.get('reason','Android launch and declared native scenarios passed' if native.get('verified') else 'Native verification did not pass')}
+                except httpx.HTTPStatusError as exc:
+                    return {**result,'verified':False,'status':'unverified','reason':'Android worker unavailable: HTTP '+str(exc.response.status_code)}
                 except Exception as exc:
                     return {**result,'verified':False,'status':'unverified','reason':'Android worker unavailable: '+type(exc).__name__}
             elif contract.get('native_preview_required'):
@@ -94,7 +105,7 @@ async def verify_runtime(url, contract=None, *, deployment_id=None):
     session_id = 'runtime-check-' + uuid.uuid4().hex
     async def check():
         try:
-            session = await browser_manager.get_or_create_session(session_id, url)
+            session = await browser_manager.get_or_create_session(session_id, url, purpose='verification')
             deadline = asyncio.get_running_loop().time() + 5
             state = None
             while True:
@@ -325,9 +336,11 @@ async def verify_console(client,url,contract,checks):
                 return state
             await asyncio.sleep(.3)
             state=await poll()
-            if state.get('exit_code') is not None:
+            steps=scenario.get('steps',[])
+            finite_outcome=bool(steps) and not any('input' in step for step in steps) and any('exit_code' in step for step in steps)
+            if state.get('exit_code') is not None and not finite_outcome:
                 raise ValueError('Interactive program exited before accepting input: '+str(state['exit_code']))
-            for step in scenario.get('steps',[]):
+            for step in steps:
                 if 'input' in step:
                     # Drain prior output so a previous result cannot satisfy a
                     # later assertion. PTY echo is disabled by the adapter.

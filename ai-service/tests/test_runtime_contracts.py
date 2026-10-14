@@ -1,5 +1,6 @@
 import unittest
 import hashlib
+import json
 import httpx
 import os
 from unittest.mock import patch
@@ -7,6 +8,28 @@ from app.runtime_verification import request_url,verify_contract,verify_runtime
 
 
 class RuntimeContracts(unittest.IsolatedAsyncioTestCase):
+    async def test_android_host_download_keeps_allocated_port_while_http_checks_use_container_address(self):
+        payload=b'qualified APK fixture'
+        artifact={'name':'app.apk','size':len(payload),'sha256':hashlib.sha256(payload).hexdigest()}
+        observed=[]
+        def respond(request):
+            observed.append((request.method,request.url.host,request.url.path))
+            if request.url.host=='native-worker':
+                body=json.loads(request.content)
+                self.assertEqual(body['artifact_url'],'http://localhost:54321')
+                self.assertEqual(body['artifact'],artifact)
+                return httpx.Response(200,json={'verified':True,'status':'passed','workflow_verified':False})
+            self.assertEqual(request.url.host,'stackpilot-local-fixture')
+            return httpx.Response(200,json={'artifacts':[artifact]}) if request.url.path=='/healthz' else httpx.Response(200,content=payload)
+        original=httpx.AsyncClient
+        contract={'workload':'android','verification_scope':'artifact_delivery','health_path':'/healthz',
+                  'runtime_internal_url':'http://stackpilot-local-fixture:3000'}
+        with patch.dict(os.environ,{'STACKPILOT_ANDROID_WORKER_URL':'http://native-worker:8077'}), \
+             patch('app.runtime_verification.httpx.AsyncClient',side_effect=lambda **kwargs:original(transport=httpx.MockTransport(respond),**kwargs)):
+            result=await verify_runtime('http://localhost:54321',contract,deployment_id='fixture-deployment')
+        self.assertTrue(result['verified'])
+        self.assertIn(('POST','native-worker','/verify'),observed)
+
     async def test_linux_candidate_and_stable_route_use_distinct_verified_paths(self):
         observed=[]
         def respond(request):

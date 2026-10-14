@@ -44,6 +44,7 @@ import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
 import { RemoteSshTerminal } from "@/components/RemoteSshTerminal";
+import { RdpConnections } from "@/components/RdpConnections";
 import { McpIntegrations } from "./mcp-integrations";
 import { AppearanceSettings } from "./appearance";
 import { SettingsSection, visibleSettingsSections } from "./settings-section";
@@ -77,6 +78,7 @@ interface SshConnection {
   port: number;
   username: string;
   auth_type: "password" | "key" | "tailscale" | "headscale";
+  host_capabilities?: Record<string, string>;
   last_tested_at: string;
   created_at: string;
   updated_at: string;
@@ -160,6 +162,9 @@ function formatLoginTime(value: string) {
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [settingsQuery, setSettingsQuery] = useState("");
+  const [activeSection, setActiveSection] = useState("account");
+  const matchedSections = visibleSettingsSections(settingsQuery);
+  const selectedSection = matchedSections.find(section => section.id === activeSection)?.id || matchedSections[0]?.id;
   const [fullNameDraft, setFullNameDraft] = useState<string | null>(null);
   const [sshName, setSshName] = useState("");
   const [sshHost, setSshHost] = useState("");
@@ -197,6 +202,7 @@ export default function SettingsPage() {
       const res = await api.get("/ssh/connections");
       return res.data as SshConnectionsResponse;
     },
+    enabled: selectedSection === "remote",
   });
 
   const loginHistoryQuery = useQuery({
@@ -447,7 +453,6 @@ export default function SettingsPage() {
   });
 
   const connections = sshConnectionsQuery.data?.connections ?? [];
-  const matchedSections = visibleSettingsSections(settingsQuery);
 
   return (
     <div className="space-y-6">
@@ -478,9 +483,27 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="grid gap-6">
+      <div className="min-w-0 space-y-6">
+        <nav aria-label="Settings categories" className="section-tabs section-tabs-stretch settings-category-tabs grid max-w-full grid-cols-2 items-stretch rounded-xl border border-border bg-card p-1.5 sm:grid-cols-3 lg:grid-cols-6">
+          {matchedSections.map(section => {
+            const selected = selectedSection === section.id;
+            return (
+              <Button
+                key={section.id}
+                variant={selected ? "default" : "ghost"}
+                className={`h-auto min-h-11 min-w-0 whitespace-normal px-3 text-sm sm:min-h-9 ${selected ? "border-black bg-black text-white hover:bg-black hover:text-white dark:border-white dark:bg-white dark:text-black dark:hover:bg-white dark:hover:text-black" : "text-muted-foreground"}`}
+                aria-current={selected ? "page" : undefined}
+                aria-controls={`settings-${section.id}`}
+                onClick={() => setActiveSection(section.id)}
+              >
+                {section.title.replace(" Settings", "").replace(" Integration", "").replace(" Configuration", "")}
+              </Button>
+            );
+          })}
+        </nav>
+        <div className="min-w-0 space-y-6">
 
-        <SettingsSection id="account" query={settingsQuery}>
+        <SettingsSection id="account" query={settingsQuery} activeId={selectedSection}>
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2 text-foreground">
@@ -489,8 +512,8 @@ export default function SettingsPage() {
             </div>
             <CardDescription>Update your personal information and sign-in setup.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-6 xl:grid-cols-[minmax(420px,0.95fr)_minmax(360px,0.65fr)] xl:items-stretch">
-            <div className="min-w-0 space-y-5 rounded-xl border border-border/70 bg-muted/10 p-4 xl:p-5">
+          <CardContent data-account-layout className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-stretch">
+            <div data-account-profile className="min-w-0 space-y-5 rounded-xl border border-border/70 bg-muted/10 p-4 xl:p-5">
               <div className="grid gap-2">
                 <Label htmlFor="email">Email Address</Label>
                 <Input
@@ -534,7 +557,7 @@ export default function SettingsPage() {
               </Button>
             </div>
 
-            <div className="grid min-w-0 content-stretch gap-4">
+            <div data-account-activity className="grid min-w-0 content-stretch gap-4">
               <div className="flex min-h-0 flex-col justify-between rounded-xl border border-border bg-muted/25 p-4">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-foreground">
@@ -571,7 +594,7 @@ export default function SettingsPage() {
         </Card>
         </SettingsSection>
 
-        <SettingsSection id="github" query={settingsQuery}>
+        <SettingsSection id="github" query={settingsQuery} activeId={selectedSection}>
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2 text-foreground">
@@ -634,23 +657,35 @@ export default function SettingsPage() {
         </Card>
         </SettingsSection>
 
-        <SettingsSection id="mcp" query={settingsQuery}>
+        <SettingsSection id="mcp" query={settingsQuery} activeId={selectedSection}>
         <McpIntegrations />
         </SettingsSection>
 
-        <SettingsSection id="remote" query={settingsQuery}>
+        <SettingsSection id="remote" query={settingsQuery} activeId={selectedSection}>
+        <div className="space-y-6">
+        <RdpConnections />
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2 text-foreground">
               <AppIcon name="server" fallback={Server} className="h-5 w-5 text-primary"  />
-              <CardTitle>Remote Connections</CardTitle>
+              <CardTitle>Server connections</CardTitle>
             </div>
             <CardDescription>
-              Save SSH or Tailscale nodes once, test them here, then reuse them while creating projects from remote folders.
+              Save a server or Windows VM, test its connection, and check its available tools.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="rounded-xl border border-border bg-muted/25 p-4">
+              <details className="mb-4 text-sm">
+                <summary className="cursor-pointer font-medium">Connect a Windows VM</summary>
+                <div className="mt-3 space-y-2 text-muted-foreground">
+                  <p>Enable OpenSSH Server on the VM, then add a Standard SSH connection with its IP address, port 22, Windows username, and password or private key.</p>
+                  <p>Run these commands in an administrator PowerShell window on the VM:</p>
+                  <pre className="overflow-x-auto rounded-lg bg-background p-3 text-xs text-foreground">{"Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0\nStart-Service sshd\nSet-Service -Name sshd -StartupType Automatic"}</pre>
+                  <p>Use Test Connection, then Probe Host to check its Windows SDKs. Windows build scheduling and GUI worker enrollment are still being developed.</p>
+                  <p>For desktop access, use <a href="#remote-desktops" className="text-foreground underline underline-offset-4">Remote desktops above</a>. Add the VM’s RDP connection or import a .rdp file, then open the desktop inside StackPilot.</p>
+                </div>
+              </details>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="grid gap-2 md:col-span-2">
                   <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -893,8 +928,9 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-3">
                   {connections.map((connection) => {
-                    const probe = probesByConnection[connection.id];
+                    const probe = probesByConnection[connection.id] ?? (connection.host_capabilities && Object.keys(connection.host_capabilities).length ? { capabilities: connection.host_capabilities } : undefined);
                     const capabilities = probe?.capabilities ?? {};
+                    const windowsHost = capabilities.os_family === "windows";
                     const formatProbeCapacity = (label: string, value?: string) => {
                       if (!value) {
                         return value;
@@ -985,6 +1021,7 @@ export default function SettingsPage() {
                               size="sm"
                               onClick={() => setTerminalConnection(connection)}
                               disabled={
+                                windowsHost ||
                                 deleteSshConnectionMutation.isPending ||
                                 testSshConnectionMutation.isPending ||
                                 probeSshConnectionMutation.isPending ||
@@ -1000,6 +1037,7 @@ export default function SettingsPage() {
                               size="sm"
                               onClick={() => provisionDockerMutation.mutate({ connectionId: connection.id })}
                               disabled={
+                                windowsHost ||
                                 provisionDockerMutation.isPending ||
                                 deleteSshConnectionMutation.isPending ||
                                 testSshConnectionMutation.isPending ||
@@ -1020,6 +1058,7 @@ export default function SettingsPage() {
                               size="sm"
                               onClick={() => provisionKubernetesMutation.mutate({ connectionId: connection.id })}
                               disabled={
+                                windowsHost ||
                                 provisionKubernetesMutation.isPending ||
                                 provisionDockerMutation.isPending ||
                                 deleteSshConnectionMutation.isPending ||
@@ -1065,7 +1104,7 @@ export default function SettingsPage() {
                               <div>
                                 <h4 className="text-sm font-semibold text-foreground">Host Capability Probe</h4>
                                 <p className="text-xs text-muted-foreground">
-                                  Use this before remote execution so we know whether Docker and the runtime prerequisites are actually ready.
+                                  {windowsHost ? "Windows tools detected. Native build scheduling and interactive GUI worker enrollment are pending." : "Check the tools available for remote execution."}
                                 </p>
                               </div>
                               <div className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">
@@ -1075,12 +1114,21 @@ export default function SettingsPage() {
                             </div>
 
                             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                              {windowsHost ? <>
+                                {capabilityBadge("PowerShell", capabilities.powershell, [])}
+                                {capabilityBadge(".NET SDKs", capabilities.dotnet_sdks, [])}
+                                {capabilityBadge("Node", capabilities.node_cli)}
+                                {capabilityBadge("Java", capabilities.java_cli)}
+                                {capabilityBadge("Git", capabilities.git_cli)}
+                                {capabilityBadge("MSBuild", capabilities.msbuild_cli)}
+                              </> : <>
                               {capabilityBadge("Docker CLI", capabilities.docker_cli)}
                               {capabilityBadge("Docker Daemon", capabilities.docker_daemon)}
                               {capabilityBadge("Compose", capabilities.docker_compose)}
                               {capabilityBadge("Kubernetes", capabilities.kubernetes_ready)}
                               {capabilityBadge("Kubectl", capabilities.kubectl)}
                               {capabilityBadge("Passwordless sudo", capabilities.sudo_passwordless)}
+                              </>}
                               {capabilityBadge("Disk", capabilities.disk, [])}
                               {capabilityBadge("Memory", capabilities.memory, [])}
                             </div>
@@ -1102,9 +1150,10 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+        </div>
         </SettingsSection>
 
-        <SettingsSection id="platform" query={settingsQuery}>
+        <SettingsSection id="platform" query={settingsQuery} activeId={selectedSection}>
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2 text-foreground">
@@ -1130,7 +1179,7 @@ export default function SettingsPage() {
         </Card>
         </SettingsSection>
 
-        <SettingsSection id="appearance" query={settingsQuery}>
+        <SettingsSection id="appearance" query={settingsQuery} activeId={selectedSection}>
           <AppearanceSettings />
         </SettingsSection>
 
@@ -1146,6 +1195,7 @@ export default function SettingsPage() {
             </Button>
           </div>
         )}
+        </div>
       </div>
 
       {terminalConnection && (

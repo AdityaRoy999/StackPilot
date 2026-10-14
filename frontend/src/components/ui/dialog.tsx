@@ -6,6 +6,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "@/lib/platform-icons"
+import { useDialogResize } from "./use-dialog-resize"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -43,18 +44,31 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  resizeKey,
+  overlayClassName,
+  ref,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  resizeKey?: string | number
+  overlayClassName?: string
 }) {
+  const [contentNode, setContentNode] = React.useState<HTMLDivElement | null>(null)
+  const contentRef = React.useCallback((node: HTMLDivElement | null) => {
+    setContentNode(node)
+    if (typeof ref === "function") ref(node)
+    else if (ref) ref.current = node
+  }, [ref])
+  useDialogResize(contentNode, resizeKey)
   // Share the content gutter with footers, including footers nested in a form.
   // Full-bleed dialogs provide their own section spacing and use a zero gutter.
   const fullBleed = typeof className === "string" && className.split(/\s+/).some((token) => token === "p-0" || token === "!p-0")
 
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Popup
+        ref={contentRef}
         data-slot="dialog-content"
         data-full-bleed={fullBleed || undefined}
         className={cn(
@@ -73,6 +87,7 @@ function DialogContent({
                 variant="ghost"
                 className="absolute top-3 right-3 text-muted-foreground hover:text-foreground hover:bg-muted"
                 size="icon-sm"
+                aria-label="Close"
               />
             }
           >

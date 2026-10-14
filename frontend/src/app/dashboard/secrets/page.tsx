@@ -324,8 +324,8 @@ export default function SecretsPage() {
               <Label htmlFor="secret-project">Project</Label>
               {/* This Select can emit null on clear, so coalesce rather than
                   passing the setter directly. */}
-              <Select value={projectId} onValueChange={(value) => setProjectId(value ?? "")}>
-                <SelectTrigger id="secret-project">
+              <Select items={projects.map(project => ({ value: project.id, label: project.name }))} value={projectId} onValueChange={(value) => { setProjectId(value ?? ""); setEnvironmentId(ALL_ENVIRONMENTS); }}>
+                <SelectTrigger id="secret-project" className="w-full">
                   <SelectValue placeholder="Select a project" />
                 </SelectTrigger>
                 <SelectContent>
@@ -341,10 +341,11 @@ export default function SecretsPage() {
             <div className="space-y-2">
               <Label htmlFor="secret-environment">Environment</Label>
               <Select
+                items={[{ value: ALL_ENVIRONMENTS, label: "All environments" }, ...environments.map(environment => ({ value: environment.id, label: environment.name }))]}
                 value={environmentId}
                 onValueChange={(value) => setEnvironmentId(value ?? ALL_ENVIRONMENTS)}
               >
-                <SelectTrigger id="secret-environment">
+                <SelectTrigger id="secret-environment" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

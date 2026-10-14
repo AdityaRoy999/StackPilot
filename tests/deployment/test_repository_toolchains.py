@@ -80,7 +80,10 @@ class Toolchains(unittest.TestCase):
         self.assertEqual((value['image'], value['runtime_version']), ('mcr.microsoft.com/dotnet/sdk:9.0.102', '8.0'))
     def test_dotnet_platform_target_is_not_linux_substituted(self):
         self.write('app.csproj', '<Project><PropertyGroup><TargetFramework>net8.0-windows</TargetFramework></PropertyGroup></Project>')
-        self.assertEqual(self.selected('dotnet')['status'], 'requires_configuration')
+        self.assertEqual(self.selected('dotnet')['target_platform'], 'windows')
+        from linux_recipes import choose
+        with self.assertRaisesRegex(ValueError,'Windows target'):
+            choose(self.root, {'toolchains':discover(self.root)}, {})
     def test_selected_dotnet_project_controls_runtime_with_shared_library(self):
         self.write('stackpilot.json', '{"project":"server/server.csproj"}')
         self.write('server/server.csproj', '<Project Sdk="Microsoft.NET.Sdk.Web"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>')

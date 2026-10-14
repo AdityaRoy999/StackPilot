@@ -58,6 +58,59 @@ class ContractTests(unittest.TestCase):
 
 
 class CompletionRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_production_hosted_frontend_is_selected_before_development_api_acceptance(self):
+        web=self.source/'apps/web';web.mkdir(parents=True)
+        (web/'package.json').write_text(json.dumps({'devDependencies':{'vite':'7'}}))
+        (self.source/'package.json').write_text(json.dumps({'engines':{'node':'24.x'},'workspaces':['apps/web']}))
+        (self.source/'vercel.json').write_text(json.dumps({'framework':'vite','outputDirectory':'apps/web/dist',
+            'buildCommand':'npm --workspace web run build','rewrites':[{'source':'/api/:path*','destination':'https://api.example.com/:path*'}]}))
+        original='services:\n  api:\n    build: apps/api\n  postgres:\n    image: postgres:17\n'
+        (self.source/'compose.yaml').write_text(original)
+        request=SimpleNamespace(**vars(self.request));request.session_id='hosted-repair';request.runtime={'incident_id':'fixture'}
+        actor=await self.runtime.attach(request)
+        plan=self.store.completion_plan(actor.run_id)
+        self.assertEqual(json.loads(plan['contract'])['workload'],'web')
+        directory=self.runtime.workspaces.directory(actor.run_id)
+        self.assertEqual((directory/'compose.yaml').read_text(),original)
+        config=json.loads((directory/'stackpilot.json').read_text())
+        self.assertEqual(config['deployment_mode'],'dockerfile')
+        required,commands=self.runtime.acceptance_commands(actor.run_id)
+        self.assertTrue(required);self.assertEqual(len(commands),1)
+        self.assertEqual(commands[0]['argv'],['npm','--workspace','web','run','build'])
+        self.assertIn('feature_id',commands[0])
+
+    async def test_automatic_repair_plan_waits_for_sdk_and_network_admission(self):
+        api=self.source/'apps/api'; (api/'tests').mkdir(parents=True)
+        (api/'tests/test_original.py').write_text('def test_original(): assert True\n')
+        (api/'pyproject.toml').write_text('[project]\nname="api"\nversion="1"\ndependencies=["fastapi"]\n[project.optional-dependencies]\ndev=["pytest"]\n')
+        (self.source/'compose.yaml').write_text('services:\n  api:\n    build:\n      context: apps/api\n')
+        original=self.runtime.broker
+        async def broker(name,args,user):
+            if name=='_internal_agent_capabilities':return {'status':'unavailable','missing':['network']}
+            return await original(name,args,user)
+        self.runtime.broker=broker
+        request=SimpleNamespace(**vars(self.request)); request.session_id='repair-unavailable'; request.runtime={'incident_id':'fixture'}
+        actor=await self.runtime.attach(request)
+        self.assertIsNone(self.store.completion_plan(actor.run_id))
+        self.runtime.broker=original; request.session_id='repair-admitted'
+        actor=await self.runtime.attach(request)
+        plan=self.store.completion_plan(actor.run_id)
+        self.assertEqual(plan['intent_source'],'original_tests_for_deployed_components')
+        self.assertEqual(json.loads(plan['contract'])['features'][0]['checks'][0]['root'],'apps/api')
+
+    async def test_unavailable_sdk_does_not_freeze_an_unexecutable_plan(self):
+        original=self.runtime.broker
+        async def broker(name,args,user):
+            if name=='_internal_agent_capabilities':return {'status':'unavailable','missing':['image']}
+            return await original(name,args,user)
+        self.runtime.broker=broker
+        result=await self.runtime.handle(self.actor,'define_completion_plan',{'contract':contract()})
+        self.assertEqual(result['status'],'blocked')
+        self.assertIsNone(self.store.completion_plan(self.actor.run_id))
+        self.runtime.broker=original
+        result=await self.runtime.handle(self.actor,'define_completion_plan',{'contract':contract()})
+        self.assertEqual(result['state'],'unverified')
+
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
@@ -145,6 +198,44 @@ class CompletionRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resumed.run_id, self.actor.run_id)
         self.actor = resumed
         self.assertEqual((await self.runtime.handle(self.actor, 'get_completion_status', {}))['features_total'], 2)
+
+    async def test_failed_verification_can_repair_sdk_without_changing_frozen_acceptance(self):
+        await self.runtime.handle(self.actor,'define_completion_plan',{'contract':contract()})
+        plan=self.store.completion_plan(self.actor.run_id)
+        repair={'repair_environment':True,'image':'python:3.11-slim','network':False,
+                'setup':[['python','--version']],'timeout_seconds':30}
+        blocked=await self.runtime.handle(self.actor,'verify_agent_source',repair)
+        self.assertEqual(blocked['status'],'blocked')
+        self.assertFalse((await self.verify())['verified'])
+        _,original=self.runtime.acceptance_commands(self.actor.run_id)
+        queued=await self.runtime.handle(self.actor,'verify_agent_source',repair)
+        task=self.store.task(queued['agent_id'],self.actor.run_id)
+        spec=json.loads(task['spec'])
+        self.assertTrue(spec['environment_repair'])
+        for before,after in zip(original,spec['commands']):
+            self.assertEqual({k:v for k,v in before.items() if k not in {'image','setup','network','timeout_seconds'}},
+                             {k:v for k,v in after.items() if k not in {'image','setup','network','timeout_seconds'}})
+            self.assertEqual(after['image'],repair['image'])
+            self.assertEqual(after['setup'],repair['setup'])
+        self.assertEqual(self.store.completion_plan(self.actor.run_id)['contract_digest'],plan['contract_digest'])
+        self.assertEqual(self.store.completion_plan(self.actor.run_id)['contract'],plan['contract'])
+        read=self.workspaces.read(self.actor.run_id,'lead','calculator.py')
+        await self.runtime.handle(self.actor,'workspace_write_file',{'file_path':'calculator.py',
+            'expected_revision':read['revision'],'content':read['content']+'# changed source\n'})
+        self.assertEqual((await self.runtime.handle(self.actor,'verify_agent_source',repair))['status'],'blocked')
+
+    async def test_failed_check_environment_repair_requires_admitted_sdk(self):
+        await self.runtime.handle(self.actor,'define_completion_plan',{'contract':contract()})
+        await self.verify()
+        original=self.runtime.broker
+        async def broker(name,args,user):
+            if name=='_internal_agent_capabilities':return {'status':'unavailable','missing':['image']}
+            return await original(name,args,user)
+        self.runtime.broker=broker
+        value=await self.runtime.handle(self.actor,'verify_agent_source',{'repair_environment':True,
+            'image':'unavailable:latest','network':False,'setup':[]})
+        self.assertEqual(value['status'],'blocked')
+        self.assertEqual(len(self.store.tasks(self.actor.run_id)),1)
 
     async def test_worker_cannot_redefine_the_completion_contract(self):
         task = self.store.spawn(self.actor.run_id, 'lead', 'Implementer', 'Finish arithmetic', {'write_scope': ['calculator.py']})

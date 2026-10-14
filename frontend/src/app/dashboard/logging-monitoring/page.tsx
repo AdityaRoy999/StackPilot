@@ -218,7 +218,7 @@ function StackCard({
           {title}
         </CardTitle>
         <CardDescription>{description}</CardDescription>
-        <div className={cn("mt-1 text-xs", available === undefined ? "text-muted-foreground" : available ? "text-emerald-500" : "text-destructive")}>{available === undefined ? "Status not checked" : available ? "Service ready" : "Service unavailable"}</div>
+        <div className={cn("mt-1 text-xs", available === undefined ? "text-muted-foreground" : available ? "text-emerald-500" : "text-destructive")}>{available === undefined ? "Status not checked" : available ? "Service ready" : "Service offline"}</div>
         <CardAction>
           <a
             href={available === false ? undefined : href}
@@ -450,7 +450,8 @@ export default function LoggingMonitoringPage() {
       </section>
 
       {data && (
-        <section className="grid gap-3 lg:grid-cols-3">
+        <section className="space-y-3">
+        <div className="grid gap-3 lg:grid-cols-3">
           <StackCard
             title="Prometheus"
             description="Scrapes backend and container metrics."
@@ -472,6 +473,12 @@ export default function LoggingMonitoringPage() {
             available={data.stack.loki_available}
             icon={Database}
           />
+        </div>
+        {(!data.stack.prometheus_available || !data.stack.grafana_available || !data.stack.loki_available) && (
+          <p className="text-xs text-muted-foreground">
+            Monitoring is optional. To start these services on the StackPilot host, run <code className="rounded bg-muted px-1 py-0.5">docker compose --profile monitoring up -d prometheus loki alloy grafana</code>, then refresh this page.
+          </p>
+        )}
         </section>
       )}
 

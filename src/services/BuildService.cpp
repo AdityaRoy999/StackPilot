@@ -6,6 +6,9 @@
 #include "../utils/StringUtils.h"
 #include "AiServiceClient.h"
 #include "SshService.h"
+#include "DeploymentEnvironmentContext.h"
+#include "GitWorkspaceFailure.h"
+#include "../db/Database.h"
 
 #include <algorithm>
 #include <chrono>
@@ -21,12 +24,30 @@
 #include <unordered_set>
 #include <signal.h>
 #include <regex>
+#include <thread>
 
 namespace stackpilot {
 
 namespace {
 
 using strings::trim;
+
+int planningTimeoutSeconds() {
+    try {
+        return std::clamp(std::stoi(strings::getEnvOrDefault("BUILD_PLANNING_TIMEOUT_SECONDS", "180")), 30, 600);
+    } catch (...) { return 180; }
+}
+
+void writeDeploymentEnvironmentContext(const std::string& deploymentId,const std::filesystem::path& source) {
+    auto connection=Database::getInstance().getConnection();pqxx::work tx(*connection);
+    const auto rows=tx.exec_params("SELECT project_id::text FROM deployments WHERE id=$1::uuid",deploymentId);
+    if(rows.empty())throw std::runtime_error("Deployment context is unavailable");
+    const auto context=deploymentEnvironmentContext(tx,rows[0][0].as<std::string>(),deploymentId);
+    const auto path=source/".stackpilot-context.json";
+    if(std::filesystem::is_symlink(path))throw std::runtime_error("Reserved deployment context must not be a symlink");
+    std::ofstream output(path);output<<Json::writeString(Json::StreamWriterBuilder(),context);
+    if(!output)throw std::runtime_error("Deployment context could not be saved");
+}
 
 
 std::string shellQuote(const std::string& value) {
@@ -821,7 +842,14 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
     if (std::filesystem::exists(deploymentDir, ec)) {
         std::filesystem::remove_all(deploymentDir, ec);
     }
-    std::filesystem::create_directories(deploymentDir, ec);
+    if (!ec) std::filesystem::create_directories(deploymentDir, ec);
+    if (ec) {
+        result.error = "Unable to prepare Git build workspace: " + ec.message();
+        result.retryableInfrastructureFailure = true;
+        result.logs = result.error;
+        if (onLogLine) onLogLine(result.error);
+        return result;
+    }
 
     const std::string checkoutCommit = looksLikeGitCommitSha(commitSha) ? commitSha : "";
     {
@@ -890,8 +918,32 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
         "GIT_TERMINAL_PROMPT=0 " +
         gitCloneFlags + branchArg + " " +
         shellQuote(repoUrl) + " " + shellQuote(sourceDir.string());
+    auto cloneLogOffset = std::filesystem::file_size(logFile);
+    const auto cloneAttemptOutput = [&]() {
+        std::ifstream input(logFile, std::ios::binary);
+        input.seekg(static_cast<std::streamoff>(cloneLogOffset));
+        std::string output(200000, '\0');
+        input.read(output.data(), static_cast<std::streamsize>(output.size()));
+        output.resize(static_cast<std::size_t>(input.gcount()));
+        return output;
+    };
     int cloneExit = runCommandCapture(cloneCmd, logFile, true, cloneTimeoutSeconds_, onLogLine, deploymentId);
-    if (cloneExit != 0 && !githubPat.empty() && isGitHubHttps && looksLikeGitHubAuthFailure(readFileBounded(logFile)) && !isBuildCanceled(deploymentId)) {
+    if (cloneExit != 0 && isRetryableGitCloneFailure(cloneAttemptOutput()) && !isBuildCanceled(deploymentId)) {
+        appendLogLine(logFile, "Git checkout encountered a temporary storage or transport failure. Removing only this incomplete checkout and retrying once.", onLogLine);
+        std::error_code cleanupEc;
+        std::filesystem::remove_all(sourceDir, cleanupEc);
+        if (!cleanupEc) {
+            // Host sync/antivirus software can briefly lock metadata on a bind mount.
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            if (!isBuildCanceled(deploymentId)) {
+                cloneLogOffset = std::filesystem::file_size(logFile);
+                cloneExit = runCommandCapture(cloneCmd, logFile, true, cloneTimeoutSeconds_, onLogLine, deploymentId);
+            }
+        } else {
+            appendLogLine(logFile, "Incomplete checkout could not be removed: " + cleanupEc.message(), onLogLine);
+        }
+    }
+    if (cloneExit != 0 && !githubPat.empty() && isGitHubHttps && looksLikeGitHubAuthFailure(cloneAttemptOutput()) && !isBuildCanceled(deploymentId)) {
         appendLogLine(
             logFile,
             "Authenticated GitHub clone was rejected. Retrying once without credentials in case the repository is public.",
@@ -902,6 +954,7 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
         const std::string publicCloneCmd =
             "GIT_TERMINAL_PROMPT=0 " + gitCloneFlags + branchArg + " " +
             shellQuote(repoUrl) + " " + shellQuote(sourceDir.string());
+        cloneLogOffset = std::filesystem::file_size(logFile);
         cloneExit = runCommandCapture(publicCloneCmd, logFile, true, cloneTimeoutSeconds_, onLogLine, deploymentId);
     }
     if (cloneExit != 0) {
@@ -911,6 +964,10 @@ BuildResult BuildService::buildFromRepository(const std::string& deploymentId,
             std::filesystem::remove(tokenPath, cleanupEc);
         }
         result.error = isBuildCanceled(deploymentId) ? "Deployment was canceled by user" : "git clone failed";
+        result.retryableInfrastructureFailure = !isBuildCanceled(deploymentId) &&
+            isRetryableGitCloneFailure(cloneAttemptOutput());
+        if (result.retryableInfrastructureFailure)
+            result.error = "Git checkout unavailable; check build storage permissions or file locks and network/DNS connectivity";
         appendLogLine(logFile,
                       isBuildCanceled(deploymentId) ? "Build was canceled by user" : ("git clone failed with exit code " + std::to_string(cloneExit)),
                       onLogLine);
@@ -1311,6 +1368,7 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     auto synced=sshService.syncDirectory(sshConfig,remotePath,localSource.string(),cloneTimeoutSeconds_,onLogLine);
     if(!synced.success){result.error="Remote source could not be inspected before build: "+synced.error;return result;}
     injectBuildEnvironmentFiles(localSource,envVars,onLogLine);
+    writeDeploymentEnvironmentContext(deploymentId,localSource);
     const char* assetsEnv=std::getenv("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT");
     const std::filesystem::path assetsRoot=assetsEnv&&*assetsEnv?assetsEnv:"/app/deployment-runtime";
     const auto arch=classifyRepositoryArchetype(localSource);
@@ -1319,15 +1377,16 @@ BuildResult BuildService::buildAndRunOnRemoteDocker(const std::string& deploymen
     if(!result.deploymentPlan["build_secrets"].empty()){result.error="Remote BuildKit credentials require a scoped remote secret adapter; release refused";return result;}
     if(!result.deploymentPlan["requires_worker"].isNull()){result.error="Required native worker is unavailable for the remote target";return result;}
     if(result.deploymentPlan.get("protocol","http").asString()!="http"){result.error="Remote process/TCP workload routing needs a dedicated runtime adapter";return result;}
-    if(!findComposeFile(localSource).empty()){result.error="Remote Compose requires isolated routing and policy qualification; unchecked host execution refused";return result;}
+    if(result.deploymentPlan.get("deployment_mode","auto").asString()!="dockerfile" && !findComposeFile(localSource).empty()){result.error="Remote Compose requires isolated routing and policy qualification; unchecked host execution refused";return result;}
     std::string reason;
     if(!ensureDockerfile(localSource,localLog,reason,onLogLine)){result.error=reason;return result;}
     const auto bundle=localSource.parent_path()/"runtime-plan.tar";
-    if(runCommandCapture("tar -cf "+shellQuote(bundle.string())+" -C "+shellQuote(localSource.string())+" Dockerfile .dockerignore .env.production.local .stackpilot-runtime .stackpilot-plan.json",localLog,true,60,onLogLine,deploymentId)!=0){result.error="Remote build plan packaging failed";return result;}
+    const std::string generatedContract = result.deploymentPlan["static_frontend"].isObject() ? " stackpilot.json" : "";
+    if(runCommandCapture("tar -cf "+shellQuote(bundle.string())+" -C "+shellQuote(localSource.string())+" Dockerfile .dockerignore .env.production.local .stackpilot-runtime .stackpilot-plan.json"+generatedContract,localLog,true,60,onLogLine,deploymentId)!=0){result.error="Remote build plan packaging failed";return result;}
     const std::string remoteBundle="/tmp/"+containerName+"-plan.tar";
     auto uploaded=sshService.uploadFile(sshConfig,bundle.string(),remoteBundle,cloneTimeoutSeconds_,onLogLine);
     if(!uploaded.success){result.error=uploaded.error;return result;}
-    auto installed=sshService.runRemoteCommand(sshConfig,remotePath,"set -e; for p in Dockerfile .dockerignore .env.production.local .stackpilot-runtime .stackpilot-plan.json; do [ ! -L \"$p\" ] || exit 21; done; tar -xf "+shellQuote(remoteBundle)+"; rm -f "+shellQuote(remoteBundle),60);
+    auto installed=sshService.runRemoteCommand(sshConfig,remotePath,"set -e; for p in Dockerfile .dockerignore .env.production.local .stackpilot-runtime .stackpilot-plan.json"+generatedContract+"; do [ ! -L \"$p\" ] || exit 21; done; tar -xf "+shellQuote(remoteBundle)+"; rm -f "+shellQuote(remoteBundle),60);
     if(!installed.success){result.error="Remote build plan installation failed";return result;}
     if(result.deploymentPlan.get("port",0).asInt()>0)containerPort=result.deploymentPlan["port"].asInt();
     SshOperationResult remoteResult = sshService.buildAndRunDockerProject(
@@ -1684,6 +1743,7 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
     }
 
     injectBuildEnvironmentFiles(sourceDir, envVars, onLogLine);
+    writeDeploymentEnvironmentContext(deploymentId,sourceDir);
     const char* runtimeRootEnv = std::getenv("STACKPILOT_DEPLOYMENT_RUNTIME_ROOT");
     const std::filesystem::path runtimeRoot = runtimeRootEnv && *runtimeRootEnv ? runtimeRootEnv : "/app/deployment-runtime";
     if (!std::filesystem::exists(runtimeRoot / "planner.py")) {
@@ -1691,8 +1751,12 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
     }
     const int planExit = runCommandCapture(
         "python3 " + shellQuote((runtimeRoot / "planner.py").string()) + " " + shellQuote(sourceDir.string()) +
-        " --archetype " + shellQuote(archetype.type), logFile, true, 60, onLogLine, deploymentId);
-    if (planExit != 0) { result.error = "Repository deployment contract is invalid"; result.logs = readFileBounded(logFile); return result; }
+        " --archetype " + shellQuote(archetype.type), logFile, true, planningTimeoutSeconds(), onLogLine, deploymentId);
+    if (planExit != 0) {
+        result.retryableInfrastructureFailure = planExit == 124 && !isBuildCanceled(deploymentId);
+        result.error = result.retryableInfrastructureFailure ? "Deployment planning timed out; build storage or worker is temporarily unavailable" : "Repository deployment contract is invalid";
+        result.logs = readFileBounded(logFile); return result;
+    }
     { std::ifstream planFile(sourceDir / ".stackpilot-plan.json"); planFile >> result.deploymentPlan; }
     if (!result.deploymentPlan["requires_worker"].isNull()) {
         result.error = "Native " + result.deploymentPlan["requires_worker"].asString() +
@@ -1704,7 +1768,11 @@ BuildResult BuildService::buildFromPreparedSource(const std::string& deploymentI
         appendLogLine(logFile, "Prepared public build configuration and private runtime environment", nullptr);
     }
 
-    const std::filesystem::path composePath = findComposeFile(sourceDir);
+    const std::filesystem::path composePath = result.deploymentPlan.get("deployment_mode","auto").asString()=="dockerfile"
+        ? std::filesystem::path{} : findComposeFile(sourceDir);
+    if(result.deploymentPlan.get("deployment_mode","auto").asString()=="compose" && composePath.empty()) {
+        result.error="Declared Compose deployment has no Compose file";return result;
+    }
     if (!composePath.empty()) {
         if(!result.deploymentPlan["build_secrets"].empty()){result.error="Compose build secrets require a per-service secret adapter; refusing to discard declared private inputs";return result;}
         const auto candidateDir=sourceDir.parent_path()/("compose-candidate-"+sanitizeTag(version));

@@ -2,9 +2,10 @@
 // Safe to import in Server Components like layout.tsx
 
 export const UI_THEME_STORAGE_KEY = "stackpilot.ui-theme";
-export const DEFAULT_UI_THEME = "radix";
+export const DEFAULT_UI_THEME = "studio";
 
 export const UI_THEMES = [
+  "studio",
   "radix",
   "shadcn",
   "apple",

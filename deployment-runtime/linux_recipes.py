@@ -18,6 +18,8 @@ def choose(root, discovery, config):
     if not present and any('/' not in item['path'] for item in discovery.get('python', [])): present = ['python']
     if len(present) != 1: return None
     selected = next((t for t in primary if t['kind'] == present[0]), None)
+    if selected and selected.get('target_platform')=='windows' and config.get('adapter')!='dotnet-windows-crossbuild':
+        raise ValueError('Windows target requires a native worker or an explicit Windows artifact cross-build; Linux runtime is not compatible')
     if selected and selected['status'] != 'selected':
         raise ValueError('Automatic '+selected['kind']+' build needs compatible version evidence: '+'; '.join(selected['issues']))
     return selected

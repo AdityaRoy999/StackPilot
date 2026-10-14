@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import api from "@/lib/api";
+import { FolderPickerDialog } from "@/components/projects/FolderPickerDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Select,
@@ -22,7 +22,6 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
@@ -40,7 +39,6 @@ import {
   GitBranch,
   Globe,
   HardDrive,
-  Info,
   Key,
   Link2,
   Plus,
@@ -59,6 +57,9 @@ import { ProjectEnvEditor, ProjectEnvVar } from "@/components/ProjectEnvEditor";
 import { RemoteSshTerminal } from "@/components/RemoteSshTerminal";
 import { DockerTagSelector } from "@/components/DockerTagSelector";
 import { AppIcon } from "@/lib/custom-icons";
+import { defaultProjectEnvironments, inferProjectName, isGitHubRepositorySource, preferredRepositoryBranch } from "@/lib/project-setup";
+import { ProjectSetupSteps, ProjectSetupReview, ProjectSetupConfirmation } from "@/components/projects/ProjectSetupSteps";
+import { DraftStackInspection } from "@/components/projects/ProjectStack";
 
 interface GitHubRepo {
   id: number;
@@ -108,34 +109,11 @@ interface SshConnectionsResponse {
   connections: SshConnection[];
 }
 
-interface SshBrowseEntry {
-  name: string;
-  directory: boolean;
-  path: string;
-}
-
-interface SshBrowseResponse {
-  path: string;
-  entries: SshBrowseEntry[];
-}
-
 type SourceType = "github" | "ssh" | "local" | "application";
 type ExecutionMode = "local" | "remote_host";
 type RuntimeScheme = "http" | "https";
 type RemoteRuntimeType = "docker" | "kubernetes";
 type RemoteK8sExposure = "nodeport" | "ingress";
-
-interface LocalBrowseEntry {
-  name: string;
-  directory: boolean;
-  path: string;
-}
-
-interface LocalBrowseResponse {
-  path: string;
-  roots: { name: string; path: string }[];
-  entries: LocalBrowseEntry[];
-}
 
 interface ProjectEnvironmentDraft {
   id: string;
@@ -513,24 +491,6 @@ function isGeneratedApplicationProjectName(value: string) {
   return /^ai\s+.+\s+\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$/i.test(trimmed);
 }
 
-function GuideSection({ heading, items }: { heading: string; items: string[] }) {
-  return (
-    <div className="rounded-xl border border-border bg-muted/20 p-4">
-      <h3 className="font-medium text-foreground">{heading}</h3>
-      <div className="mt-3 space-y-2">
-        {items.map((item) => (
-          <p key={item} className="text-sm leading-relaxed text-muted-foreground">
-            {item}
-          </p>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const selectedTabClass =
-  "h-full rounded-lg px-3 text-sm font-semibold data-[active]:!border-black data-[active]:!bg-black data-[active]:!text-white dark:data-[active]:!border-white dark:data-[active]:!bg-white dark:data-[active]:!text-black";
-
 const segmentedTabsListClass = "grid h-10 w-full rounded-xl border border-border bg-muted/30 p-1";
 const segmentedButtonClass =
   "h-8 justify-center rounded-lg border border-transparent px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground";
@@ -542,38 +502,19 @@ function getRemoteHomePath(username?: string) {
   return username === "root" ? "/root" : `/home/${username}`;
 }
 
-function defaultProjectEnvironments(): ProjectEnvironmentDraft[] {
-  return [
-    {
-      id: "development",
-      name: "development",
-      branch: "dev",
-      auto_deploy: true,
-      require_ci: false,
-      cleanup_previous_on_success: true,
-      env_vars: [],
-    },
-    {
-      id: "production",
-      name: "production",
-      branch: "main",
-      auto_deploy: false,
-      require_ci: true,
-      cleanup_previous_on_success: false,
-      env_vars: [],
-    },
-  ];
-}
-
-export function CreateProjectDialog() {
+export function CreateProjectDialog({ initiallyOpen = false, onDismiss }: { initiallyOpen?: boolean; onDismiss?: () => void } = {}) {
   const router = useRouter();
   const { organizations, activeWorkspaceId } = useWorkspace();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
+  const [setupStep, setSetupStep] = useState(0);
+  const setupBody = useRef<HTMLDivElement>(null);
+  const creationSubmitted = useRef(false);
   const [organizationId, setOrganizationId] = useState<string>("");
   const [sourceType, setSourceType] = useState<SourceType>("github");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
+  const [repoInputFocused, setRepoInputFocused] = useState(false);
   const [githubPat, setGithubPat] = useState("");
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [branches, setBranches] = useState<GitHubBranch[]>([]);
@@ -581,9 +522,6 @@ export function CreateProjectDialog() {
   const [sshConnectionId, setSshConnectionId] = useState("");
   const [sshSourcePath, setSshSourcePath] = useState("");
   const [githubRemoteWorkspacePath, setGithubRemoteWorkspacePath] = useState("");
-  const [sshBrowsePath, setSshBrowsePath] = useState("");
-  const [sshEntries, setSshEntries] = useState<SshBrowseEntry[]>([]);
-  const [hasBrowsedSshPath, setHasBrowsedSshPath] = useState(false);
   const [showSshConnectionPicker, setShowSshConnectionPicker] = useState(false);
   const [executionMode, setExecutionMode] = useState<ExecutionMode>("local");
   const [remoteRuntimeType, setRemoteRuntimeType] = useState<RemoteRuntimeType>("docker");
@@ -593,12 +531,9 @@ export function CreateProjectDialog() {
   const [localExposureMode, setLocalExposureMode] = useState<"direct" | "portless" | "cloudflare_tunnel">("direct");
   const [cloudflareTunnelToken, setCloudflareTunnelToken] = useState("");
   const [localSourcePath, setLocalSourcePath] = useState("");
-  const [localBrowsePath, setLocalBrowsePath] = useState("");
-  const [localRoots, setLocalRoots] = useState<LocalBrowseResponse["roots"]>([]);
-  const [localEntries, setLocalEntries] = useState<LocalBrowseEntry[]>([]);
+  const [folderPicker, setFolderPicker] = useState<"local" | "remote" | null>(null);
   const [showRemoteTerminal, setShowRemoteTerminal] = useState(false);
   const [remoteTerminalCwd, setRemoteTerminalCwd] = useState("");
-  const [helpOpen, setHelpOpen] = useState(false);
   const [environments, setEnvironments] = useState<ProjectEnvironmentDraft[]>(() => defaultProjectEnvironments());
   const [applicationTemplateId, setApplicationTemplateId] = useState(APPLICATION_TEMPLATES[0].id);
   const [applicationSearch, setApplicationSearch] = useState("");
@@ -784,10 +719,7 @@ export function CreateProjectDialog() {
       setEnvironments((current) => {
         const used = new Set<string>();
         return current.map((environment) => {
-          const preferred =
-            environment.name.toLowerCase() === "production"
-              ? (names.includes("main") ? "main" : names.includes("master") ? "master" : names[0])
-              : (names.includes(environment.branch) ? environment.branch : names.includes("dev") ? "dev" : names.find((name) => name !== "main" && name !== "master") || names[0]);
+          const preferred = preferredRepositoryBranch(names, environment.branch);
           const branch = used.has(preferred)
             ? names.find((name) => !used.has(name)) || preferred
             : preferred;
@@ -809,52 +741,14 @@ export function CreateProjectDialog() {
     },
   });
 
-  const browseSshMutation = useMutation({
-    mutationFn: async (path: string) => {
-      const res = await api.post(`/ssh/connections/${sshConnectionId}/browse`, { path });
-      return res.data as SshBrowseResponse;
-    },
-    onSuccess: (data) => {
-      setSshBrowsePath(data.path);
-      setRemoteTerminalCwd(data.path);
-      setSshEntries(data.entries);
-      setHasBrowsedSshPath(true);
-    },
-    onError: (error: unknown) => {
-      const message =
-        error instanceof AxiosError
-          ? (error.response?.data as { error?: string } | undefined)?.error || "Unable to browse remote path"
-          : "Unable to browse remote path";
-      toast.error(message);
-    },
-  });
-
-  const browseLocalMutation = useMutation({
-    mutationFn: async (path: string) => {
-      const res = await api.post("/local/sources/browse", { path });
-      return res.data as LocalBrowseResponse;
-    },
-    onSuccess: (data) => {
-      setLocalRoots(data.roots || []);
-      setLocalBrowsePath(data.path || "");
-      setLocalEntries(data.entries || []);
-    },
-    onError: (error: unknown) => {
-      const message =
-        error instanceof AxiosError
-          ? (error.response?.data as { error?: string } | undefined)?.error || "Unable to browse local source path"
-          : "Unable to browse local source path";
-      toast.error(message);
-    },
-  });
-
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (setupStep !== 3) throw new Error("Confirm the project configuration before creating it");
       const environmentPayload = environments.map((environment) => ({
         name: environment.name.trim().toLowerCase(),
         branch: sourceType === "application" ? "application" : environment.branch.trim(),
         auto_deploy: environment.auto_deploy,
-        require_ci: sourceType === "application" ? false : environment.require_ci,
+        require_ci: sourceType === "github" && environment.require_ci,
         cleanup_previous_on_success: environment.cleanup_previous_on_success,
         env_vars: environment.env_vars,
         execution_mode: executionMode,
@@ -961,8 +855,10 @@ export function CreateProjectDialog() {
       (data?.warnings || []).forEach((warning: string) => toast.warning(warning));
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      setOpen(false);
+      setFolderPicker(null);
+    setOpen(false);
       resetForm();
+      onDismiss?.();
       if (data?.project?.id) {
         router.push(`/dashboard/projects/${data.project.id}`);
       }
@@ -974,13 +870,17 @@ export function CreateProjectDialog() {
           : "Failed to create project";
       toast.error(message);
     },
+    onSettled: () => { creationSubmitted.current = false; },
   });
 
   const resetForm = () => {
+    setFolderPicker(null);
+    setSetupStep(0);
     setSourceType("github");
     setName("");
     setDescription("");
     setRepoUrl("");
+    setRepoInputFocused(false);
     setGithubPat("");
     setRepos([]);
     setBranches([]);
@@ -988,9 +888,8 @@ export function CreateProjectDialog() {
     setSshConnectionId("");
     setSshSourcePath("");
     setGithubRemoteWorkspacePath("");
-    setSshBrowsePath("");
-    setSshEntries([]);
-    setHasBrowsedSshPath(false);
+
+
     setShowSshConnectionPicker(false);
     setExecutionMode("local");
     setRemoteRuntimeType("docker");
@@ -998,9 +897,8 @@ export function CreateProjectDialog() {
     setRuntimeScheme("http");
     setLocalHttpsEnabled(false);
     setLocalSourcePath("");
-    setLocalBrowsePath("");
-    setLocalRoots([]);
-    setLocalEntries([]);
+
+
     setShowRemoteTerminal(false);
     setRemoteTerminalCwd("");
     setEnvironments(defaultProjectEnvironments());
@@ -1141,78 +1039,6 @@ export function CreateProjectDialog() {
     if (!description.trim()) setDescription(selectedApplicationTemplate.description);
   };
 
-  const handleBrowseCurrentPath = () => {
-    if (!sshConnectionId) {
-      toast.error("Choose an SSH connection first");
-      return;
-    }
-    const defaultRemoteHome = getRemoteHomePath(activeSshConnection?.username);
-    const targetPath =
-      sourceType === "github" || sourceType === "application"
-        ? sshBrowsePath || githubRemoteWorkspacePath || defaultRemoteHome
-        : sshBrowsePath || sshSourcePath || defaultRemoteHome;
-    const normalizedPath =
-      activeSshConnection?.username === "root" && targetPath === "/home/root" ? "/root" : targetPath;
-    if (normalizedPath !== targetPath) {
-      if (sourceType === "github") {
-        setGithubRemoteWorkspacePath(normalizedPath);
-      } else if (sourceType === "application") {
-        setGithubRemoteWorkspacePath(normalizedPath);
-      } else {
-        setSshSourcePath(normalizedPath);
-      }
-      setRemoteTerminalCwd(normalizedPath);
-    }
-    browseSshMutation.mutate(normalizedPath);
-  };
-
-  const handleBrowseParent = () => {
-    const current =
-      sourceType === "github" || sourceType === "application"
-        ? sshBrowsePath || githubRemoteWorkspacePath
-        : sshBrowsePath || sshSourcePath;
-    if (!current || current === "/") {
-      browseSshMutation.mutate("/");
-      return;
-    }
-    const segments = current.split("/").filter(Boolean);
-    segments.pop();
-    const parent = segments.length > 0 ? `/${segments.join("/")}` : "/";
-    browseSshMutation.mutate(parent);
-  };
-
-  const handleSelectSshDirectory = (entry: SshBrowseEntry) => {
-    if (sourceType === "github" || sourceType === "application") {
-      setGithubRemoteWorkspacePath(entry.path);
-    } else {
-      setSshSourcePath(entry.path);
-    }
-    setRemoteTerminalCwd(entry.path);
-    if (entry.directory) {
-      browseSshMutation.mutate(entry.path);
-    }
-  };
-
-  const handleBrowseLocalPath = () => {
-    browseLocalMutation.mutate(localBrowsePath || localSourcePath || "");
-  };
-
-  const handleBrowseLocalParent = () => {
-    const current = localBrowsePath || localSourcePath;
-    if (!current) {
-      browseLocalMutation.mutate("");
-      return;
-    }
-    const segments = current.split("/").filter(Boolean);
-    segments.pop();
-    browseLocalMutation.mutate(segments.length > 0 ? `/${segments.join("/")}` : "/");
-  };
-
-  const handleSelectLocalDirectory = (entry: LocalBrowseEntry) => {
-    setLocalSourcePath(entry.path);
-    browseLocalMutation.mutate(entry.path);
-  };
-
   const updateEnvironment = (id: string, patch: Partial<ProjectEnvironmentDraft>) => {
     setEnvironments((current) =>
       current.map((environment) =>
@@ -1242,12 +1068,13 @@ export function CreateProjectDialog() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name) {
+    if (setupStep !== 3 || createMutation.isPending || creationSubmitted.current) return;
+    if (!name.trim()) {
       toast.error("Project name is required");
       return;
     }
-    if (sourceType === "github" && !repoUrl) {
-      toast.error("Repository URL is required");
+    if (sourceType === "github" && !isGitHubRepositorySource(repoUrl)) {
+      toast.error("Enter a GitHub repository URL, such as https://github.com/owner/repo");
       return;
     }
     if (sourceType === "github" && executionMode === "remote_host" && !sshConnectionId) {
@@ -1299,7 +1126,35 @@ export function CreateProjectDialog() {
       toast.error("Environment names must be unique");
       return;
     }
+    creationSubmitted.current = true;
     createMutation.mutate();
+  };
+
+  const changeSetupStep = (next: number) => {
+    if (createMutation.isPending) return;
+    setSetupStep(Math.max(0, Math.min(3, next)));
+    setupBody.current?.scrollTo({ top: 0 });
+  };
+
+  const advanceSetup = () => {
+    if (createMutation.isPending || setupStep >= 3) return;
+    if (setupStep === 0) {
+      if (sourceType === "github" && !isGitHubRepositorySource(repoUrl)) { toast.error("Enter a GitHub repository URL, such as https://github.com/owner/repo"); return; }
+      if (sourceType === "local" && !localSourcePath.trim()) { toast.error("Select an allowed local source folder"); return; }
+      if (sourceType === "ssh" && (!sshConnectionId || !sshSourcePath.trim())) { toast.error("Select a server and source folder"); return; }
+      if (sourceType === "application") {
+        if (!selectedApplicationTemplate) { toast.error("Choose an application template"); return; }
+        const missing = selectedApplicationTemplate.fields.find(field => field.required && !String(applicationConfig[field.id] || "").trim());
+        if (missing) { toast.error(`${missing.label} is required`); return; }
+      }
+      if (executionMode === "remote_host" && (!sshConnectionId || (sourceType !== "ssh" && !githubRemoteWorkspacePath.trim()))) { toast.error("Select a server and remote workspace in deployment target settings"); return; }
+      if (!name.trim()) setName(inferProjectName(sourceType === "github" ? repoUrl : sourceType === "local" ? localSourcePath : sshSourcePath) || selectedApplicationTemplate?.name || "my-app");
+    } else if (!name.trim() || environments.some(env => !env.name.trim() || (sourceType !== "application" && !env.branch.trim()))) {
+      toast.error("Add a project name and a branch for each environment"); return;
+    }
+    const normalizedNames = environments.map(env => env.name.trim().toLowerCase());
+    if (new Set(normalizedNames).size !== normalizedNames.length) { toast.error("Environment names must be unique"); return; }
+    changeSetupStep(Math.min(3, setupStep + 1));
   };
 
   useEffect(() => {
@@ -1308,11 +1163,6 @@ export function CreateProjectDialog() {
     }
   }, [open, sourceType, githubConnected, repos.length, fetchReposMutation.status, fetchReposMutation]);
 
-  useEffect(() => {
-    if (open && sourceType === "local" && localRoots.length === 0 && browseLocalMutation.status === "idle") {
-      browseLocalMutation.mutate("");
-    }
-  }, [open, sourceType, localRoots.length, browseLocalMutation.status, browseLocalMutation]);
 
   const renderRuntimePreferences = () => {
     const runtimeScope = executionMode === "remote_host" ? "Remote" : "Local";
@@ -1499,6 +1349,7 @@ export function CreateProjectDialog() {
                       <SelectValue placeholder="Select branch" />
                     </SelectTrigger>
                     <SelectContent className="max-h-72">
+                      <SelectItem value="HEAD">Repository default</SelectItem>
                       {branches.map((branch) => (
                         <SelectItem key={branch.name} value={branch.name}>
                           <span className="truncate">{branch.name}</span>
@@ -1554,10 +1405,10 @@ export function CreateProjectDialog() {
                   environment.require_ci && "border-blue-500/40 bg-blue-500/10 text-blue-500"
                 )}
                 onClick={() => updateEnvironment(environment.id, { require_ci: !environment.require_ci })}
-                disabled={sourceType === "application"}
+                disabled={sourceType !== "github"}
               >
                 <AppIcon name="shield-check" fallback={ShieldCheck} className="mr-2 h-4 w-4"  />
-                {sourceType === "application"
+                {sourceType !== "github"
                   ? "CI checks do not apply"
                   : environment.require_ci
                     ? "Require CI checks"
@@ -1600,36 +1451,26 @@ export function CreateProjectDialog() {
     <Dialog
       open={open}
       onOpenChange={(value) => {
+        if (!value && createMutation.isPending) return;
         setOpen(value);
-        if (!value) resetForm();
+        if (!value) { resetForm(); onDismiss?.(); }
       }}
     >
-      <DialogTrigger
+      {!initiallyOpen && <DialogTrigger
         render={
           <Button>
             <AppIcon name="plus" fallback={Plus} size={16} className="mr-2 h-4 w-4" /> New Project
           </Button>
         }
-      />
-      <DialogContent className="!flex h-[min(calc(100dvh-2rem),980px)] !w-[min(calc(100vw-2rem),1360px)] !max-w-[1360px] gap-0 flex-col overflow-hidden rounded-2xl p-0">
-        <DialogHeader className="shrink-0 border-b border-border p-5 sm:p-6">
-          <div className="flex items-start justify-between gap-4 pr-8">
-              <DialogTitle className="flex items-center gap-2">
-                <AppIcon name="plus" fallback={Plus} size={20} className="h-5 w-5 text-primary" />
-                Create New Project
-              </DialogTitle>
-            <Button type="button" variant="outline" size="sm" onClick={() => setHelpOpen(true)} className="shrink-0">
-              <AppIcon name="info" fallback={Info} className="mr-2 h-4 w-4"  />
-              Guide
-            </Button>
-          </div>
-          <DialogDescription className="text-left">
-            Choose GitHub, a saved SSH/VPS folder, an allowed local folder, or a ready-made application template.
-          </DialogDescription>
-        </DialogHeader>
+      />}
+      <DialogContent className="project-creation-dialog !flex h-[min(calc(100dvh-1rem),780px)] !w-[min(calc(100vw-1rem),1040px)] !max-w-[1040px] gap-0 flex-col overflow-hidden rounded-2xl p-0">
+        <DialogTitle className="sr-only">New project</DialogTitle>
+        <DialogDescription className="sr-only">Choose a source, configure your project, review it, and confirm creation.</DialogDescription>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin px-6 py-4 sm:px-8">
-          <form onSubmit={handleSubmit} className="space-y-5 pb-2">
+        <ProjectSetupSteps step={setupStep} onChange={changeSetupStep} disabled={createMutation.isPending} />
+        <div ref={setupBody} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin px-4 py-3 sm:px-5">
+          <form id="project-setup" onSubmit={(event) => { if (setupStep < 3) { event.preventDefault(); advanceSetup(); } else handleSubmit(event); }} className="space-y-5">
+            <div hidden={setupStep !== 0} className="space-y-5">
             <div className="space-y-3">
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Project Source</Label>
               <div className={cn(segmentedTabsListClass, "h-auto grid-cols-2 sm:grid-cols-4")}>
@@ -1674,6 +1515,54 @@ export function CreateProjectDialog() {
 
             {sourceType === "github" ? (
               <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-4">
+                <div className="space-y-2">
+                  <Label htmlFor="repoUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Repository URL
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="repoUrl"
+                      name="source-repository-url"
+                      value={repoUrl}
+                      autoComplete="url"
+                      readOnly={!repoInputFocused}
+                      onFocus={() => setRepoInputFocused(true)}
+                      onBlur={() => setRepoInputFocused(false)}
+                      onChange={(e) => {
+                        setRepoUrl(e.target.value);
+                        setBranches([]);
+                      }}
+                      placeholder="https://github.com/user/repo"
+                      className="bg-muted/40"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fetchBranchesMutation.mutate(repoUrl.trim())}
+                      disabled={!repoUrl.trim() || fetchBranchesMutation.isPending}
+                      className="shrink-0"
+                    >
+                      {fetchBranchesMutation.isPending ? (
+                        <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
+                      ) : (
+                        <AppIcon name="git-branch" fallback={GitBranch} className="mr-2 h-4 w-4"  />
+                      )}
+                      Branches
+                    </Button>
+                  </div>
+                  {sourceType === "github" && repoUrl && (
+                    <p className="text-xs text-muted-foreground">
+                      {fetchBranchesMutation.isPending
+                        ? "Loading branches from GitHub..."
+                        : branches.length > 0
+                          ? `${branches.length} branches loaded. Environment branch fields now use the selector.`
+                          : "Load branches, or enter your source branch in the next step."}
+                    </p>
+                  )}
+                </div>
+
+                <details className="project-setup-disclosure">
+                  <summary>GitHub connection / private repository access</summary>
                 <div className="space-y-3 rounded-xl border border-border bg-muted/25 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
@@ -1720,7 +1609,7 @@ export function CreateProjectDialog() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                <div className="flex items-center gap-4 py-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   <div className="h-px flex-1 bg-border" />
                   <span>or</span>
                   <div className="h-px flex-1 bg-border" />
@@ -1757,6 +1646,8 @@ export function CreateProjectDialog() {
                   </div>
                 </div>
 
+                </details>
+
                 {repos.length > 0 && (
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Repository</Label>
@@ -1782,50 +1673,8 @@ export function CreateProjectDialog() {
                   </div>
                 )}
 
-                <div className="space-y-2">
-                  <Label htmlFor="repoUrl" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Repository URL
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="repoUrl"
-                      value={repoUrl}
-                      onChange={(e) => {
-                        setRepoUrl(e.target.value);
-                        setBranches([]);
-                      }}
-                      onBlur={() => {
-                        if (repoUrl.trim()) fetchBranchesMutation.mutate(repoUrl.trim());
-                      }}
-                      placeholder="https://github.com/user/repo"
-                      className="bg-muted/40"
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => fetchBranchesMutation.mutate(repoUrl.trim())}
-                      disabled={!repoUrl.trim() || fetchBranchesMutation.isPending}
-                      className="shrink-0"
-                    >
-                      {fetchBranchesMutation.isPending ? (
-                        <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                      ) : (
-                        <AppIcon name="git-branch" fallback={GitBranch} className="mr-2 h-4 w-4"  />
-                      )}
-                      Branches
-                    </Button>
-                  </div>
-                  {sourceType === "github" && repoUrl && (
-                    <p className="text-xs text-muted-foreground">
-                      {fetchBranchesMutation.isPending
-                        ? "Loading branches from GitHub..."
-                        : branches.length > 0
-                          ? `${branches.length} branches loaded. Environment branch fields now use the selector.`
-                          : "Load branches to select dev/main instead of typing them manually."}
-                    </p>
-                  )}
-                </div>
-
+                <details className="project-setup-disclosure">
+                  <summary>Deployment target · {executionMode === "local" ? "Local Docker" : "Remote server"}</summary>
                 <div className="space-y-3 rounded-xl border border-border bg-muted/20 p-4">
                   <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Execution Target
@@ -1910,9 +1759,8 @@ export function CreateProjectDialog() {
                                     const defaultPath = getRemoteHomePath(connection.username);
                                     setGithubRemoteWorkspacePath((current) => current || defaultPath);
                                     setRemoteTerminalCwd(defaultPath);
-                                    setSshBrowsePath("");
-                                    setSshEntries([]);
-                                    setHasBrowsedSshPath(false);
+
+
                                     setShowRemoteTerminal(false);
                                     setShowSshConnectionPicker(false);
                                   }}
@@ -1960,14 +1808,12 @@ export function CreateProjectDialog() {
                               <Button
                                 type="button"
                                 variant="outline"
-                                onClick={handleBrowseCurrentPath}
-                                disabled={!sshConnectionId || browseSshMutation.isPending}
+                                onClick={() => setFolderPicker("remote")}
+                                disabled={!sshConnectionId}
                               >
-                                {browseSshMutation.isPending ? (
-                                  <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                                ) : (
+
                                   <AppIcon name="folder-tree" fallback={FolderTree} className="mr-2 h-4 w-4"  />
-                                )}
+
                                 Browse
                               </Button>
                             </div>
@@ -1977,54 +1823,7 @@ export function CreateProjectDialog() {
                             </p>
                           </div>
 
-                          {hasBrowsedSshPath && (
-                            <div className="space-y-3 rounded-xl border border-border bg-muted/25 p-4">
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                    Remote Browser
-                                  </p>
-                                  <p className="text-sm text-foreground">
-                                    {sshBrowsePath || githubRemoteWorkspacePath || getRemoteHomePath(activeSshConnection.username)}
-                                  </p>
-                                </div>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={handleBrowseParent}
-                                  disabled={browseSshMutation.isPending}
-                                >
-                                  Up
-                                </Button>
-                              </div>
-                              {sshEntries.length > 0 ? (
-                                <div className="max-h-[160px] overflow-y-auto rounded-lg border border-border bg-card scrollbar-thin">
-                                  {sshEntries.map((entry) => (
-                                    <button
-                                      key={entry.path}
-                                      type="button"
-                                      onClick={() => handleSelectSshDirectory(entry)}
-                                      className={cn(
-                                        "flex w-full items-center justify-between border-b border-border/60 px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-accent",
-                                        githubRemoteWorkspacePath === entry.path ? "bg-accent" : "bg-transparent"
-                                      )}
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <AppIcon name="folder-tree" fallback={FolderTree} className="h-4 w-4 text-muted-foreground"  />
-                                        <span className="text-foreground">{entry.name}</span>
-                                      </div>
-                                      {entry.directory && <AppIcon name="chevron-right" fallback={ChevronRight} className="h-4 w-4 text-muted-foreground"  />}
-                                    </button>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                                  This remote folder is empty. You can still use it as the workspace path.
-                                </div>
-                              )}
-                            </div>
-                          )}
+
 
                           <div className="space-y-3 rounded-xl border border-border bg-card p-4">
                             <div className="flex items-center justify-between gap-3">
@@ -2060,6 +1859,7 @@ export function CreateProjectDialog() {
                     </div>
                   )}
                 </div>
+                </details>
               </div>
             ) : sourceType === "application" ? (
               <div className="space-y-4 rounded-xl border border-border bg-muted/20 p-4">
@@ -2619,9 +2419,8 @@ export function CreateProjectDialog() {
                                         const defaultPath = getRemoteHomePath(connection.username);
                                         setGithubRemoteWorkspacePath((current) => current || defaultPath);
                                         setRemoteTerminalCwd(defaultPath);
-                                        setSshBrowsePath("");
-                                        setSshEntries([]);
-                                        setHasBrowsedSshPath(false);
+
+
                                         setShowRemoteTerminal(false);
                                         setShowSshConnectionPicker(false);
                                       }}
@@ -2668,14 +2467,12 @@ export function CreateProjectDialog() {
                                 <Button
                                   type="button"
                                   variant="outline"
-                                  onClick={handleBrowseCurrentPath}
-                                  disabled={!sshConnectionId || browseSshMutation.isPending}
+                                  onClick={() => setFolderPicker("remote")}
+                                  disabled={!sshConnectionId}
                                 >
-                                  {browseSshMutation.isPending ? (
-                                    <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                                  ) : (
+
                                     <AppIcon name="folder-tree" fallback={FolderTree} className="mr-2 h-4 w-4"  />
-                                  )}
+
                                   Browse
                                 </Button>
                               </div>
@@ -2776,9 +2573,8 @@ export function CreateProjectDialog() {
                               type="button"
                               onClick={() => {
                                 setSshConnectionId(connection.id);
-                                setSshEntries([]);
-                                setSshBrowsePath("");
-                                setHasBrowsedSshPath(false);
+
+
                                 const defaultPath = getRemoteHomePath(connection.username);
                                 setSshSourcePath(defaultPath);
                                 setRemoteTerminalCwd(defaultPath);
@@ -2837,14 +2633,12 @@ export function CreateProjectDialog() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={handleBrowseCurrentPath}
-                      disabled={!sshConnectionId || browseSshMutation.isPending}
+                      onClick={() => setFolderPicker("remote")}
+                      disabled={!sshConnectionId}
                     >
-                      {browseSshMutation.isPending ? (
-                        <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                      ) : (
+
                         <AppIcon name="folder-tree" fallback={FolderTree} className="mr-2 h-4 w-4"  />
-                      )}
+
                       Browse
                     </Button>
                     <Tooltip>
@@ -2855,7 +2649,7 @@ export function CreateProjectDialog() {
                             variant={showRemoteTerminal ? "default" : "outline"}
                             size="icon-lg"
                             onClick={() => {
-                              setRemoteTerminalCwd(sshBrowsePath || sshSourcePath || getRemoteHomePath(activeSshConnection?.username));
+                              setRemoteTerminalCwd(sshSourcePath || getRemoteHomePath(activeSshConnection?.username));
                               setShowRemoteTerminal((current) => !current);
                             }}
                             disabled={!sshConnectionId}
@@ -2869,53 +2663,7 @@ export function CreateProjectDialog() {
                   </div>
                 </div>
 
-                {sshConnectionId && (
-                  <div className="space-y-3 rounded-xl border border-border bg-muted/25 p-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                          Remote Browser
-                        </p>
-                        <p className="text-sm text-foreground">{sshBrowsePath || sshSourcePath || getRemoteHomePath(activeSshConnection?.username)}</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleBrowseParent}
-                        disabled={browseSshMutation.isPending}
-                      >
-                        Up
-                      </Button>
-                    </div>
 
-                    {sshEntries.length > 0 ? (
-                      <div className="max-h-[180px] overflow-y-auto rounded-lg border border-border bg-card scrollbar-thin">
-                        {sshEntries.map((entry) => (
-                          <button
-                            key={entry.path}
-                            type="button"
-                            onClick={() => handleSelectSshDirectory(entry)}
-                            className={cn(
-                              "flex w-full items-center justify-between border-b border-border/60 px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-accent",
-                              sshSourcePath === entry.path ? "bg-accent" : "bg-transparent"
-                            )}
-                          >
-                            <div className="flex items-center gap-2">
-                              <AppIcon name="folder-tree" fallback={FolderTree} className="h-4 w-4 text-muted-foreground"  />
-                              <span className="text-foreground">{entry.name}</span>
-                            </div>
-                            {entry.directory && <AppIcon name="chevron-right" fallback={ChevronRight} className="h-4 w-4 text-muted-foreground"  />}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                        Browse a remote folder to pick the exact VPS path you want to build from.
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {showRemoteTerminal && (
                   <div className="space-y-3 rounded-xl border border-border bg-card p-4">
@@ -2932,7 +2680,7 @@ export function CreateProjectDialog() {
                     </div>
                     <RemoteSshTerminal
                       connectionId={sshConnectionId}
-                      cwd={remoteTerminalCwd || sshBrowsePath || sshSourcePath || getRemoteHomePath(activeSshConnection?.username)}
+                      cwd={remoteTerminalCwd || sshSourcePath || getRemoteHomePath(activeSshConnection?.username)}
                       className="h-[min(56vh,520px)] min-h-[420px]"
                     />
                   </div>
@@ -2955,14 +2703,12 @@ export function CreateProjectDialog() {
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={handleBrowseLocalPath}
-                      disabled={browseLocalMutation.isPending}
+                      onClick={() => setFolderPicker("local")}
+                      disabled={false}
                     >
-                      {browseLocalMutation.isPending ? (
-                        <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                      ) : (
+
                         <AppIcon name="folder-tree" fallback={FolderTree} className="mr-2 h-4 w-4"  />
-                      )}
+
                       Browse
                     </Button>
                   </div>
@@ -2970,78 +2716,11 @@ export function CreateProjectDialog() {
 
                 {renderRuntimePreferences()}
 
-                <div className="space-y-3 rounded-xl border border-border bg-muted/25 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Allowed Local Roots
-                      </p>
-                      <p className="text-sm text-foreground">{localBrowsePath || "Select a mounted local source root"}</p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleBrowseLocalParent}
-                      disabled={browseLocalMutation.isPending || !localBrowsePath}
-                    >
-                      Up
-                    </Button>
-                  </div>
-
-                  {!localBrowsePath && localRoots.length > 0 && (
-                    <div className="grid gap-2 lg:grid-cols-2">
-                      {localRoots.map((root) => (
-                        <Button
-                          key={root.path}
-                          type="button"
-                          variant="outline"
-                          className="justify-start truncate"
-                          onClick={() => {
-                            setLocalSourcePath(root.path);
-                            browseLocalMutation.mutate(root.path);
-                          }}
-                        >
-                          <AppIcon name="hard-drive" fallback={HardDrive} className="mr-2 h-4 w-4"  />
-                          <span className="truncate">{root.path}</span>
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-
-                  {localEntries.length > 0 ? (
-                    <div className="max-h-[180px] overflow-y-auto rounded-lg border border-border bg-card scrollbar-thin">
-                      {localEntries.map((entry) => (
-                        <button
-                          key={entry.path}
-                          type="button"
-                          onClick={() => handleSelectLocalDirectory(entry)}
-                          className={cn(
-                            "flex w-full items-center justify-between border-b border-border/60 px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-accent",
-                            localSourcePath === entry.path ? "bg-accent" : "bg-transparent"
-                          )}
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <AppIcon name="folder-tree" fallback={FolderTree} className="h-4 w-4 shrink-0 text-muted-foreground"  />
-                            <span className="truncate text-foreground">{entry.name}</span>
-                          </div>
-                          <AppIcon name="chevron-right" fallback={ChevronRight} className="h-4 w-4 shrink-0 text-muted-foreground"  />
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
-                      Local projects must live under the configured mounted local source root.
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 
-            {renderEnvironmentSettings()}
-
-            <ProjectEnvEditor envVars={envVars} onChange={setEnvVars} />
-
+            </div>
+            <div hidden={setupStep !== 1} className="space-y-5">
             <div className="space-y-4">
               {organizations.length > 0 && (
                 <div className="space-y-2">
@@ -3095,141 +2774,81 @@ export function CreateProjectDialog() {
                   id="description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="A short description..."
+                  placeholder="Optional description"
                   className="bg-muted/40"
                 />
               </div>
             </div>
+            {sourceType === "github" && environments[0] && <div className="space-y-2">
+              <Label htmlFor="initial-branch">Production branch</Label>
+              {branches.length ? <Select value={environments[0].branch} onValueChange={value => value && updateEnvironment(environments[0].id, { branch: value })}>
+                <SelectTrigger id="initial-branch" className="w-full"><SelectValue placeholder="Select branch" /></SelectTrigger>
+                <SelectContent><SelectItem value="HEAD">Repository default</SelectItem>{branches.map(branch => <SelectItem key={branch.name} value={branch.name}>{branch.name}</SelectItem>)}</SelectContent>
+              </Select> : <div className="flex items-center gap-2"><Input id="initial-branch" value={environments[0].branch === "HEAD" ? "" : environments[0].branch} placeholder="Repository default" onChange={event => updateEnvironment(environments[0].id, { branch: event.target.value || "HEAD" })} /></div>}
+              <p className="text-xs text-muted-foreground">The source revision is pinned when the deployment worker starts.</p>
+            </div>}
+            <details className="project-setup-disclosure"><summary>Environments, automatic deploys, and CI checks</summary>{renderEnvironmentSettings()}</details>
+            <details className="project-setup-disclosure"><summary>Environment variables {envVars.length > 0 && `(${envVars.length})`}</summary><ProjectEnvEditor envVars={envVars} onChange={setEnvVars} /></details>
+            </div>
+            {setupStep === 2 && <ProjectSetupReview name={name} source={sourceType === "github" ? repoUrl : sourceType === "application" ? selectedApplicationTemplate?.name || "Application template" : sourceType === "local" ? localSourcePath : sshSourcePath}
+              target={executionMode === "remote_host" ? `Remote server · ${remoteRuntimeType === "kubernetes" ? "Kubernetes" : "Docker"}` : `Local ${remoteRuntimeType === "kubernetes" ? "Kubernetes" : "Docker"}`}
+              environments={environments.map(env => ({ ...env, branch: sourceType === "application" ? "Application image" : env.branch, require_ci: sourceType === "github" && env.require_ci }))}
+              variables={envVars.length + environments.reduce((count, env) => count + env.env_vars.length, 0)} onEdit={() => changeSetupStep(1)} />}
+            {setupStep === 3 && <ProjectSetupConfirmation name={name.trim()} rows={[
+              { label: "Workspace", value: writableOrganizations.find(org => org.id === effectiveOrganizationId)?.name || "Personal workspace" },
+              { label: "Description", value: description.trim() },
+              { label: "Source", value: sourceType === "github" ? "GitHub repository" : sourceType === "ssh" ? "Server folder" : sourceType === "local" ? "Local folder" : "Application preset" },
+              { label: "Repository", value: sourceType === "github" ? repoUrl.trim() : "" },
+              { label: "Source folder", value: sourceType === "local" ? localSourcePath : sourceType === "ssh" ? sshSourcePath : "" },
+              { label: "GitHub access", value: sourceType === "github" ? githubPat ? "Personal access token configured" : githubConnected ? "Connected GitHub account" : "Public repository" : "" },
+              { label: "Application", value: sourceType === "application" ? selectedApplicationTemplate?.name || "" : "" },
+              { label: "Image", value: sourceType === "application" ? selectedApplicationTemplate?.image || "" : "" },
+              { label: "Runtime", value: `${executionMode === "remote_host" ? "Remote" : "Local"} ${remoteRuntimeType === "kubernetes" ? "Kubernetes" : "Docker"}` },
+              { label: "Server", value: executionMode === "remote_host" ? activeSshConnection?.name || "Saved server" : "" },
+              { label: "Workspace folder", value: executionMode === "remote_host" && sourceType !== "ssh" ? githubRemoteWorkspacePath : "" },
+              { label: "Protocol", value: effectiveRuntimeScheme.toUpperCase() },
+              { label: "Exposure", value: executionMode === "local" ? localExposureMode === "cloudflare_tunnel" ? "Cloudflare tunnel" : localExposureMode === "portless" ? "Local proxy" : "Direct port" : remoteRuntimeType === "kubernetes" ? effectiveRemoteK8sExposure : "Direct port" },
+              { label: "Tunnel token", value: executionMode === "local" && localExposureMode === "cloudflare_tunnel" ? cloudflareTunnelToken ? "Configured" : "Not configured" : "" },
+              ...(sourceType === "application" ? (selectedApplicationTemplate?.fields || []).filter(field => !field.secret && field.type !== "password").map(field => ({ label: field.label, value: String(applicationConfig[field.id] || field.defaultValue || "") })) : []),
+            ]} environments={environments.map(env => ({ ...env, branch: sourceType === "application" ? "Application image" : env.branch.trim(), require_ci: sourceType === "github" && env.require_ci, variableKeys: env.env_vars.map(item => item.key) }))}
+              variableKeys={[...new Set([...envVars.map(item => item.key), ...(sourceType === "application" ? (selectedApplicationTemplate?.fields || []).filter(field => field.envKey && applicationConfig[field.id]).map(field => field.envKey) : [])])]} onEdit={() => changeSetupStep(1)} />}
+            {setupStep >= 2 && <DraftStackInspection source={{ source_type: sourceType, repo_url: repoUrl.trim(), github_pat: githubPat, source_path: sourceType === "local" ? localSourcePath : sshSourcePath, ssh_connection_id: sshConnectionId,
+              branch: environments.find(env => env.name.trim().toLowerCase() === "production")?.branch || environments[0]?.branch || "HEAD", application_template_id: applicationTemplateId,
+              application_config: { image: selectedApplicationTemplate?.image } }} />}
           </form>
         </div>
 
-        <DialogFooter className="shrink-0 border-t border-border bg-muted/30 px-6 pt-4 pb-6 sm:pb-6">
-          <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
+        <DialogFooter className="!flex-row !justify-end shrink-0 border-t border-border bg-muted/30 px-4 py-2 sm:px-5">
+          <Button type="button" variant="ghost" disabled={createMutation.isPending} onClick={() => { if (setupStep > 0) changeSetupStep(setupStep - 1); else { setOpen(false); resetForm(); onDismiss?.(); } }}>
+            {setupStep > 0 ? "Back" : "Cancel"}
           </Button>
-          <Button type="submit" onClick={handleSubmit} disabled={createMutation.isPending} className="min-w-[140px]">
+          {setupStep < 3 ? <Button key="advance-project" type="button" onClick={(event) => { event.preventDefault(); advanceSetup(); }} className="min-w-[140px]">{setupStep === 0 ? "Configure project" : setupStep === 1 ? "Review project" : "Continue to confirmation"}<ChevronRight className="ml-2 h-4 w-4" /></Button> : <Button key="create-project" type="submit" form="project-setup" disabled={createMutation.isPending} className="min-w-[140px]">
             {createMutation.isPending ? (
               <>
                 <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
                 Creating...
               </>
             ) : (
-              "Create Project"
+              "Create project"
             )}
-          </Button>
+          </Button>}
         </DialogFooter>
       </DialogContent>
-    </Dialog>
-    <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
-      <DialogContent className="!flex !w-[min(90vw,620px)] !max-w-[620px] max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-2xl p-0">
-        <DialogHeader className="shrink-0 px-5 pt-5 pb-4">
-          <DialogTitle className="flex items-center gap-2">
-            <AppIcon name="info" fallback={Info} className="h-5 w-5 text-primary"  />
-            Project Creation Guide
-          </DialogTitle>
-          <DialogDescription>
-            These choices decide where the source comes from and where the first Docker build runs. Runtime upgrades
-            happen after creation from the deployment screen.
-          </DialogDescription>
-        </DialogHeader>
-
-        <Tabs defaultValue="github" className="min-h-0 overflow-hidden px-5 pb-4">
-          <TabsList className={cn(segmentedTabsListClass, "grid-cols-4")}>
-            <TabsTrigger value="github" className={selectedTabClass}>
-              GitHub
-            </TabsTrigger>
-            <TabsTrigger value="ssh" className={selectedTabClass}>
-              SSH / VPS
-            </TabsTrigger>
-            <TabsTrigger value="application" className={selectedTabClass}>
-              Apps
-            </TabsTrigger>
-            <TabsTrigger value="local" className={selectedTabClass}>
-              Local
-            </TabsTrigger>
-          </TabsList>
-
-          <div className="mt-4 max-h-[min(46dvh,460px)] overflow-y-auto overscroll-contain pr-1 scrollbar-thin">
-            <TabsContent value="github" className="space-y-3">
-              <GuideSection
-                heading="GitHub source"
-                items={[
-                  "Use GitHub OAuth or a PAT to load public and private repositories.",
-                  "Pick a repository, then StackPilot stores the project record and creates the first Docker deployment.",
-                  "If you choose Run on server, select the server and a remote workspace path. The repo is cloned under stackpilot-builds/<deployment-id> inside that path.",
-                ]}
-              />
-              <GuideSection
-                heading="After creation"
-                items={[
-                  "Open Deployments to view logs, metrics, runtime details, or delete the deployment.",
-                  "Use the runtime controls later if you want Kubernetes, NodePort, or Ingress instead of plain Docker.",
-                ]}
-              />
-            </TabsContent>
-
-            <TabsContent value="ssh" className="space-y-3">
-              <GuideSection
-                heading="SSH / VPS source"
-                items={[
-                  "Use this when the source folder already exists on a saved server or Tailscale machine.",
-                  "Browse to the actual project folder, not only the parent folder.",
-                  "Run locally copies the remote source to StackPilot and builds on this machine. Run on server builds and runs on that same remote server.",
-                ]}
-              />
-              <GuideSection
-                heading="Terminal"
-                items={[
-                  "The terminal lets you run normal shell commands on the selected connection.",
-                  "You can git clone, install missing tools, inspect files, then choose the final project folder.",
-                ]}
-              />
-            </TabsContent>
-
-            <TabsContent value="application" className="space-y-3">
-              <GuideSection
-                heading="Application source"
-                items={[
-                  "Use this when you want StackPilot to generate a deployable compose project from a known application image.",
-                  "Pick an application, configure ports and credentials, then deploy locally or on a saved server.",
-                  "Secrets are stored as project environment variables; the generated source keeps only non-secret metadata.",
-                ]}
-              />
-              <GuideSection
-                heading="Catalog scope"
-                items={[
-                  "The catalog starts with common databases, queues, monitoring tools, storage, and utilities.",
-                  "Each template is still a normal Docker image workflow, so more application types can be added without changing the deployment engine.",
-                ]}
-              />
-            </TabsContent>
-
-            <TabsContent value="local" className="space-y-3">
-              <GuideSection
-                heading="Local source"
-                items={[
-                  "Use this for folders already available on the host running StackPilot.",
-                  "Local projects must live inside the allowed local source roots configured for the backend container.",
-                  "Direct arbitrary laptop paths are intentionally blocked; mount or import the project into the allowed root so builds are reproducible and safe.",
-                ]}
-              />
-              <GuideSection
-                heading="NodePort vs Ingress"
-                items={[
-                  "NodePort exposes a Kubernetes app on a high node port, useful for local testing.",
-                  "Ingress routes domain-based HTTP traffic through an ingress controller, better for production-style URLs and TLS.",
-                ]}
-              />
-            </TabsContent>
-          </div>
-        </Tabs>
-
-        <DialogFooter className="!mx-0 !mb-0 shrink-0 px-5 py-3">
-          <Button type="button" onClick={() => setHelpOpen(false)}>
-            Got it
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+    <FolderPickerDialog
+      open={folderPicker !== null}
+      onOpenChange={(value) => { if (!value) setFolderPicker(null); }}
+      mode={folderPicker || "local"}
+      connectionId={sshConnectionId}
+      initialPath={folderPicker === "local" ? localSourcePath : sourceType === "github" || sourceType === "application" ? githubRemoteWorkspacePath : sshSourcePath}
+      onSelect={(path) => {
+        if (folderPicker === "local") setLocalSourcePath(path);
+        else {
+          if (sourceType === "github" || sourceType === "application") setGithubRemoteWorkspacePath(path);
+          else setSshSourcePath(path);
+          setRemoteTerminalCwd(path);
+        }
+      }}
+    />
     </Dialog>
     </>
   );

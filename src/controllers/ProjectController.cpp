@@ -8,6 +8,8 @@
 #include "LogWebSocketController.h"
 #include "../db/Database.h"
 #include "../services/ApplicationCatalog.h"
+#include "../services/ProjectStackInspector.h"
+#include "../utils/BlockingTaskRunner.h"
 #include "../utils/AgentPolicy.h"
 #include "../services/BuildService.h"
 #include "../services/DeploymentCleanupService.h"
@@ -415,11 +417,7 @@ std::vector<ProjectEnvironmentConfig> defaultProjectEnvironmentConfigs(const std
                                                                        const std::string& runtimeScheme) {
     return {
         makeProjectEnvironmentConfig(
-            "development", "dev", true, false, true, {},
-            executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme
-        ),
-        makeProjectEnvironmentConfig(
-            "production", "main", false, true, false, {},
+            "production", "HEAD", false, false, false, {},
             executionMode, remoteConnectionId, remoteRuntimeType, remoteK8sExposure, runtimeScheme
         )
     };
@@ -805,344 +803,6 @@ void replaceProjectEnvVars(pqxx::transaction_base& txn,
             TokenCrypto::encrypt(envVar.value)
         );
     }
-}
-
-void startBackgroundBuild(const std::string& deploymentId,
-                          const std::string& sourceType,
-                          const std::string& repoUrl,
-                          const std::string& version,
-                          const std::string& githubPat,
-                          const std::string& sourcePath,
-                          const SshConnectionConfig& sshConfig,
-                          const std::string& executionMode,
-                          const SshConnectionConfig& remoteExecutionConfig,
-                          const std::string& remoteRuntimeType,
-                          const std::string& remoteK8sExposure,
-                          const std::string& runtimeScheme,
-                          const std::string& projectName,
-                          const std::vector<BuildEnvVar>& envVars) {
-    std::thread buildThread([deploymentId, sourceType, repoUrl, version, githubPat, sourcePath, sshConfig, executionMode, remoteExecutionConfig, remoteRuntimeType, remoteK8sExposure, runtimeScheme, projectName, envVars]() {
-        try {
-            BuildService buildService;
-            const auto logSink = [deploymentId](const std::string& line) {
-                DeploymentJournal::appendLine(deploymentId, line);
-                LogWebSocketController::broadcastLog(deploymentId, line);
-            };
-
-            BuildResult buildResult;
-            KubernetesRuntimeInfo remoteK8sRuntime;
-            KubernetesRuntimeInfo localK8sRuntime;
-            bool hasRemoteK8sRuntime = false;
-            bool hasLocalK8sRuntime = false;
-            if (executionMode == "remote_host") {
-                if (sourceType == "github") {
-                    buildResult = buildService.buildRepositoryAndRunOnRemoteDocker(
-                        deploymentId,
-                        remoteExecutionConfig,
-                        repoUrl,
-                        sourcePath,
-                        version,
-                        githubPat,
-                        "",
-                        "",
-                        projectName,
-                        3000,
-                        envVars,
-                        logSink
-                    );
-                } else {
-                    buildResult = buildService.buildAndRunOnRemoteDocker(
-                        deploymentId,
-                        remoteExecutionConfig,
-                        sourcePath,
-                        projectName,
-                        version,
-                        3000,
-                        envVars,
-                        logSink
-                    );
-                }
-                if (buildResult.success && remoteRuntimeType == "kubernetes") {
-                    SshService sshService;
-                    if (buildResult.composeProject) {
-                        KubernetesDeployOptions options;
-                        options.deploymentId = deploymentId;
-                        options.projectName = projectName;
-                        options.nameSpace = "stackpilot-apps";
-                        options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
-                        options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
-                        options.replicas = 1;
-                        options.containerPort = 3000;
-                        options.resourcePreset = "small";
-                        options.healthPath = "/";
-                        for (const auto& envVar : envVars) {
-                            options.envVars.emplace_back(envVar.key, envVar.value);
-                        }
-                        logSink("Deploying Docker Compose stack to remote Kubernetes...");
-                        remoteK8sRuntime = sshService.deployComposeKubernetesRuntime(
-                            remoteExecutionConfig,
-                            options,
-                            buildResult.composeWorkdir,
-                            buildResult.composeFile,
-                            buildResult.composeProjectName,
-                            buildResult.composeServices
-                        );
-                    } else if (!buildResult.remoteContainerName.empty()) {
-                        const auto cleanup = sshService.removeDockerContainer(remoteExecutionConfig, buildResult.remoteContainerName, buildResult.imageName, false);
-                        buildResult.logs += "\n" + cleanup.output;
-                        logSink("Temporary remote Docker container removed before Kubernetes deployment");
-                    }
-
-                    if (!buildResult.composeProject) {
-                        KubernetesDeployOptions options;
-                        options.deploymentId = deploymentId;
-                        options.projectName = projectName;
-                        options.imageName = buildResult.imageName;
-                        options.nameSpace = "stackpilot-apps";
-                        options.runtimeScheme = normalizeRuntimeScheme(runtimeScheme);
-                        options.exposureMode = options.runtimeScheme == "https" ? "ingress" : normalizeRemoteK8sExposure(remoteK8sExposure);
-                        options.replicas = 1;
-                        options.containerPort = 3000;
-                        logSink("Deploying image to remote Kubernetes...");
-                        remoteK8sRuntime = sshService.deployKubernetesRuntime(remoteExecutionConfig, options);
-                    }
-                    hasRemoteK8sRuntime = true;
-                    buildResult.logs += "\n" + remoteK8sRuntime.logs;
-                    buildResult.runtimeProvider = "remote_kubernetes";
-                    buildResult.runtimeUrl = remoteK8sRuntime.runtimeUrl;
-                    buildResult.remoteContainerName.clear();
-                    if (!remoteK8sRuntime.success) {
-                        buildResult.success = false;
-                        buildResult.error = remoteK8sRuntime.error.empty() ? "Remote Kubernetes deployment failed" : remoteK8sRuntime.error;
-                    }
-                }
-            } else if (sourceType == "ssh") {
-                buildResult = buildService.buildFromSshSource(
-                    deploymentId,
-                    sshConfig,
-                    sourcePath,
-                    version,
-                    envVars,
-                    logSink
-                );
-            } else if (sourceType == "local") {
-                buildResult = buildService.buildFromLocalSource(
-                    deploymentId,
-                    sourcePath,
-                    version,
-                    envVars,
-                    logSink
-                );
-            } else {
-                buildResult = buildService.buildFromRepository(
-                    deploymentId,
-                    repoUrl,
-                    version,
-                    githubPat,
-                    "",
-                    "",
-                    envVars,
-                    logSink
-                );
-            }
-
-            if (buildResult.success && executionMode != "remote_host" && remoteRuntimeType == "kubernetes") {
-                KubernetesDeployOptions options;
-                options.deploymentId = deploymentId;
-                options.projectName = projectName;
-                options.imageName = buildResult.imageName;
-                options.nameSpace = "stackpilot-apps";
-                options.runtimeScheme = "http";
-                options.exposureMode = "nodeport";
-                options.replicas = 1;
-                options.containerPort = 3000;
-                options.resourcePreset = "small";
-                options.healthPath = "/";
-                for (const auto& envVar : envVars) {
-                    options.envVars.emplace_back(envVar.key, envVar.value);
-                }
-
-                logSink("Deploying image to local Kubernetes...");
-                KubernetesService kubernetesService;
-                if (buildResult.composeProject) {
-                    logSink("Converting Docker Compose stack to local Kubernetes resources...");
-                    localK8sRuntime = kubernetesService.deployComposeStack(
-                        options,
-                        buildResult.composeWorkdir,
-                        buildResult.composeFile,
-                        buildResult.composeProjectName,
-                        buildResult.composeServices
-                    );
-                } else {
-                    localK8sRuntime = kubernetesService.deploy(options);
-                }
-                hasLocalK8sRuntime = true;
-                buildResult.logs += "\n" + localK8sRuntime.logs;
-                buildResult.runtimeProvider = "kubernetes";
-                buildResult.runtimeUrl = localK8sRuntime.runtimeUrl;
-                if (!localK8sRuntime.success) {
-                    buildResult.success = false;
-                    buildResult.error = localK8sRuntime.error.empty() ? "Local Kubernetes deployment failed" : localK8sRuntime.error;
-                }
-            }
-
-            auto& db = Database::getInstance();
-            auto connUpdate = db.getConnection();
-            pqxx::work updateTxn(*connUpdate);
-            if (buildResult.success) {
-                if (buildResult.runtimeProvider == "remote_kubernetes" && hasRemoteK8sRuntime) {
-                    updateTxn.exec_params(
-                        "UPDATE deployments "
-                        "SET status = $1, logs = $2, image_name = $3, runtime_url = $4, runtime_exposure = $5, "
-                        "runtime_provider = 'remote_kubernetes', remote_container_name = '', "
-                        "k8s_namespace = $6, k8s_deployment_name = $7, k8s_service_name = $8, k8s_ingress_name = $9, "
-                        "desired_replicas = $10, runtime_snapshot = $11::jsonb, updated_at = NOW() "
-                        "WHERE id = $12",
-                        remoteK8sRuntime.status.empty() ? "running" : remoteK8sRuntime.status,
-                        buildResult.logs,
-                        buildResult.imageName,
-                        remoteK8sRuntime.runtimeUrl,
-                        remoteK8sRuntime.exposureMode,
-                        remoteK8sRuntime.nameSpace,
-                        remoteK8sRuntime.deploymentName,
-                        remoteK8sRuntime.serviceName,
-                        remoteK8sRuntime.ingressName,
-                        remoteK8sRuntime.desiredReplicas,
-                        compactJson(buildResult.composeProject
-                            ? composeKubernetesRuntimeSnapshot(buildResult, remoteK8sRuntime, "remote_kubernetes", runtimeScheme, 3000)
-                            : runtimeSnapshot(
-                                "remote_kubernetes",
-                                buildResult.imageName,
-                                remoteK8sRuntime.runtimeUrl,
-                                remoteK8sRuntime.exposureMode,
-                                remoteK8sRuntime.desiredReplicas,
-                                3000,
-                                remoteK8sRuntime.runtimeScheme.empty() ? runtimeScheme : remoteK8sRuntime.runtimeScheme
-                            )),
-                        deploymentId
-                    );
-                    LogWebSocketController::broadcastStatus(deploymentId, remoteK8sRuntime.status.empty() ? "running" : remoteK8sRuntime.status);
-                } else if (buildResult.runtimeProvider == "kubernetes" && hasLocalK8sRuntime) {
-                    updateTxn.exec_params(
-                        "UPDATE deployments "
-                        "SET status = $1, logs = $2, image_name = $3, runtime_url = $4, runtime_exposure = $5, "
-                        "runtime_provider = 'kubernetes', "
-                        "k8s_namespace = $6, k8s_deployment_name = $7, k8s_service_name = $8, k8s_ingress_name = $9, "
-                        "desired_replicas = $10, runtime_snapshot = $11::jsonb, runtime_paused = FALSE, updated_at = NOW() "
-                        "WHERE id = $12",
-                        localK8sRuntime.status.empty() ? "running" : localK8sRuntime.status,
-                        buildResult.logs,
-                        buildResult.imageName,
-                        localK8sRuntime.runtimeUrl,
-                        localK8sRuntime.exposureMode,
-                        localK8sRuntime.nameSpace,
-                        localK8sRuntime.deploymentName,
-                        localK8sRuntime.serviceName,
-                        localK8sRuntime.ingressName,
-                        localK8sRuntime.desiredReplicas,
-                        compactJson(buildResult.composeProject
-                            ? composeKubernetesRuntimeSnapshot(buildResult, localK8sRuntime, "kubernetes", runtimeScheme, 3000)
-                            : runtimeSnapshot(
-                                "kubernetes",
-                                buildResult.imageName,
-                                localK8sRuntime.runtimeUrl,
-                                localK8sRuntime.exposureMode,
-                                localK8sRuntime.desiredReplicas,
-                                3000,
-                                localK8sRuntime.runtimeScheme.empty() ? runtimeScheme : localK8sRuntime.runtimeScheme
-                            )),
-                        deploymentId
-                    );
-                    LogWebSocketController::broadcastStatus(deploymentId, localK8sRuntime.status.empty() ? "running" : localK8sRuntime.status);
-                } else if (buildResult.runtimeProvider == "remote_compose") {
-                    updateTxn.exec_params(
-                        "UPDATE deployments "
-                        "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'remote_compose', "
-                        "runtime_provider = 'remote_compose', remote_container_name = $4, runtime_snapshot = $5::jsonb, runtime_paused = FALSE, updated_at = NOW() "
-                        "WHERE id = $6",
-                        buildResult.logs,
-                        buildResult.imageName,
-                        buildResult.runtimeUrl,
-                        buildResult.composeProjectName.empty() ? buildResult.remoteContainerName : buildResult.composeProjectName,
-                        compactJson(composeRuntimeSnapshot(buildResult, "remote_compose", "http")),
-                        deploymentId
-                    );
-                    LogWebSocketController::broadcastStatus(deploymentId, "running");
-                } else if (buildResult.runtimeProvider == "remote_docker") {
-                    updateTxn.exec_params(
-                        "UPDATE deployments "
-                        "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'remote_docker', "
-                        "runtime_provider = 'remote_docker', remote_container_name = $4, runtime_snapshot = $5::jsonb, updated_at = NOW() "
-                        "WHERE id = $6",
-                        buildResult.logs,
-                        buildResult.imageName,
-                        buildResult.runtimeUrl,
-                        buildResult.remoteContainerName,
-                        compactJson(runtimeSnapshot("remote_docker", buildResult.imageName, buildResult.runtimeUrl, "remote_docker", 1, 3000, "http")),
-                        deploymentId
-                    );
-                    LogWebSocketController::broadcastStatus(deploymentId, "running");
-                } else if (buildResult.runtimeProvider == "local_compose") {
-                    updateTxn.exec_params(
-                        "UPDATE deployments "
-                        "SET status = 'running', logs = $1, image_name = $2, runtime_url = $3, runtime_exposure = 'local_compose', "
-                        "runtime_provider = 'local_compose', remote_container_name = $4, desired_replicas = 1, runtime_paused = FALSE, runtime_snapshot = $5::jsonb, updated_at = NOW() "
-                        "WHERE id = $6",
-                        buildResult.logs,
-                        buildResult.imageName,
-                        buildResult.runtimeUrl,
-                        buildResult.composeProjectName.empty() ? buildResult.remoteContainerName : buildResult.composeProjectName,
-                        compactJson(composeRuntimeSnapshot(buildResult, "local_compose", normalizeRuntimeScheme(runtimeScheme))),
-                        deploymentId
-                    );
-                    LogWebSocketController::broadcastStatus(deploymentId, "running");
-                } else {
-                    updateTxn.exec_params(
-                        "UPDATE deployments "
-                        "SET status = 'built', logs = $1, image_name = $2, runtime_snapshot = $3::jsonb, updated_at = NOW() "
-                        "WHERE id = $4",
-                        buildResult.logs,
-                        buildResult.imageName,
-                        compactJson(runtimeSnapshot("local_docker", buildResult.imageName, "", "docker", 0, 3000, normalizeRuntimeScheme(runtimeScheme))),
-                        deploymentId
-                    );
-                    LogWebSocketController::broadcastStatus(deploymentId, "built");
-                }
-            } else {
-                std::string failureLogs = buildResult.logs.empty() ? buildResult.error : buildResult.logs;
-                if (!buildResult.error.empty() && failureLogs.find(buildResult.error) == std::string::npos) {
-                    failureLogs += "\nFailure reason: " + buildResult.error + "\n";
-                }
-                updateTxn.exec_params(
-                    "UPDATE deployments SET status = 'failed', logs = $1, updated_at = NOW() WHERE id = $2",
-                    failureLogs,
-                    deploymentId
-                );
-                LogWebSocketController::broadcastStatus(deploymentId, "failed");
-            }
-            updateTxn.commit();
-            DeploymentJournal::broadcastSummary(deploymentId);
-        } catch (const std::exception& e) {
-            spdlog::error("Background build error for {}: {}", deploymentId, e.what());
-            try {
-                auto& db = Database::getInstance();
-                auto connUpdate = db.getConnection();
-                pqxx::work updateTxn(*connUpdate);
-                updateTxn.exec_params(
-                    "UPDATE deployments SET status = 'failed', logs = $1, updated_at = NOW() WHERE id = $2",
-                    std::string("Background build error: ") + e.what(),
-                    deploymentId
-                );
-                updateTxn.commit();
-                LogWebSocketController::broadcastStatus(deploymentId, "failed");
-                DeploymentJournal::broadcastSummary(deploymentId);
-            } catch (const std::exception& dbError) {
-                spdlog::error("Failed to persist env auto-build failure for {}: {}", deploymentId, dbError.what());
-            }
-        }
-    });
-
-    buildThread.detach();
 }
 
 bool isSshConnectionAccessible(pqxx::transaction_base& txn,
@@ -1744,7 +1404,13 @@ void ProjectController::listProjects(
                 "SELECT p.id, p.user_id, p.organization_id, COALESCE(o.name, '') AS organization_name, p.name, p.description, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
                 "p.application_template_id, p.application_config::text AS application_config, "
                 "p.execution_mode, p.remote_connection_id, p.remote_runtime_type, p.remote_k8s_exposure, p.runtime_scheme, p.local_https_enabled, p.default_cluster_id, p.status, p.created_at, "
-                "(SELECT COUNT(*)::int FROM project_env_vars pe WHERE pe.project_id = p.id) AS env_var_count "
+                "(SELECT COUNT(*)::int FROM project_env_vars pe WHERE pe.project_id = p.id) AS env_var_count, "
+                "(SELECT jsonb_build_object('id',d.id,'project_id',d.project_id,'status',d.status,'created_at',d.created_at, "
+                "'ci_required',d.ci_required,'ci_status',d.ci_status,'runtime_snapshot',jsonb_build_object( "
+                "'runtime_verification',jsonb_build_object('verified',d.runtime_snapshot->'runtime_verification'->'verified', "
+                "'workflow_verified',d.runtime_snapshot->'runtime_verification'->'workflow_verified'), "
+                "'routed_verification',jsonb_build_object('verified',d.runtime_snapshot->'routed_verification'->'verified')))::text "
+                "FROM deployments d WHERE d.project_id=p.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1) AS latest_deployment "
                 "FROM projects p "
                 "LEFT JOIN organizations o ON o.id = p.organization_id "
                 "WHERE has_project_access(p.id, $1) AND p.organization_id = $2::uuid "
@@ -1755,7 +1421,13 @@ void ProjectController::listProjects(
                 "SELECT p.id, p.user_id, p.organization_id, COALESCE(o.name, '') AS organization_name, p.name, p.description, p.repo_url, p.github_pat, p.source_type, p.ssh_connection_id, p.source_path, "
                 "p.application_template_id, p.application_config::text AS application_config, "
                 "p.execution_mode, p.remote_connection_id, p.remote_runtime_type, p.remote_k8s_exposure, p.runtime_scheme, p.local_https_enabled, p.default_cluster_id, p.status, p.created_at, "
-                "(SELECT COUNT(*)::int FROM project_env_vars pe WHERE pe.project_id = p.id) AS env_var_count "
+                "(SELECT COUNT(*)::int FROM project_env_vars pe WHERE pe.project_id = p.id) AS env_var_count, "
+                "(SELECT jsonb_build_object('id',d.id,'project_id',d.project_id,'status',d.status,'created_at',d.created_at, "
+                "'ci_required',d.ci_required,'ci_status',d.ci_status,'runtime_snapshot',jsonb_build_object( "
+                "'runtime_verification',jsonb_build_object('verified',d.runtime_snapshot->'runtime_verification'->'verified', "
+                "'workflow_verified',d.runtime_snapshot->'runtime_verification'->'workflow_verified'), "
+                "'routed_verification',jsonb_build_object('verified',d.runtime_snapshot->'routed_verification'->'verified')))::text "
+                "FROM deployments d WHERE d.project_id=p.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1) AS latest_deployment "
                 "FROM projects p "
                 "LEFT JOIN organizations o ON o.id = p.organization_id "
                 "WHERE has_project_access(p.id, $1) "
@@ -1766,7 +1438,14 @@ void ProjectController::listProjects(
 
         Json::Value projects(Json::arrayValue);
         for (const auto& row : result) {
-            projects.append(projectRowToJson(row));
+            Json::Value project = projectRowToJson(row);
+            project["latest_deployment"] = Json::Value();
+            if (!row["latest_deployment"].is_null()) {
+                Json::CharReaderBuilder reader; std::string errors;
+                std::istringstream input(row["latest_deployment"].as<std::string>());
+                Json::parseFromStream(reader, input, &project["latest_deployment"], &errors);
+            }
+            projects.append(project);
         }
 
         Json::Value resp_body;
@@ -2277,12 +1956,17 @@ void ProjectController::updateProject(
         std::string autoBuildDeploymentId;
         if (envChanged && hasLatestDeployment) {
             auto autoBuildRows = txn.exec_params(
-                "INSERT INTO deployments (project_id, version, commit_hash, status, logs) "
-                "VALUES ($1, $2, $3, 'queued', 'Environmental variables changed. Deployment queued for background worker.\n') "
+                "INSERT INTO deployments (project_id, version, commit_hash, environment_id, source_artifact_id, branch, commit_sha, trigger_source, ci_required, ci_status, status, logs) "
+                "SELECT d.project_id, $2, d.commit_hash, d.environment_id, d.source_artifact_id, d.branch, d.commit_sha, 'environment_update', "
+                "d.ci_required OR (p.source_type='github' AND COALESCE(e.require_ci,FALSE)), "
+                "CASE WHEN d.ci_required OR (p.source_type='github' AND COALESCE(e.require_ci,FALSE)) THEN 'pending' ELSE 'not_required' END, "
+                "'queued', 'Environment variables changed. Deployment queued for background worker.\n' "
+                "FROM deployments d JOIN projects p ON p.id=d.project_id LEFT JOIN project_environments e ON e.id=d.environment_id "
+                "WHERE d.id=$3::uuid AND d.project_id=$1 "
                 "RETURNING id",
                 id,
-                latestVersion.empty() ? "v1.0.0" : latestVersion,
-                latestCommitHash
+                "release-" + drogon::utils::getUuid(),
+                latestDeploymentRows[0]["id"].as<std::string>()
             );
             autoBuildDeploymentId = autoBuildRows[0]["id"].as<std::string>();
         }
@@ -2468,6 +2152,144 @@ void ProjectController::deleteProject(
         resp->setStatusCode(drogon::k500InternalServerError);
         callback(resp);
     }
+}
+
+void ProjectController::inspectStack(const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+    inspectStackSource(req, std::move(callback), "");
+}
+
+void ProjectController::getStack(const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& id) {
+    inspectStackSource(req, std::move(callback), id);
+}
+
+void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
+    std::function<void(const drogon::HttpResponsePtr&)>&& callback, const std::string& projectId) {
+    const auto userId = extractUserId(req);
+    if (userId.empty()) {
+        Json::Value error; error["error"] = "Unauthorized";
+        auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+        response->setStatusCode(drogon::k401Unauthorized); callback(response); return;
+    }
+    BlockingTaskRunner::run([req, callback = std::move(callback), userId, projectId]() mutable {
+        Json::Value details(Json::objectValue);
+        auto respond = [&](const Json::Value& stack) {
+            Json::Value payload; payload["stack"] = stack;
+            if (!projectId.empty()) payload["details"] = details;
+            callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+        };
+        try {
+            Json::Value source = req->getJsonObject() ? *req->getJsonObject() : Json::Value(Json::objectValue);
+            std::string pat;
+            if (!projectId.empty()) {
+                auto connection = Database::getInstance().getConnection(); pqxx::work txn(*connection);
+                auto rows = txn.exec_params(
+                    "SELECT p.source_type, p.repo_url, p.github_pat, p.source_path, p.ssh_connection_id, p.application_template_id, "
+                    "p.application_config::text AS application_config, p.execution_mode, p.remote_runtime_type, p.remote_k8s_exposure, "
+                    "p.runtime_scheme, p.created_at, p.updated_at, o.name AS workspace, s.name AS source_server, r.name AS runtime_server, "
+                    "(SELECT COUNT(*)::int FROM project_env_vars v WHERE v.project_id=p.id) AS variables "
+                    "FROM projects p LEFT JOIN organizations o ON o.id=p.organization_id "
+                    "LEFT JOIN ssh_connections s ON s.id=p.ssh_connection_id "
+                    "LEFT JOIN ssh_connections r ON r.id=p.remote_connection_id "
+                    "WHERE p.id=$1 AND has_project_access(p.id,$2)", projectId, userId);
+                if (rows.empty()) {
+                    Json::Value error; error["error"] = "Project not found";
+                    auto response = drogon::HttpResponse::newHttpJsonResponse(error);
+                    response->setStatusCode(drogon::k404NotFound); callback(response); return;
+                }
+                const auto& row = rows[0];
+                for (const auto& key : {"source_type", "repo_url", "source_path", "ssh_connection_id", "application_template_id"})
+                    source[key] = row[key].is_null() ? "" : row[key].as<std::string>();
+                for (const auto& key : {"workspace", "source_server", "runtime_server", "source_type", "repo_url", "source_path", "application_template_id",
+                        "execution_mode", "remote_runtime_type", "remote_k8s_exposure", "runtime_scheme", "created_at", "updated_at"})
+                    details[key] = row[key].is_null() ? "" : row[key].as<std::string>();
+                details["variables"] = row["variables"].as<int>();
+                if (!row["github_pat"].is_null()) pat = TokenCrypto::decrypt(row["github_pat"].as<std::string>());
+                Json::CharReaderBuilder builder; std::string errors;
+                std::istringstream stream(row["application_config"].is_null() ? "{}" : row["application_config"].as<std::string>());
+                Json::parseFromStream(builder, stream, &source["application_config"], &errors);
+                if (source["application_config"]["image"].isString()) details["image"] = source["application_config"]["image"];
+                if (source["application_config"]["template_name"].isString()) details["preset"] = source["application_config"]["template_name"];
+                // Only typed, public application fields reach the details modal.
+                for (const auto& key : {"port", "host_port", "container_port"}) {
+                    const auto value = source["application_config"].get(key, "").asString();
+                    if (!value.empty() && value.size() <= 5 && value.find_first_not_of("0123456789") == std::string::npos) details[key] = value;
+                }
+                auto environments = txn.exec_params(
+                    "SELECT e.name, e.branch, e.auto_deploy, e.require_ci, e.cleanup_previous_on_success, "
+                    "(SELECT COUNT(*)::int FROM project_environment_env_vars v WHERE v.environment_id=e.id) AS variables "
+                    "FROM project_environments e WHERE e.project_id=$1 ORDER BY (e.name='production') DESC, e.created_at", projectId);
+                if (!environments.empty()) source["branch"] = environments[0]["branch"].as<std::string>();
+                details["environments"] = Json::arrayValue;
+                for (const auto& environment : environments) {
+                    Json::Value item;
+                    item["name"] = environment["name"].as<std::string>(); item["branch"] = environment["branch"].as<std::string>();
+                    item["auto_deploy"] = environment["auto_deploy"].as<bool>(); item["require_ci"] = environment["require_ci"].as<bool>();
+                    item["cleanup_previous_on_success"] = environment["cleanup_previous_on_success"].as<bool>(); item["variables"] = environment["variables"].as<int>();
+                    details["environments"].append(item);
+                }
+                txn.commit();
+            } else {
+                pat = source.get("github_pat", "").asString();
+            }
+            const auto type = source.get("source_type", "github").asString();
+            if (type == "application") {
+                const auto* preset = ApplicationCatalog::findTemplate(source.get("application_template_id", "").asString());
+                const auto image = source["application_config"].get("image", preset ? preset->image : "").asString();
+                if (!projectId.empty()) {
+                    details["image"] = image;
+                    if (details.get("preset", "").asString().empty() && preset) details["preset"] = preset->name;
+                    if (preset) {
+                        if (details.get("container_port", "").asString().empty() && preset->primaryPort > 0)
+                            details["container_port"] = std::to_string(preset->primaryPort);
+                        details["application_fields"] = Json::arrayValue;
+                        for (const auto& field : preset->fields) {
+                            if (field.secret || field.type == "password") continue;
+                            const auto value = source["application_config"]["fields"][field.id].get("value",
+                                source["application_config"].get(field.id,
+                                    source["application_config"].get(field.envKey, field.defaultValue)));
+                            if (!value.isString() && !value.isNumeric()) continue;
+                            if (value.asString().empty()) continue;
+                            Json::Value item; item["label"] = field.label; item["value"] = value.asString();
+                            details["application_fields"].append(item);
+                        }
+                    }
+                }
+                respond(ProjectStackInspector::application(image)); return;
+            }
+            if (type == "github") {
+                if (pat.empty()) pat = loadConnectedGitHubToken(userId);
+                respond(ProjectStackInspector::github(source.get("repo_url", "").asString(), pat, source.get("branch", "HEAD").asString())); return;
+            }
+            if (type == "local") {
+                std::filesystem::path root; std::string error;
+                if (!resolveAllowedLocalPath(source.get("source_path", "").asString(), root, error)) {
+                    respond(ProjectStackInspector::unavailable("Source folder is unavailable or outside the allowed local roots.")); return;
+                }
+                respond(ProjectStackInspector::local(root)); return;
+            }
+            if (type == "ssh") {
+                auto connection = Database::getInstance().getConnection(); pqxx::work txn(*connection);
+                auto rows = txn.exec_params(
+                    "SELECT COALESCE(connection_type,'ssh') AS remote_connection_type, host AS remote_host, port AS remote_port, "
+                    "username AS remote_username, auth_type AS remote_auth_type, password_encrypted AS remote_password_encrypted, "
+                    "private_key_encrypted AS remote_private_key_encrypted, known_hosts_entry AS remote_known_hosts_entry "
+                    "FROM ssh_connections WHERE id=$1 AND user_id=$2", source.get("ssh_connection_id", "").asString(), userId);
+                if (rows.empty()) { respond(ProjectStackInspector::unavailable("Select a saved server you can access to inspect this source.")); return; }
+                auto config = rowToRemoteRuntimeConfig(rows[0]); txn.commit();
+                const auto path = source.get("source_path", "").asString(); SshService ssh;
+                if (!ssh.isValidRemotePath(path)) { respond(ProjectStackInspector::unavailable("Select an absolute source folder on the server.")); return; }
+                auto inspection = ssh.runRemoteCommand(config, path, ProjectStackInspector::remoteCommand(), 15);
+                respond(inspection.success ? ProjectStackInspector::remoteOutput(inspection.output)
+                    : ProjectStackInspector::unavailable("Remote source could not be inspected. Check the server connection and Python 3 availability.")); return;
+            }
+            respond(ProjectStackInspector::unavailable("Stack inspection is not available for this source type."));
+        } catch (const std::exception&) {
+            // Exception messages can contain remote output or credentials.
+            respond(ProjectStackInspector::unavailable("Stack inspection could not finish; you can still create or use the project."));
+        }
+    });
 }
 
 void ProjectController::browseLocalSources(

@@ -16,6 +16,47 @@ from app.browser_driver import browser_manager
 
 
 class StreamTests(unittest.IsolatedAsyncioTestCase):
+    def test_manual_repair_manifest_env_files_remain_key_only_before_model_context(self):
+        excerpts={'.env.example':'DATABASE_URL=private-example-value\nexport APP_MODE=private-mode\n',
+                  'config/production.env':'SERVICE_HOST=private-service-host\n',
+                  'Dockerfile':'FROM python:3.11-slim'}
+        request=AgentRequest(source={'manifest_excerpts':dict(excerpts)},manifest_excerpts=dict(excerpts))
+        observed=request.model_dump_json()
+        for value in ('private-example-value','private-mode','private-service-host'):
+            self.assertNotIn(value,observed)
+        for key in ('DATABASE_URL','APP_MODE','SERVICE_HOST'):
+            self.assertIn(key,observed)
+        self.assertEqual(request.source['manifest_excerpts']['Dockerfile'],excerpts['Dockerfile'])
+
+    async def test_manual_repair_preserves_stream_failure_as_json_error(self):
+        from app.main import run_agentic_repair
+        async def frames(value):
+            yield 'data: '+json.dumps({'type':'error','message':'Execution authorization was revoked'})+'\n\n'
+        with patch('app.main.recover_session_context',new=AsyncMock()),patch('app.main.stream_agent_reply',new=frames):
+            result=await run_agentic_repair(AgentRequest(message='Repair deployment'))
+        self.assertEqual(result.status,'error')
+        self.assertEqual(result.error,'Execution authorization was revoked')
+        self.assertFalse(result.structured_output['verification']['verified'])
+
+    async def test_manual_repair_returns_serializable_unverified_result_without_a_rebuild(self):
+        from app.main import run_agentic_repair, AgentResponse
+        request=AgentRequest(message='Repair deployment',model_mode='fast')
+        async def frames(value):
+            self.assertEqual(value.model_mode,'thinking')
+            self.assertEqual(value.agent_access_mode,'full_access')
+            self.assertFalse(value.allow_agent_questions)
+            yield 'data: '+json.dumps({'type':'done','content':'No verified job was produced.'})+'\n\n'
+        with patch('app.main.recover_session_context',new=AsyncMock()),patch('app.main.stream_agent_reply',new=frames):
+            result=await run_agentic_repair(request)
+        self.assertEqual(result.status,'unverified')
+        self.assertFalse(result.structured_output['verification']['verified'])
+        self.assertEqual(AgentResponse.model_validate_json(result.model_dump_json()).status,'unverified')
+
+    def test_sre_recovery_uses_supported_high_reasoning_mode(self):
+        for fields in ({'workflow_type': 'sre_incident'}, {'command': '/repair'}, {'runtime': {'incident_id': 'fixture'}}):
+            self.assertEqual(AgentRequest(message='Repair the deployment', model_mode='fast', **fields).model_mode, 'thinking')
+        self.assertEqual(AgentRequest(message='Hello', model_mode='fast').model_mode, 'fast')
+
     async def asyncSetUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -23,6 +64,130 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
             'STACKPILOT_AGENT_RUN_DB':str(Path(directory.name)/'runs.sqlite3'),
             'STACKPILOT_AI_SERVICE_TOKEN':'fixture-approval-signing-key',
         }))
+
+    async def test_ambiguous_widget_pauses_for_information_without_a_permission_card(self):
+        async def execute(name,args,user_id):
+            if name=='browser_interact':
+                return {'status':'needs_information','action':'choose_option','question':'Which station?',
+                        'choices':['Mumbai Central','Mumbai East']}
+            return {'status':'observed','interactive_elements':[]}
+        _,events=await self.run_scripted_browser([[('browser_interact',{'action':'choose_option','element_id':7,'option_text':'Mumbai'})]],
+            execute,message='Find a train from Mumbai to Lucknow')
+        parsed=[json.loads(e.removeprefix('data: ').strip()) for e in events if e.startswith('data: ')]
+        question=next(e for e in parsed if e['type']=='agent_question')
+        self.assertEqual(question['fields'][0]['options'],['Mumbai Central','Mumbai East'])
+        self.assertFalse(any(e['type']=='permission_request' for e in parsed))
+        self.assertEqual(next(e for e in reversed(parsed) if e['type']=='done')['status'],'waiting_for_user_input')
+
+    async def test_fast_browser_serialized_requests_enable_reasoning_for_recovery_only(self):
+        attempts=0
+        async def execute(name,args,user_id):
+            nonlocal attempts
+            if name=='browser_interact':
+                attempts+=1
+                return {'status':'failed' if attempts==1 else 'passed','action':'click',
+                        **({'error':'Target replaced; inspect current controls'} if attempts==1 else {})}
+            return {'status':'observed','interactive_elements':[]}
+        requests,_=await self.run_scripted_browser([
+            [('browser_interact',{'action':'click','element_id':7})],
+            [('browser_interact',{'action':'click','element_id':8})]],execute,
+            model='nvidia/nemotron-3-super-120b-a12b')
+        self.assertEqual([request['chat_template_kwargs']['enable_thinking'] for request in requests[:3]],[False,True,False])
+
+    async def test_recovery_reasoning_is_bounded_even_when_it_chooses_a_read(self):
+        attempts=0
+        async def execute(name,args,user_id):
+            nonlocal attempts
+            if name=='browser_interact':
+                attempts+=1
+                return {'status':'failed' if attempts==1 else 'passed','action':'click',
+                    **({'error':'Workflow was dismissed'} if attempts==1 else {})}
+            return {'status':'observed','action':'observe','interactive_elements':[]}
+        requests,_=await self.run_scripted_browser([
+            [('browser_interact',{'action':'click','element_id':7})],
+            [('browser_observe',{'query':'Sign in','scope':'viewport'})],
+            [('browser_interact',{'action':'click','element_id':8})]],execute,
+            model='nvidia/nemotron-3-super-120b-a12b',message='Sign in to the website')
+        self.assertEqual([r['chat_template_kwargs']['enable_thinking'] for r in requests[:4]],
+                         [False,True,False,False])
+
+    async def test_system_one_choices_use_the_same_permission_gate(self):
+        control = {'id': 7, 'tag': 'button', 'type': 'submit', 'text': 'Send',
+            'label': 'Send', 'form': True, 'url': 'https://fixture.invalid/'}
+        session = SimpleNamespace(session_id='decision-permission-fixture', is_connected=True,
+            current_url=control['url'], page_title='Fixture', interactive_elements=[control],
+            console_logs=[], evaluate=AsyncMock(return_value=control))
+        executed = []
+        async def execute(name, args, user_id):
+            executed.append(name)
+            return {'status': 'observed', 'interactive_elements': [control]}
+        with patch('app.browser_testing.decisions.SystemOneDecider.choose',
+                AsyncMock(return_value={'action': 'click', 'element_id': 7})):
+            requests, events = await self.run_scripted_browser([], execute, session=session,
+                message='Send the requested message', user_id='owner')
+        parsed = [json.loads(e[6:]) for e in events if e.startswith('data: ')]
+        self.assertTrue(any(e['type'] == 'permission_request' for e in parsed))
+        self.assertNotIn('browser_interact', executed)
+        self.assertEqual(requests, [])
+
+    async def test_cycling_observations_require_search_and_ignored_recovery_stops(self):
+        executed=[]
+        async def execute(name,args,user_id):
+            executed.append((name,args))
+            return {'status':'observed','action':'observe','interactive_elements':[]}
+        requests,events=await self.run_scripted_browser([
+            [('browser_observe',{})] for _ in range(12)],execute,message='Sign in to the website')
+        self.assertLessEqual(len(executed),4)
+        self.assertLess(len(requests),12)
+        parsed=[json.loads(e.removeprefix('data: ').strip()) for e in events if e.startswith('data: ')]
+        self.assertTrue(any((e.get('result',{}).get('recovery') or {}).get('reason')=='observation_cycle'
+                            for e in parsed if e['type']=='tool_result'))
+        last=next(e for e in reversed(parsed) if e['type']=='done')
+        self.assertFalse(last.get('verified',False))
+        recovery_request=next(r for r in reversed(requests) if r.get('tools'))
+        offered=next(t['function'] for t in recovery_request['tools'] if t['function']['name']=='browser_observe')
+        self.assertIn('query',offered['parameters']['required'])
+
+    async def test_repeated_observation_timeouts_stop_without_a_false_success(self):
+        executed=[]
+        async def execute(name,args,user_id):
+            executed.append(name)
+            return {'status':'unverified','action':'observe','interactive_elements':[],
+                    'reason':'Fresh observation unavailable'}
+        requests,events=await self.run_scripted_browser([
+            [('browser_observe',{})] for _ in range(12)],execute,message='Sign in to the website')
+        self.assertLessEqual(len(executed),4)
+        self.assertLess(len(requests),12)
+        parsed=[json.loads(e.removeprefix('data: ').strip()) for e in events if e.startswith('data: ')]
+        self.assertTrue(any((e.get('result',{}).get('recovery') or {}).get('reason')=='observation_cycle'
+                            for e in parsed if e['type']=='tool_result'))
+        self.assertFalse(next(e for e in reversed(parsed) if e['type']=='done').get('verified',False))
+
+    async def test_text_model_site_audit_does_not_capture_each_step(self):
+        executed=[]
+        async def execute(name,args,user_id):
+            executed.append((name,args))
+            return {'status':'observed','action':'site_audit','cases':[],
+                    'coverage':{'controls_requiring_review':[]}}
+        await self.run_scripted_browser([[('browser_audit_site',{'ui_control_ids':[]})],[]],
+            execute,model='nvidia/nemotron-3-super-120b-a12b')
+        audit=next(args for name,args in executed if name=='browser_audit_site')
+        self.assertIs(audit['include_frame'],False)
+
+    async def test_new_explicit_site_rebinds_reused_browser_navigation_scope(self):
+        session=SimpleNamespace(session_id='site-switch',is_connected=True,
+            current_url='https://www.goibibo.com/flights/',
+            target_url='https://previous.example/',
+            skg=SimpleNamespace(origin_url='https://previous.example/'),
+            page_title='Flights',interactive_elements=[],console_logs=[])
+        async def execute(name,args,user_id):
+            return {'status':'observed','interactive_elements':[]}
+        with patch.object(browser_manager,'get_or_create_session',AsyncMock()) as open_session:
+            await self.run_scripted_browser([[]],execute,session=session,
+                message='Test this Goibibo page')
+        self.assertEqual(session.target_url,'https://www.goibibo.com/flights/')
+        self.assertEqual(session.skg.origin_url,session.target_url)
+        open_session.assert_not_awaited()
 
     @contextmanager
     def signed_fixture_approvals(self):
@@ -42,7 +207,7 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
              patch('app.agent_runtime.approval.issue',side_effect=create), \
              patch('app.agent_runtime.approval.consume',side_effect=consume):
             yield issued
-    async def run_scripted_browser(self, turns, execute, model="fixture-vision", mode="fast", message="test this website", on_event=None, session=None, approval_token=None, user_id='', cancel_event=None):
+    async def run_scripted_browser(self, turns, execute, model="fixture-vision", mode="fast", message="test this website", on_event=None, session=None, approval_token=None, user_id='', cancel_event=None, request_options=None):
         requests = []
         def handler(request):
             requests.append(json.loads(request.content))
@@ -61,7 +226,8 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
                                   session_id="scripted-browser", interactive_elements=[], console_logs=[])
         real_client = httpx.AsyncClient
         request = AgentRequest(message=message, custom_url=session.current_url,
-                               session_id=session.session_id, model=model, model_mode=mode,approval_token=approval_token,user_id=user_id)
+                               session_id=session.session_id, model=model, model_mode=mode,approval_token=approval_token,user_id=user_id,
+                               **(request_options or {}))
         with patch.dict(browser_manager.sessions, {session.session_id:session}), \
              patch("app.main.recover_session_context", AsyncMock()), \
              patch("app.main.provider_config", return_value=("nvidia_nim", "https://provider.invalid", "fixture-key", model)), \
@@ -73,6 +239,39 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
                 if on_event:
                     on_event(event)
         return requests, events
+
+    async def test_full_access_never_ask_policy_reaches_audit_and_executes_without_cards(self):
+        control={'id':7,'tag':'button','type':'submit','text':'Send','label':'Send',
+                 'form':True,'url':'https://fixture.invalid/'}
+        session=SimpleNamespace(session_id='autonomous-fixture',is_connected=True,
+            current_url=control['url'],page_title='Fixture',interactive_elements=[control],console_logs=[],
+            evaluate=AsyncMock(return_value=control))
+        executed=[]
+        async def execute(name,args,user_id):
+            executed.append((name,args))
+            if name=='browser_audit_site':
+                self.assertIs(args['autonomous'],True)
+                self.assertEqual(session.agent_access_mode,'full_access')
+                self.assertFalse(session.allow_agent_questions)
+                return {'status':'observed','cases':[],'coverage':{'controls_requiring_review':[]}}
+            return {'status':'passed','action':args.get('action','observe'),
+                    'verification':{'verified':True,'effect_type':'dom_change'}}
+        requests,events=await self.run_scripted_browser([
+            [('ask_user_question',{'question':'Which ordinary option?','fields':[{'id':'choice','options':['First','Second']}]}),
+             ('browser_audit_site',{'ui_control_ids':[],'autonomous':False})],
+            [('browser_interact',{'action':'click','element_id':7})]],execute,session=session,
+            request_options={'runtime':{'permissions':{'agent_access_mode':'full_access','allow_agent_questions':False}}})
+        self.assertTrue(any(name=='browser_interact' for name,_ in executed))
+        self.assertFalse(any('"type": "agent_question"' in event or '"type": "permission_request"' in event for event in events))
+        self.assertTrue(any('"status": "needs_information"' in event and '"selected": {}' in event for event in events))
+        prompt=requests[0]['messages'][0]['content']
+        self.assertIn('Autonomous (Never ask) is enabled',prompt)
+        self.assertNotIn('executor will show an action-scoped permission card',prompt)
+
+    def test_explicit_custom_url_does_not_override_runtime_never_ask(self):
+        request=AgentRequest(custom_url='https://fixture.invalid/',
+            runtime={'permissions':{'allow_agent_questions':False}})
+        self.assertFalse(request.allow_agent_questions)
 
     async def test_nested_step_reaches_viewer_before_outer_tool_finishes(self):
         from app.tool_progress import publish_step
@@ -133,6 +332,114 @@ class StreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(executed),1)
         self.assertEqual(executed[0][0],'browser_interact_batch')
         self.assertTrue(any('"status": "verified"' in event for event in events))
+
+    async def test_bare_test_does_not_finish_on_about_button_label(self):
+        control = {'id': 2739558384781445, 'tag': 'button', 'text': 'About', 'is_in_viewport': True}
+        session = SimpleNamespace(session_id='about-audit-fixture', is_connected=True,
+            current_url='https://fixture.invalid/', page_title='Portfolio', interactive_elements=[control], console_logs=[])
+        spec = {'kind': 'text', 'element_id': control['id'], 'expected': 'About'}
+        batch = {'actions': [{'action': 'assert', 'purpose': 'outcome', 'expectations': [spec]}], 'complete_task': True}
+        executed = []
+        async def execute(name, args, user_id):
+            executed.append(name)
+            check = {'action': 'assert', 'status': 'passed', 'purpose': 'outcome',
+                'verification': {'verified': True, 'effect_type': 'assertion'},
+                'assertions': [{'status': 'passed', 'expectation': spec, 'actual': 'About'}]}
+            if name == 'browser_interact_batch':
+                return {'status': 'passed', 'action': 'batch', 'completion_verified': True, 'results': [check]}
+            if name == 'browser_assert':
+                return check
+            return {'status': 'observed', 'action': 'site_audit', 'cases': [],
+                'coverage': {'controls_requiring_review': []}}
+        requests, events = await self.run_scripted_browser([
+            [('browser_interact_batch', batch)],
+            [('browser_assert', {'purpose': 'outcome', 'expectations': [spec]})],
+            [('browser_audit_site', {'ui_control_ids': []})]], execute, message='test', session=session)
+        parsed = [json.loads(event[6:]) for event in events if event.startswith('data: ')]
+        self.assertIn('browser_audit_site', executed)
+        self.assertIn('broad testing', requests[0]['messages'][0]['content'])
+        batch_result = next(event['result'] for event in parsed if event['type'] == 'tool_result'
+                            and event['name'] == 'browser_interact_batch')
+        self.assertFalse(batch_result['completion_verified'])
+        self.assertEqual(batch_result['results'][0]['purpose'], 'checkpoint')
+        self.assertEqual(next(event for event in reversed(parsed) if event['type'] == 'done')['status'], 'unverified')
+        self.assertFalse(any(event.get('status') == 'verified' for event in parsed))
+
+    async def test_targeted_about_label_cannot_finish_via_batch_or_standalone_check(self):
+        control = {'id': 7, 'tag': 'button', 'text': 'About', 'is_in_viewport': True}
+        session = SimpleNamespace(session_id='about-target-fixture', is_connected=True,
+            current_url='https://fixture.invalid/', page_title='Portfolio', interactive_elements=[control], console_logs=[])
+        spec = {'kind': 'text', 'element_id': 7, 'expected': 'About'}
+        check = {'status': 'passed', 'action': 'assert', 'purpose': 'outcome',
+            'verification': {'verified': True, 'effect_type': 'assertion'},
+            'assertions': [{'status': 'passed', 'expectation': spec, 'actual': 'About'}]}
+        async def execute(name, args, user_id):
+            if name == 'browser_interact_batch':
+                return {'status': 'passed', 'action': 'batch', 'completion_verified': True, 'results': [check]}
+            return check
+        _, events = await self.run_scripted_browser([
+            [('browser_interact_batch', {'actions': [{'action': 'assert', 'purpose': 'outcome', 'expectations': [spec]}], 'complete_task': True})],
+            [('browser_assert', {'expectations': [spec], 'purpose': 'outcome'})]],
+            execute, session=session, message='Open the About section')
+        parsed = [json.loads(event[6:]) for event in events if event.startswith('data: ')]
+        results = [event['result'] for event in parsed if event['type'] == 'tool_result']
+        self.assertEqual(results[0]['verification_state'], 'checkpoint_passed')
+        self.assertEqual(results[1]['purpose'], 'checkpoint')
+        final = next(event for event in reversed(parsed) if event['type'] == 'done')
+        self.assertEqual(final['status'], 'unverified')
+        self.assertIn('unchanged control label', final['content'])
+
+    async def test_real_section_outcome_retains_fast_completion(self):
+        spec = {'kind': 'in_viewport', 'selector': '#about-section'}
+        actions = [{'action': 'assert', 'purpose': 'outcome', 'expectations': [spec]}]
+        async def execute(name, args, user_id):
+            return {'status': 'passed', 'action': 'batch', 'completion_verified': True,
+                'results': [{'status': 'passed', 'action': 'assert', 'purpose': 'outcome',
+                    'verification': {'verified': True, 'effect_type': 'assertion'},
+                    'assertions': [{'status': 'passed', 'expectation': spec, 'actual': {'in_viewport': True}}]}]}
+        requests, events = await self.run_scripted_browser([
+            [('browser_interact_batch', {'actions': actions, 'complete_task': True})]], execute,
+            message='Open the About section')
+        self.assertEqual(len(requests), 1)
+        self.assertTrue(any('"status": "verified"' in event for event in events))
+
+    async def test_continue_recovers_bare_test_scope_from_history(self):
+        async def execute(name, args, user_id):
+            return {'status': 'observed', 'interactive_elements': []}
+        requests, _ = await self.run_scripted_browser([[]], execute, message='continue',
+            request_options={'history': [{'role': 'user', 'content': 'test'}]})
+        self.assertIn('Original goal: test', requests[0]['messages'][0]['content'])
+        self.assertIn('broad testing', requests[0]['messages'][0]['content'])
+
+    async def test_existing_live_tab_initializes_new_task_before_observing(self):
+        session = SimpleNamespace(session_id='fresh-live-task', is_connected=True,
+            current_url='https://fixture.invalid/', page_title='Fixture',
+            interactive_elements=[], console_logs=[], extract_interactive_tree=AsyncMock(),
+            completed_consequential_inputs={'previous-task': True})
+        observed = []
+        async def execute(name, args, user_id):
+            observed.append(name)
+            return {'status': 'observed', 'interactive_elements': []}
+        requests, events = await self.run_scripted_browser([[]], execute, session=session,
+            message='Test the website and rate it')
+        self.assertTrue(requests, 'Live page must reach the planner instead of interrupting at setup')
+        self.assertIn('browser_observe', observed)
+        self.assertEqual(session.completed_consequential_inputs, {})
+        self.assertFalse(any(json.loads(event[6:]).get('type') == 'error' for event in events))
+
+    async def test_existing_live_tab_preserves_completed_inputs_on_continue(self):
+        completed = {'already-submitted': True}
+        session = SimpleNamespace(session_id='continue-live-task', is_connected=True,
+            current_url='https://fixture.invalid/', page_title='Fixture',
+            interactive_elements=[], console_logs=[], extract_interactive_tree=AsyncMock(),
+            completed_consequential_inputs=completed)
+        async def execute(name, args, user_id):
+            return {'status': 'observed', 'interactive_elements': []}
+        requests, events = await self.run_scripted_browser([[]], execute, session=session,
+            message='continue', request_options={'history': [{'role': 'user', 'content': 'Test this website'}]})
+        self.assertTrue(requests)
+        self.assertIs(session.completed_consequential_inputs, completed)
+        self.assertFalse(any(json.loads(event[6:]).get('type') == 'error' for event in events))
 
     async def test_incomplete_text_tool_call_does_not_execute(self):
         executed = []

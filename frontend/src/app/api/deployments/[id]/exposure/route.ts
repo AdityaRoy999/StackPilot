@@ -16,7 +16,7 @@ export async function POST(
     const projectName = body.project_name || "app";
     const port = body.port || 3000;
 
-    const backendBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
+    const backendBaseUrl = `${process.env.STACKPILOT_BACKEND_INTERNAL_URL || "http://127.0.0.1:8090"}/api/v1`;
     const cookieHeader = request.headers.get("cookie") || "";
     const authHeader = request.headers.get("authorization") || "";
     const originHeader = request.headers.get("origin") || "";

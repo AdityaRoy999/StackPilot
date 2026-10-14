@@ -2,7 +2,78 @@
 @import "tw-animate-css";
 @import "./shadcn-variants.css";
 @import "@xterm/xterm/css/xterm.css";
+@import "./studio.css";
 
+/* Native disclosures keep keyboard/assistive support while animating in both directions. */
+@supports (interpolate-size: allow-keywords) {
+  details { interpolate-size: allow-keywords; }
+  details::details-content {
+    display: flow-root;
+    block-size: 0;
+    overflow: clip;
+    transition: block-size 240ms ease, content-visibility 240ms allow-discrete;
+  }
+  details[open]::details-content { block-size: auto; }
+}
+/* Height animation can briefly constrain fitting content. Keep scrolling active
+   without flashing an indicator; real overflow shows its scrollbar afterward. */
+[data-dialog-resizing] [data-dialog-scroll] { scrollbar-width: none; }
+[data-dialog-resizing] [data-dialog-scroll]::-webkit-scrollbar { display: none; }
+:is(button, a[href], summary, select, [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], [role="switch"], [role="checkbox"], input[type="button"], input[type="submit"], input[type="checkbox"], input[type="radio"], label[for]):not(:disabled):not([aria-disabled="true"]) { cursor: pointer !important; }
+.technology-logo { transition: color 180ms ease; }
+.dictation-orb { filter: brightness(0) saturate(100%) invert(40%) sepia(94%) saturate(2874%) hue-rotate(338deg) brightness(101%) contrast(95%); }
+.technology-hover { cursor: pointer; }
+:is(.technology-hover, summary):is(:hover, :focus-visible) .technology-logo { color: var(--technology-color, var(--foreground)); }
+.section-tabs { --section-tab-gap: 16px; gap: var(--section-tab-gap) !important; }
+.section-tabs-stretch { --section-tab-gap: 20px; }
+.section-tabs > :is([data-slot="tabs-trigger"], [data-slot="button"]) { position: relative; }
+.section-tabs > :is([data-slot="tabs-trigger"], [data-slot="button"]):not(:last-child)::before { content: ""; position: absolute; right: calc(var(--section-tab-gap) / -2 - .5px); width: 1px; height: 16px; background: var(--border); pointer-events: none; }
+@media (min-width: 768px) { .section-tabs-stretch { --section-tab-gap: 24px; } }
+@media (max-width: 767px) { .agent-settings-tabs > :nth-child(3n)::before { display: none; } }
+@media (max-width: 639px) { .settings-category-tabs > :nth-child(2n)::before { display: none; } }
+@media (min-width: 640px) and (max-width: 1023px) { .settings-category-tabs > :nth-child(3n)::before { display: none; } }
+.theme-option[data-checked] { background: var(--primary); color: var(--primary-foreground); }
+.chat-action-container { container-type: inline-size; }
+.chat-full-actions { display: none; }
+.chat-overflow-menu { display: inline-flex; }
+@container (min-width: 700px) { .chat-full-actions { display: flex; } .chat-overflow-menu { display: none; } }
+.setup-progress-item { flex: 1; min-width: 0; position: relative; }
+.setup-progress-item:not(:last-child)::after {
+  content: ""; position: absolute; top: 16px; left: calc(50% + 23px); right: calc(-50% + 23px);
+  height: 2px; border-top: 1px dotted transparent; background: linear-gradient(to right, var(--muted-foreground) 50%, transparent 50%) left center / 6px 1px repeat-x; transition: border-color 240ms ease;
+}
+.setup-progress-item[data-connected="true"]::after { border-top-style: solid; border-color: var(--primary); background: none; }
+.setup-progress-outline { position: absolute; inset: -1px; width: calc(100% + 2px); height: calc(100% + 2px); pointer-events: none; }
+.setup-progress-item[data-reached="true"] .setup-progress-outline { display: none; }
+.setup-progress-button { display: flex; width: 100%; min-height: 56px; flex-direction: column; align-items: center; gap: 6px; outline: none; border-radius: 6px; font-size: 12px; color: var(--muted-foreground); }
+.setup-progress-button:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
+.setup-progress-button:disabled { cursor: default; }
+.setup-progress-circle { position: relative; display: grid; place-items: center; width: 32px; height: 32px; flex-shrink: 0; border: 1px dotted transparent; border-radius: 50%; font-family: var(--font-jetbrains-mono), monospace; font-size: 11px; transition: background-color 240ms ease, color 240ms ease; }
+.setup-progress-item[data-reached="true"] .setup-progress-circle { background: var(--primary); color: var(--primary-foreground); border: 1px solid var(--primary); }
+.setup-progress-item[data-reached="true"] .setup-progress-label { color: var(--foreground); font-weight: 600; }
+.setup-progress-compact .setup-progress-button { min-height: 46px; gap: 2px; }
+.setup-progress-compact .setup-progress-circle { width: 28px; height: 28px; }
+.setup-progress-compact .setup-progress-item:not(:last-child)::after { top: 14px; left: calc(50% + 20px); right: calc(-50% + 20px); }
+.project-creation-dialog > [data-slot="dialog-close"] { top: 4px; right: 4px; width: 44px; height: 44px; }
+@media (prefers-reduced-motion: reduce) {
+  details::details-content, .setup-progress-circle, .setup-progress-item::after, .technology-logo { transition: none !important; }
+  [data-slot="dashboard-shell"] .grid { transition-duration: 0ms !important; }
+}
+
+/* Native input is paced by the driver; these compositor effects never delay it. */
+.browser-agent-cursor .browser-cursor-caret { opacity: 0; }
+.browser-agent-cursor .browser-cursor-arrow,
+.browser-agent-cursor .browser-cursor-caret { transition: opacity 120ms ease-out; }
+.browser-agent-cursor[data-typing="true"] .browser-cursor-arrow { opacity: 0; }
+.browser-agent-cursor[data-typing="true"] .browser-cursor-caret { opacity: 1; animation: browser-caret-sway 480ms ease-in-out infinite; transform-origin: 3px 3px; }
+.browser-agent-cursor[data-typing="true"] .browser-cursor-keybeat { animation: browser-keybeat 280ms ease-in-out infinite alternate; transform-origin: 11px 18px; }
+@keyframes browser-caret-sway { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
+@keyframes browser-keybeat { from { opacity: .4; transform: scale(.8); } to { opacity: 1; transform: scale(1.1); } }
+@media (prefers-reduced-motion: reduce) {
+  .browser-agent-cursor .browser-cursor-arrow,
+  .browser-agent-cursor .browser-cursor-caret,
+  .browser-agent-cursor .browser-cursor-keybeat { animation: none !important; transition: none !important; }
+}
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

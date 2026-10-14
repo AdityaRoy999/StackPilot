@@ -109,6 +109,8 @@ class ChatProvider:
         overrides = self.live_overrides.get(run['id']) or configured.get('provider_overrides') or {}
         provider, base, key, model = provider_config(settings.get('provider') or configured.get('provider'),
             settings.get('model') or configured.get('model'), settings.get('model_mode', 'fast'), overrides)
+        from .models import select_repository_planner
+        model,_=select_repository_planner(provider,model,settings,[os.getenv('NVIDIA_NIM_AGENT_PLANNER_MODEL',''),os.getenv('NVIDIA_NIM_BROWSER_PLANNER_MODEL','')])
         if not key:
             raise RuntimeError('Selected model provider has no configured credential')
         payload = chat_payload(model, messages=bounded_context(messages), model_mode=settings.get('model_mode', 'fast'), tools=tools,

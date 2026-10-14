@@ -159,112 +159,23 @@ class PushdownNavigationAutomaton:
         """Returns True if there is an ancestor navigation frame to return to."""
         return len(self.stack) >= 2 or (len(self.stack) == 1 and bool(self.stack[0].parent_url))
 
-    async def backtrack_to_parent(
-        self,
-        session: Any,
-        fallback_parent_url: str = "",
-    ) -> Dict[str, Any]:
-        """
-        Executes 4-Tier Escalation Backtracking to return safely to the parent context:
-        - Tier 1: Modal/Overlay Dismissal (Escape key, close button, backdrop)
-        - Tier 2: History Back (window.history.back via CDP)
-        - Tier 3: In-page Breadcrumb / Nav Link
-        - Tier 4: Direct Fallback Navigation (deterministic route navigation)
-        """
-        top_frame = self.current_frame()
-        target_parent = fallback_parent_url
-        if not target_parent and top_frame:
-            target_parent = top_frame.parent_url
-        if not target_parent and len(self.stack) >= 2:
-            target_parent = self.stack[-2].url
-        if not target_parent:
-            target_parent = self.root_url or session.current_url
-
-        target_norm = target_parent.rstrip("/").lower()
-        current_pre = (session.current_url or "").rstrip("/").lower()
-
-        logger.info(f"PNA Backtrack initiated: from '{current_pre}' -> target '{target_norm}'")
-
-        # ─── TIER 1: Modal / Drawer Dismissal ───
-        if top_frame and top_frame.is_modal:
-            logger.info("PNA Tier 1: Attempting modal/overlay dismissal...")
-            dismissed = await session.dismiss_active_modal()
-            if dismissed:
-                self.pop()
-                record = {"tier": 1, "method": "modal_dismiss", "success": True, "target_url": target_parent}
-                self.backtrack_history.append(record)
-                return record
-
-        # Check if an in-page modal is actively blocking the viewport
-        try:
-            modal_check = await session.evaluate("""(() => {
-                const modal = document.querySelector('[role="dialog"], dialog[open], .modal.show, [aria-modal="true"], .overlay-active');
-                return Boolean(modal && window.getComputedStyle(modal).display !== 'none');
-            })()""")
-            if modal_check:
-                logger.info("PNA Tier 1: Active modal detected on page. Dismissing...")
-                await session.dismiss_active_modal()
-                if top_frame and top_frame.is_modal:
-                    self.pop()
-                    return {"tier": 1, "method": "active_modal_dismiss", "success": True, "target_url": target_parent}
-        except Exception:
-            pass
-
-        # ─── TIER 2: History Back Navigation ───
-        logger.info("PNA Tier 2: Executing window.history.back()...")
-        try:
-            await session.send_command("Runtime.evaluate", {"expression": "window.history.back();"})
-            await session.wait_for_quiescence(network_idle_ms=250, dom_quiet_ms=100, scroll_quiet_ms=80, max_timeout_s=3.0)
-            await session.extract_interactive_tree()
-            current_post = (session.current_url or "").rstrip("/").lower()
-            if current_post != current_pre and (current_post == target_norm or target_norm in current_post or len(self.stack) > 1):
-                self.pop()
-                record = {"tier": 2, "method": "history_back", "success": True, "target_url": current_post}
-                self.backtrack_history.append(record)
-                return record
-        except Exception as e:
-            logger.debug(f"PNA Tier 2 notice: {e}")
-
-        # ─── TIER 3: Breadcrumb / Section Link Navigation ───
-        logger.info("PNA Tier 3: Checking breadcrumb and navigation trail...")
-        try:
-            target_path = urlparse(target_parent).path.rstrip("/") or "/"
-            breadcrumb_click = await session.evaluate(f"""(() => {{
-                const crumbs = Array.from(document.querySelectorAll('nav[aria-label*="breadcrumb" i] a, .breadcrumb a, ol.breadcrumb li a, [class*="breadcrumb"] a, a[class*="back"]'));
-                for (const a of crumbs) {{
-                    const href = (a.getAttribute('href') || '').toLowerCase();
-                    if (href === '{target_path}' || href.endsWith('{target_path}') || (a.innerText || '').toLowerCase().includes('back')) {{
-                        a.click();
-                        return true;
-                    }}
-                }}
-                return false;
-            }})()""")
-            if breadcrumb_click:
-                await session.wait_for_quiescence(network_idle_ms=250, dom_quiet_ms=100, max_timeout_s=3.0)
-                await session.extract_interactive_tree()
-                current_post = (session.current_url or "").rstrip("/").lower()
-                if current_post != current_pre:
-                    self.pop()
-                    record = {"tier": 3, "method": "breadcrumb_click", "success": True, "target_url": current_post}
-                    self.backtrack_history.append(record)
-                    return record
-        except Exception as e:
-            logger.debug(f"PNA Tier 3 notice: {e}")
-
-        # ─── TIER 4: Direct Route Fallback Navigation ───
-        logger.info(f"PNA Tier 4: Direct fallback route navigation to '{target_parent}'...")
-        try:
-            await session.navigate(target_parent)
-            await session.wait_for_quiescence(network_idle_ms=300, dom_quiet_ms=120, max_timeout_s=4.0)
-            await session.extract_interactive_tree()
-            self.pop()
-            record = {"tier": 4, "method": "direct_navigate", "success": True, "target_url": target_parent}
-            self.backtrack_history.append(record)
-            return record
-        except Exception as e:
-            logger.error(f"PNA Tier 4 direct navigation failed: {e}")
-            return {"tier": 4, "method": "direct_navigate", "success": False, "error": str(e)}
+    async def backtrack_to_parent(self, session: Any, fallback_parent_url: str = "") -> Dict[str, Any]:
+        """Restore an exact observed parent; never synthesize DOM clicks."""
+        from .browser_testing.navigation import restore_parent
+        frame = self.current_frame()
+        target = fallback_parent_url or (frame.parent_url if frame else "") or self.root_url
+        if not target or target == "about:blank":
+            target = session.target_url
+        result = await restore_parent(session, target)
+        self.backtrack_history.append(result)
+        if len(self.backtrack_history) > 100:
+            self.backtrack_history.pop(0)
+        if result.get('success'):
+            matches = [i for i, parent in enumerate(self.stack) if parent.url == target and not parent.is_modal]
+            if matches:
+                self.stack = self.stack[:matches[-1] + 1]
+            self.trap_detector.reset()
+        return result
 
     def get_stack_summary(self) -> List[Dict[str, Any]]:
         return [frame.to_dict() for frame in self.stack]

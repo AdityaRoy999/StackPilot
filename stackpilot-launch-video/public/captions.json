@@ -1,0 +1,471 @@
+[
+  {
+    "text": " Your",
+    "startMs": 580,
+    "endMs": 640,
+    "timestampMs": 610,
+    "confidence": 0.011842569336295128
+  },
+  {
+    "text": " code",
+    "startMs": 740,
+    "endMs": 840,
+    "timestampMs": 790,
+    "confidence": 0.9507895708084106
+  },
+  {
+    "text": " deserves",
+    "startMs": 840,
+    "endMs": 1180,
+    "timestampMs": 1010,
+    "confidence": 0.9794401526451111
+  },
+  {
+    "text": " a",
+    "startMs": 1180,
+    "endMs": 1380,
+    "timestampMs": 1280,
+    "confidence": 0.9963156580924988
+  },
+  {
+    "text": " clearer",
+    "startMs": 1480,
+    "endMs": 1580,
+    "timestampMs": 1530,
+    "confidence": 0.7265255451202393
+  },
+  {
+    "text": " path",
+    "startMs": 1580,
+    "endMs": 1920,
+    "timestampMs": 1750,
+    "confidence": 0.9990059733390808
+  },
+  {
+    "text": " to",
+    "startMs": 1920,
+    "endMs": 2140,
+    "timestampMs": 2030,
+    "confidence": 0.9986481070518494
+  },
+  {
+    "text": " launch.",
+    "startMs": 2140,
+    "endMs": 2400,
+    "timestampMs": 2270,
+    "confidence": 0.9776339828968048
+  },
+  {
+    "text": " Meet",
+    "startMs": 4660,
+    "endMs": 4680,
+    "timestampMs": 4670,
+    "confidence": 0.02054964005947113
+  },
+  {
+    "text": " Stack",
+    "startMs": 4680,
+    "endMs": 5040,
+    "timestampMs": 4860,
+    "confidence": 0.9093490839004517
+  },
+  {
+    "text": " Pilot.",
+    "startMs": 5040,
+    "endMs": 5580,
+    "timestampMs": 5310,
+    "confidence": 0.03250438626855612
+  },
+  {
+    "text": " Your",
+    "startMs": 5840,
+    "endMs": 5940,
+    "timestampMs": 5890,
+    "confidence": 0.8899780511856079
+  },
+  {
+    "text": " application",
+    "startMs": 5940,
+    "endMs": 6320,
+    "timestampMs": 6130,
+    "confidence": 0.6786229610443115
+  },
+  {
+    "text": " delivery",
+    "startMs": 6320,
+    "endMs": 6800,
+    "timestampMs": 6560,
+    "confidence": 0.9952600598335266
+  },
+  {
+    "text": " cockpit.",
+    "startMs": 6800,
+    "endMs": 7460,
+    "timestampMs": 7130,
+    "confidence": 0.9636527597904205
+  },
+  {
+    "text": " Connect",
+    "startMs": 10720,
+    "endMs": 10740,
+    "timestampMs": 10730,
+    "confidence": 0.004978422075510025
+  },
+  {
+    "text": " your",
+    "startMs": 10740,
+    "endMs": 10940,
+    "timestampMs": 10840,
+    "confidence": 0.9142270088195801
+  },
+  {
+    "text": " repository.",
+    "startMs": 10940,
+    "endMs": 11760,
+    "timestampMs": 11350,
+    "confidence": 0.6884170919656754
+  },
+  {
+    "text": " Choose",
+    "startMs": 12140,
+    "endMs": 12260,
+    "timestampMs": 12200,
+    "confidence": 0.973982572555542
+  },
+  {
+    "text": " an",
+    "startMs": 12260,
+    "endMs": 12380,
+    "timestampMs": 12320,
+    "confidence": 0.9929956793785095
+  },
+  {
+    "text": " environment.",
+    "startMs": 12380,
+    "endMs": 12980,
+    "timestampMs": 12680,
+    "confidence": 0.9086365103721619
+  },
+  {
+    "text": " Build,",
+    "startMs": 13380,
+    "endMs": 13860,
+    "timestampMs": 13620,
+    "confidence": 0.9037102162837982
+  },
+  {
+    "text": " verify,",
+    "startMs": 14060,
+    "endMs": 14660,
+    "timestampMs": 14360,
+    "confidence": 0.232371523976326
+  },
+  {
+    "text": " and",
+    "startMs": 14680,
+    "endMs": 14700,
+    "timestampMs": 14690,
+    "confidence": 0.9557687044143677
+  },
+  {
+    "text": " deploy.",
+    "startMs": 14700,
+    "endMs": 15260,
+    "timestampMs": 14980,
+    "confidence": 0.6151051968336105
+  },
+  {
+    "text": " Give",
+    "startMs": 18560,
+    "endMs": 18660,
+    "timestampMs": 18610,
+    "confidence": 0.013274528086185455
+  },
+  {
+    "text": " your",
+    "startMs": 18660,
+    "endMs": 18760,
+    "timestampMs": 18710,
+    "confidence": 0.9697248935699463
+  },
+  {
+    "text": " AI",
+    "startMs": 18760,
+    "endMs": 19020,
+    "timestampMs": 18890,
+    "confidence": 0.9366498589515686
+  },
+  {
+    "text": " agent",
+    "startMs": 19020,
+    "endMs": 19500,
+    "timestampMs": 19260,
+    "confidence": 0.9606744050979614
+  },
+  {
+    "text": " the",
+    "startMs": 19500,
+    "endMs": 19720,
+    "timestampMs": 19610,
+    "confidence": 0.986902117729187
+  },
+  {
+    "text": " project",
+    "startMs": 19720,
+    "endMs": 20040,
+    "timestampMs": 19880,
+    "confidence": 0.9269261956214905
+  },
+  {
+    "text": " context",
+    "startMs": 20040,
+    "endMs": 20360,
+    "timestampMs": 20200,
+    "confidence": 0.9843781590461731
+  },
+  {
+    "text": " to",
+    "startMs": 20360,
+    "endMs": 20800,
+    "timestampMs": 20580,
+    "confidence": 0.9763814806938171
+  },
+  {
+    "text": " inspect",
+    "startMs": 20800,
+    "endMs": 20980,
+    "timestampMs": 20890,
+    "confidence": 0.9961141347885132
+  },
+  {
+    "text": " failures,",
+    "startMs": 20980,
+    "endMs": 22220,
+    "timestampMs": 21600,
+    "confidence": 0.7755783796310425
+  },
+  {
+    "text": " make",
+    "startMs": 22240,
+    "endMs": 22300,
+    "timestampMs": 22270,
+    "confidence": 0.1296311765909195
+  },
+  {
+    "text": " repairs,",
+    "startMs": 22300,
+    "endMs": 22900,
+    "timestampMs": 22600,
+    "confidence": 0.8436942398548126
+  },
+  {
+    "text": " and",
+    "startMs": 23100,
+    "endMs": 23180,
+    "timestampMs": 23140,
+    "confidence": 0.8999956846237183
+  },
+  {
+    "text": " retry.",
+    "startMs": 23180,
+    "endMs": 23700,
+    "timestampMs": 23440,
+    "confidence": 0.9457015991210938
+  },
+  {
+    "text": " See",
+    "startMs": 26540,
+    "endMs": 26640,
+    "timestampMs": 26590,
+    "confidence": 0.0036170058883726597
+  },
+  {
+    "text": " your",
+    "startMs": 26640,
+    "endMs": 26760,
+    "timestampMs": 26700,
+    "confidence": 0.9125077724456787
+  },
+  {
+    "text": " runtime,",
+    "startMs": 26760,
+    "endMs": 27700,
+    "timestampMs": 27230,
+    "confidence": 0.8383486866950989
+  },
+  {
+    "text": " logs,",
+    "startMs": 27700,
+    "endMs": 27860,
+    "timestampMs": 27780,
+    "confidence": 0.19776244461536407
+  },
+  {
+    "text": " and",
+    "startMs": 27860,
+    "endMs": 28520,
+    "timestampMs": 28190,
+    "confidence": 0.901470959186554
+  },
+  {
+    "text": " browser",
+    "startMs": 28520,
+    "endMs": 28521,
+    "timestampMs": 28520,
+    "confidence": 0.9933562278747559
+  },
+  {
+    "text": " checks",
+    "startMs": 28520,
+    "endMs": 28720,
+    "timestampMs": 28620,
+    "confidence": 0.9474142789840698
+  },
+  {
+    "text": " together.",
+    "startMs": 28720,
+    "endMs": 29180,
+    "timestampMs": 28950,
+    "confidence": 0.9601948857307434
+  },
+  {
+    "text": " Connect",
+    "startMs": 34640,
+    "endMs": 34740,
+    "timestampMs": 34690,
+    "confidence": 0.009318937547504902
+  },
+  {
+    "text": " a",
+    "startMs": 34740,
+    "endMs": 34960,
+    "timestampMs": 34850,
+    "confidence": 0.9914072155952454
+  },
+  {
+    "text": " remote",
+    "startMs": 34960,
+    "endMs": 35180,
+    "timestampMs": 35070,
+    "confidence": 0.9583548903465271
+  },
+  {
+    "text": " machine.",
+    "startMs": 35180,
+    "endMs": 35880,
+    "timestampMs": 35530,
+    "confidence": 0.8371118605136871
+  },
+  {
+    "text": " Open",
+    "startMs": 36300,
+    "endMs": 36460,
+    "timestampMs": 36380,
+    "confidence": 0.9684922099113464
+  },
+  {
+    "text": " its",
+    "startMs": 36460,
+    "endMs": 36600,
+    "timestampMs": 36530,
+    "confidence": 0.9603472352027893
+  },
+  {
+    "text": " desktop",
+    "startMs": 36600,
+    "endMs": 36860,
+    "timestampMs": 36730,
+    "confidence": 0.9368771910667419
+  },
+  {
+    "text": " without",
+    "startMs": 36860,
+    "endMs": 37340,
+    "timestampMs": 37100,
+    "confidence": 0.9775953888893127
+  },
+  {
+    "text": " leaving",
+    "startMs": 37340,
+    "endMs": 37740,
+    "timestampMs": 37540,
+    "confidence": 0.9983307719230652
+  },
+  {
+    "text": " Stack",
+    "startMs": 37740,
+    "endMs": 38020,
+    "timestampMs": 37880,
+    "confidence": 0.8300788402557373
+  },
+  {
+    "text": " Pilot.",
+    "startMs": 38020,
+    "endMs": 38480,
+    "timestampMs": 38250,
+    "confidence": 0.5658082887530327
+  },
+  {
+    "text": " Your",
+    "startMs": 42620,
+    "endMs": 42640,
+    "timestampMs": 42630,
+    "confidence": 0.02213170751929283
+  },
+  {
+    "text": " stack.",
+    "startMs": 42640,
+    "endMs": 43060,
+    "timestampMs": 42850,
+    "confidence": 0.43628763034939766
+  },
+  {
+    "text": " Your",
+    "startMs": 43320,
+    "endMs": 43420,
+    "timestampMs": 43370,
+    "confidence": 0.5866203904151917
+  },
+  {
+    "text": " control.",
+    "startMs": 43420,
+    "endMs": 44020,
+    "timestampMs": 43720,
+    "confidence": 0.9442479014396667
+  },
+  {
+    "text": " Start",
+    "startMs": 44340,
+    "endMs": 44440,
+    "timestampMs": 44390,
+    "confidence": 0.9815686345100403
+  },
+  {
+    "text": " building",
+    "startMs": 44440,
+    "endMs": 44660,
+    "timestampMs": 44550,
+    "confidence": 0.9893913269042969
+  },
+  {
+    "text": " with",
+    "startMs": 44660,
+    "endMs": 44960,
+    "timestampMs": 44810,
+    "confidence": 0.9786509275436401
+  },
+  {
+    "text": " Stack",
+    "startMs": 44960,
+    "endMs": 45180,
+    "timestampMs": 45070,
+    "confidence": 0.31505733728408813
+  },
+  {
+    "text": " Pilot.",
+    "startMs": 45180,
+    "endMs": 45640,
+    "timestampMs": 45410,
+    "confidence": 0.5488161370158195
+  }
+]

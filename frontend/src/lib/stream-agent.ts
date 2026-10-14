@@ -16,6 +16,7 @@ export type AgentStreamEvent = (
   | { type: "tool_call"; name: string; arguments: Record<string, unknown>; id?: string }
   | { type: "tool_result"; name: string; result: Record<string, unknown>; id?: string }
   | { type: "tool_step"; name: string; arguments: Record<string, unknown>; result: Record<string, unknown>; id: string; parent_id: string }
+  | { type: "browser_run"; run_id: string; state: string; recovery_required?: boolean }
   | { type: "agent_run"; run_id?: string; state: string; error?: string }
   | { type: "agent_message"; id: string; recipient: string; content: string }
   | { type: "agent_task_update"; id: string; status: string; result?: string }
@@ -77,7 +78,8 @@ export type AgentStreamEvent = (
       stopped?: boolean;
     }) & {agent_id?: string; run_id?: string; sequence?: number};
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1";
+import { apiTransportBase } from "./platform-transport";
+const API_BASE = apiTransportBase();
 
 export interface StreamAgentOptions {
   message: string;
@@ -96,6 +98,7 @@ export interface StreamAgentOptions {
   approvalToken?: string;
   continuation?: boolean;
   images?: string[];
+  audioAttachment?: { dataUrl: string; mimeType: string; durationMs?: number };
   customUrl?: string;
   sandboxMode?: "local" | "remote" | "host";
   signal?: AbortSignal;
@@ -119,6 +122,7 @@ export async function streamAgentReply({
   approvalToken,
   continuation,
   images,
+  audioAttachment,
   customUrl,
   sandboxMode,
   signal,
@@ -153,6 +157,13 @@ export async function streamAgentReply({
       ...(approvalToken ? {approval_token: approvalToken} : {}),
       ...(continuation ? {continuation: true} : {}),
       ...(images && images.length > 0 ? { images } : {}),
+      ...(audioAttachment?.dataUrl ? {
+        audio_attachment: {
+          data_url: audioAttachment.dataUrl,
+          mime_type: audioAttachment.mimeType,
+          duration_ms: audioAttachment.durationMs,
+        },
+      } : {}),
       runtime: {
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         ...(customUrl ? { url: customUrl, custom_url: customUrl } : {}),

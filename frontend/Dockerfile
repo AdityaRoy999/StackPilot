@@ -2,6 +2,8 @@ FROM node:24-alpine AS base
 
 WORKDIR /app
 ENV STACKPILOT_BACKEND_INTERNAL_URL=http://backend:8090
+ENV STACKPILOT_AI_INTERNAL_URL=http://ai-service:8010
+ENV STACKPILOT_RDP_INTERNAL_URL=http://rdp-gateway:8095
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -30,8 +32,8 @@ CMD ["npm", "run", "dev"]
 # ─── Production Builder ─────────────────────────────────────
 FROM base AS builder
 
-ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8090/api/v1
-ARG NEXT_PUBLIC_WS_BASE_URL=ws://localhost:8090
+ARG NEXT_PUBLIC_API_BASE_URL=/api/v1
+ARG NEXT_PUBLIC_WS_BASE_URL=
 ARG NEXT_PUBLIC_AI_SERVICE_WS_URL=
 ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID=
 ARG NEXT_PUBLIC_GITHUB_CLIENT_ID=
@@ -52,6 +54,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
+    STACKPILOT_BACKEND_INTERNAL_URL=http://backend:8090 \
+    STACKPILOT_AI_INTERNAL_URL=http://ai-service:8010 \
+    STACKPILOT_RDP_INTERNAL_URL=http://rdp-gateway:8095 \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 

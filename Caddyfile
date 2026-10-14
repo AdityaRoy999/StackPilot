@@ -9,9 +9,15 @@
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy strict-origin-when-cross-origin
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Permissions-Policy "camera=(), microphone=(self), geolocation=()"
 	}
 
+	handle /api/v1/rdp/* {
+		reverse_proxy rdp-gateway:8095
+	}
+	handle /ws/rdp {
+		reverse_proxy rdp-gateway:8095
+	}
 	handle /api/* {
 		reverse_proxy backend:8090
 	}

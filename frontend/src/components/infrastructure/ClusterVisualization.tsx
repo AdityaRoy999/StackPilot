@@ -40,6 +40,8 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { DisclosureSection } from "@/components/ui/disclosure-section";
+import { AnimatedCollapse } from "@/components/ui/animated-collapse";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface BaseResource {
@@ -438,11 +440,13 @@ export function ClusterVisualization() {
   const pendingFullscreenFitRef = useRef(false);
   const graphNodesRef = useRef<GraphNode[]>([]);
   const [canvasSize, setCanvasSize] = useState({ width: 1180, height: 640 });
-  const [view, setView] = useState({ x: 80, y: 40, scale: 0.78 });
+  const viewRef = useRef({ x: 80, y: 40, scale: 0.78 });
+  const drawRef = useRef<(() => void) | null>(null);
+  const cameraFrameRef = useRef<number | null>(null);
   const [drag, setDrag] = useState<{ pointerId: number; x: number; y: number; originX: number; originY: number; moved: boolean } | null>(null);
   const pendingPanViewRef = useRef<{ x: number; y: number; scale: number } | null>(null);
   const panFrameRef = useRef<number | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(["group:docker"]));
   const [resourceSearch, setResourceSearch] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("cluster");
   const [replicaDraft, setReplicaDraft] = useState("1");
@@ -522,6 +526,7 @@ export function ClusterVisualization() {
 
     const nodes: GraphNode[] = [];
     const edges: GraphEdge[] = [];
+    const hiddenNodes: GraphNode[] = [];
     const k8sNodes = inventory?.kubernetes.nodes || [];
     const pods = inventory?.kubernetes.pods || [];
     const deployments = inventory?.kubernetes.deployments || [];
@@ -542,6 +547,8 @@ export function ClusterVisualization() {
       const startY = cursorY;
       const visibleLeaves = collapsed ? [] : leaves;
       const rowCount = Math.ceil(visibleLeaves.length / LEAF_COLUMNS);
+
+      if (collapsed) hiddenNodes.push(...leaves.map(leaf => ({ ...leaf, x: 0, y: 0, width: LEAF_WIDTH, height: leafH })));
 
       visibleLeaves.forEach((leaf, index) => {
         const column = index % LEAF_COLUMNS;
@@ -704,10 +711,15 @@ export function ClusterVisualization() {
       color: KIND_COLORS.cluster,
     });
 
-    return { nodes, edges };
+    return { nodes, edges, resources: [...nodes, ...hiddenNodes] };
   }, [canvasSize.width, collapsedGroups, dockerStatsByName, inventory, nodeMetricsByName, podMetricsByKey]);
 
-  const selectedNode = graph.nodes.find((node) => node.id === selectedNodeId) || graph.nodes[0];
+  const selectedNode = graph.resources.find((node) => node.id === selectedNodeId) || graph.nodes[0];
+  const totalResourceCount = (inventory?.kubernetes.nodes.length || 0)
+    + (inventory?.kubernetes.pods.length || 0)
+    + (inventory?.kubernetes.deployments.length || 0)
+    + (inventory?.kubernetes.services.length || 0)
+    + (inventory?.docker.containers.length || 0);
   const selectedResource = selectedNode?.resource;
   const selectedMonitorHref = useMemo(() => {
     const href = monitorHref(selectedResource);
@@ -719,6 +731,36 @@ export function ClusterVisualization() {
   // Takes explicit dimensions so callers holding fresher measurements than the
   // canvasSize state (the ResizeObserver) can fit without waiting for a render.
   useLayoutEffect(() => { graphNodesRef.current = graph.nodes; }, [graph.nodes]);
+
+  const animateView = useCallback((target: { x: number; y: number; scale: number }) => {
+    if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current);
+    const start = viewRef.current;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      viewRef.current = target;
+      drawRef.current?.();
+      cameraFrameRef.current = null;
+      return;
+    }
+    const started = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - started) / 220);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = {
+        x: start.x + (target.x - start.x) * eased,
+        y: start.y + (target.y - start.y) * eased,
+        scale: start.scale + (target.scale - start.scale) * eased,
+      };
+      viewRef.current = next;
+      drawRef.current?.();
+      cameraFrameRef.current = progress < 1 ? requestAnimationFrame(step) : null;
+    };
+    cameraFrameRef.current = requestAnimationFrame(step);
+  }, []);
+
+  useEffect(() => () => {
+    if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current);
+    if (panFrameRef.current !== null) cancelAnimationFrame(panFrameRef.current);
+  }, []);
 
   const fitToSize = useCallback((viewportWidth: number, viewportHeight: number) => {
     const currentNodes = graphNodesRef.current;
@@ -738,15 +780,15 @@ export function ClusterVisualization() {
     const height = Math.max(maxY - minY, 1);
     const scale = clamp(
       Math.min((viewportWidth - padding * 2) / width, (viewportHeight - padding * 2) / height),
-      0.25,
+      0.55,
       1.4
     );
-    setView({
+    animateView({
       x: viewportWidth / 2 - ((minX + maxX) / 2) * scale,
       y: viewportHeight / 2 - ((minY + maxY) / 2) * scale,
       scale,
     });
-  }, []);
+  }, [animateView]);
 
   const fitToContent = useCallback(
     () => fitToSize(canvasSize.width, canvasSize.height),
@@ -782,16 +824,17 @@ export function ClusterVisualization() {
     };
   }, [fitToSize]);
 
-  const screenToWorld = useCallback((x: number, y: number) => ({
-    x: (x - view.x) / view.scale,
-    y: (y - view.y) / view.scale,
-  }), [view.scale, view.x, view.y]);
+  const screenToWorld = useCallback((x: number, y: number) => {
+    const view = viewRef.current;
+    return { x: (x - view.x) / view.scale, y: (y - view.y) / view.scale };
+  }, []);
 
   const themeVersion = useCanvasThemeVersion();
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const view = viewRef.current;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -886,11 +929,12 @@ export function ClusterVisualization() {
     ctx.fillStyle = palette.pillText;
     ctx.font = "12px Inter, system-ui, sans-serif";
     ctx.fillText(`Drag to pan - wheel to zoom - ${Math.round(view.scale * 100)}%`, 28, 34);
-  }, [canvasSize.height, canvasSize.width, graph.edges, graph.nodes, selectedNodeId, themeVersion, view]);
+  }, [canvasSize.height, canvasSize.width, graph.edges, graph.nodes, selectedNodeId, themeVersion]);
 
-  useEffect(() => {
-    const frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
+  useLayoutEffect(() => {
+    drawRef.current = draw;
+    draw();
+    return () => { if (drawRef.current === draw) drawRef.current = null; };
   }, [draw]);
 
   const resetView = fitToContent;
@@ -939,9 +983,10 @@ export function ClusterVisualization() {
   const zoomBy = (factor: number) => {
     const cx = canvasSize.width / 2;
     const cy = canvasSize.height / 2;
-    const world = screenToWorld(cx, cy);
-    const nextScale = clamp(view.scale * factor, 0.35, 2.4);
-    setView({
+    const current = viewRef.current;
+    const world = { x: (cx - current.x) / current.scale, y: (cy - current.y) / current.scale };
+    const nextScale = clamp(current.scale * factor, 0.55, 2.4);
+    animateView({
       scale: nextScale,
       x: cx - world.x * nextScale,
       y: cy - world.y * nextScale,
@@ -953,10 +998,11 @@ export function ClusterVisualization() {
     const rect = event.currentTarget.getBoundingClientRect();
     const sx = event.clientX - rect.left;
     const sy = event.clientY - rect.top;
-    const world = screenToWorld(sx, sy);
-    const factor = event.deltaY > 0 ? 0.9 : 1.1;
-    const nextScale = clamp(view.scale * factor, 0.35, 2.4);
-    setView({
+    const current = viewRef.current;
+    const world = { x: (sx - current.x) / current.scale, y: (sy - current.y) / current.scale };
+    const factor = Math.exp(-Math.max(-400, Math.min(400, event.deltaY)) * 0.0015);
+    const nextScale = clamp(current.scale * factor, 0.55, 2.4);
+    animateView({
       scale: nextScale,
       x: sx - world.x * nextScale,
       y: sy - world.y * nextScale,
@@ -964,8 +1010,10 @@ export function ClusterVisualization() {
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (cameraFrameRef.current !== null) cancelAnimationFrame(cameraFrameRef.current);
+    cameraFrameRef.current = null;
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDrag({ pointerId: event.pointerId, x: event.clientX, y: event.clientY, originX: view.x, originY: view.y, moved: false });
+    setDrag({ pointerId: event.pointerId, x: event.clientX, y: event.clientY, originX: viewRef.current.x, originY: viewRef.current.y, moved: false });
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
@@ -975,11 +1023,14 @@ export function ClusterVisualization() {
     const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 5;
     if (moved && !drag.moved) setDrag({ ...drag, moved: true });
     if (moved) {
-      pendingPanViewRef.current = { ...view, x: drag.originX + dx, y: drag.originY + dy };
+      pendingPanViewRef.current = { ...viewRef.current, x: drag.originX + dx, y: drag.originY + dy };
       if (panFrameRef.current === null) {
         panFrameRef.current = requestAnimationFrame(() => {
           panFrameRef.current = null;
-          if (pendingPanViewRef.current) setView(pendingPanViewRef.current);
+          if (pendingPanViewRef.current) {
+            viewRef.current = pendingPanViewRef.current;
+            drawRef.current?.();
+          }
         });
       }
     }
@@ -988,6 +1039,13 @@ export function ClusterVisualization() {
   const handlePointerUp = (event: PointerEvent<HTMLCanvasElement>) => {
     const currentDrag = drag;
     setDrag(null);
+    if (panFrameRef.current !== null) cancelAnimationFrame(panFrameRef.current);
+    panFrameRef.current = null;
+    if (pendingPanViewRef.current) {
+      viewRef.current = pendingPanViewRef.current;
+      drawRef.current?.();
+      pendingPanViewRef.current = null;
+    }
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);
     } catch {
@@ -1251,7 +1309,7 @@ export function ClusterVisualization() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <MetricCard icon={Server} label="Cluster nodes" value={`${summary.readyNodes}/${summary.totalNodes}`} detail="ready nodes" />
         <MetricCard icon={Boxes} label="Pods" value={`${summary.runningPods}/${summary.totalPods}`} detail="running pods" />
         <MetricCard icon={GitBranch} label="Deployments" value={`${summary.healthyDeployments}/${summary.totalDeployments}`} detail="healthy rollouts" />
@@ -1274,13 +1332,11 @@ export function ClusterVisualization() {
           )}
         >
           <CardHeader className="border-b border-border py-3.5 px-4 sm:px-6">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 space-y-2">
+                <CardTitle className="flex flex-wrap items-center gap-2">
                   <AppIcon name="gauge" fallback={Gauge} className="h-5 w-5 text-primary"  />
                   Cluster Graph
-                </CardTitle>
-                <CardDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium",
@@ -1302,38 +1358,31 @@ export function ClusterVisualization() {
                     </span>
                     {inventoryQuery.isError ? "Disconnected" : "Live"}
                   </span>
-                  <span>{graph.nodes.filter((node) => node.resource).length} resources</span>
-                  <span aria-hidden="true">|</span>
-                  <span>Drag to pan, wheel to zoom, click a group to expand or a resource to inspect.</span>
-                </CardDescription>
+                  <span className="text-sm font-normal text-muted-foreground">{totalResourceCount} resources</span>
+                </CardTitle>
+                <CardDescription>Drag to pan · Scroll to zoom · Select a group to expand</CardDescription>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border bg-muted/20 p-1">
+                  <Button size="icon-sm" variant="ghost" onClick={() => zoomBy(1.15)} title="Zoom in" aria-label="Zoom in">
+                    <AppIcon name="plus" fallback={Plus} className="h-4 w-4"  />
+                  </Button>
+                  <Button size="icon-sm" variant="ghost" onClick={() => zoomBy(0.85)} title="Zoom out" aria-label="Zoom out">
+                    <AppIcon name="minus" fallback={Minus} className="h-4 w-4"  />
+                  </Button>
+                  <Button size="icon-sm" variant="ghost" onClick={resetView} title="Center graph" aria-label="Center graph">
+                    <AppIcon name="focus" fallback={Focus} className="h-4 w-4"  />
+                  </Button>
+                  <Button size="icon-sm" variant="ghost" onClick={toggleFullscreen} title={isFullscreen ? "Exit fullscreen" : "Fullscreen"} aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"} aria-pressed={isFullscreen}>
+                    {isFullscreen ? <AppIcon name="minimize2" fallback={Minimize2} className="h-4 w-4"  /> : <AppIcon name="maximize2" fallback={Maximize2} className="h-4 w-4"  />}
+                  </Button>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="Resource types">
                 <Legend color={KIND_COLORS.node} label="Node" />
                 <Legend color={KIND_COLORS.pod} label="Pod" />
                 <Legend color={KIND_COLORS.deployment} label="Deployment" />
                 <Legend color={KIND_COLORS.service} label="Service" />
                 <Legend color={KIND_COLORS.container} label="Container" />
-                <div className="ml-0 flex items-center gap-1 rounded-lg border border-border bg-muted/20 p-1 xl:ml-2">
-                  <Button size="icon-sm" variant="ghost" onClick={() => zoomBy(1.15)} title="Zoom in">
-                    <AppIcon name="plus" fallback={Plus} className="h-4 w-4"  />
-                  </Button>
-                  <Button size="icon-sm" variant="ghost" onClick={() => zoomBy(0.85)} title="Zoom out">
-                    <AppIcon name="minus" fallback={Minus} className="h-4 w-4"  />
-                  </Button>
-                  <Button size="icon-sm" variant="ghost" onClick={resetView} title="Fit to content">
-                    <AppIcon name="focus" fallback={Focus} className="h-4 w-4"  />
-                  </Button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    onClick={toggleFullscreen}
-                    title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
-                    aria-pressed={isFullscreen}
-                  >
-                    {isFullscreen ? <AppIcon name="minimize2" fallback={Minimize2} className="h-4 w-4"  /> : <AppIcon name="maximize2" fallback={Maximize2} className="h-4 w-4"  />}
-                  </Button>
-                </div>
-              </div>
             </div>
           </CardHeader>
           <CardContent className={cn("min-h-0 p-0", isFullscreen && "flex-1 overflow-auto")}>
@@ -1353,7 +1402,12 @@ export function ClusterVisualization() {
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onPointerCancel={() => setDrag(null)}
+                onPointerCancel={() => {
+                  setDrag(null);
+                  if (panFrameRef.current !== null) cancelAnimationFrame(panFrameRef.current);
+                  panFrameRef.current = null;
+                  pendingPanViewRef.current = null;
+                }}
                 onWheel={handleWheel}
               />
               {inventoryQuery.isLoading ? (
@@ -1375,30 +1429,52 @@ export function ClusterVisualization() {
               Resource Inspector
             </CardTitle>
             <CardDescription>
-              Actions are outside the canvas so the graph stays readable.
+              Expand a resource group or search to find what you need.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex max-h-[calc(100dvh-12rem)] min-h-0 flex-col overflow-hidden p-0">
+          <CardContent className="min-w-0 p-0">
             <div className="shrink-0 space-y-2 border-b border-border p-4">
               <Label htmlFor="infrastructure-resource-search">Find any resource</Label>
               <Input id="infrastructure-resource-search" value={resourceSearch} onChange={(event) => setResourceSearch(event.target.value)} placeholder="Search containers, pods, services" />
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {graph.nodes.filter((node) => !node.resource && node.id !== "cluster").map((group) => (
-                  <Button key={group.id} size="sm" variant="outline" aria-expanded={!collapsedGroups.has(group.id)} onClick={() => { setCollapsedGroups((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; }); setSelectedNodeId(group.id); }}>
-                    {collapsedGroups.has(group.id) ? "Expand" : "Collapse"} {group.label}
-                  </Button>
-                ))}
-              </div>
-              <div className="max-h-44 space-y-1 overflow-y-auto overscroll-contain" role="listbox" aria-label="Infrastructure resources">
-                {graph.nodes.filter((node) => node.resource && (!resourceSearch.trim() || `${node.label} ${node.sublabel} ${node.resource.resource_key}`.toLowerCase().includes(resourceSearch.trim().toLowerCase()))).map((node) => (
-                  <button key={node.id} type="button" role="option" aria-selected={node.id === selectedNodeId} onClick={() => { setSelectedNodeId(node.id); setYamlDraft(""); setYamlResourceKey(""); setActionOutput(""); if (node.resource) inspectMutation.mutate(node.resource); setCollapsedGroups((current) => { const next = new Set(current); if (node.kind === "container") next.delete("group:docker"); if (node.kind === "deployment") next.delete("group:deployments"); if (node.kind === "service") next.delete("group:services"); if (node.kind === "pod" && node.resource && "node" in node.resource) next.delete(`node:${node.resource.node}`); return next; }); }} className={cn("flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-muted", node.id === selectedNodeId && "bg-muted")}><span className="min-w-0 truncate">{node.label}</span><span className="shrink-0 text-xs text-muted-foreground">{node.kind}</span></button>
-                ))}
+              <div className="space-y-2" aria-label="Resource groups">
+                {graph.nodes.filter(node => node.id !== "cluster" && (!node.resource || node.kind === "node")).map(group => {
+                  const resources = graph.resources.filter(node => node.resource && (
+                    group.id === "group:docker" ? node.kind === "container" :
+                    group.id === "group:deployments" ? node.kind === "deployment" :
+                    group.id === "group:services" ? node.kind === "service" :
+                    node.kind === "pod" && node.resource && "node" in node.resource && `node:${node.resource.node}` === group.id
+                  )).filter(node => !resourceSearch.trim() || `${node.label} ${node.sublabel} ${node.resource?.resource_key}`.toLowerCase().includes(resourceSearch.trim().toLowerCase()));
+                  const expanded = !!resourceSearch.trim() || !collapsedGroups.has(group.id);
+                  if (resourceSearch.trim() && !resources.length) return null;
+                  return <div key={group.id} className="rounded-lg border border-border">
+                    <Button variant="ghost" className="min-h-11 w-full justify-between px-3" aria-expanded={expanded} aria-controls={`resource-group-${group.id}`} onClick={() => setCollapsedGroups(current => {
+                      const next = new Set(current);
+                      if (next.has(group.id)) next.delete(group.id); else next.add(group.id);
+                      return next;
+                    })}>
+                      <span>{group.label} <span className="ml-1 text-xs text-muted-foreground">({resources.length})</span></span>
+                      <span className="text-xs text-muted-foreground">{expanded ? "Collapse" : "Expand"}</span>
+                    </Button>
+                    <AnimatedCollapse open={expanded}><div id={`resource-group-${group.id}`} className="max-h-60 overflow-y-auto border-t border-border p-1" role="listbox" aria-label={`${group.label} resources`}>
+                      {group.resource && <Button variant="ghost" className="min-h-11 w-full justify-start" onClick={() => { setSelectedNodeId(group.id); inspectMutation.mutate(group.resource!); }}>Inspect node</Button>}
+                      {resources.map(node => <button key={node.id} type="button" role="option" aria-selected={node.id === selectedNodeId} onClick={() => {
+                        setSelectedNodeId(node.id); setYamlDraft(""); setYamlResourceKey(""); setActionOutput("");
+                        if (node.resource) inspectMutation.mutate(node.resource);
+                        setCollapsedGroups(current => { const next = new Set(current); next.delete(group.id); return next; });
+                      }} className={cn("flex min-h-11 w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", node.id === selectedNodeId && "bg-muted")}>
+                        <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{node.label}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{node.kind}</span>
+                      </button>)}
+                    </div></AnimatedCollapse>
+                  </div>;
+                })}
+                {resourceSearch.trim() && !graph.resources.some(node => node.resource && `${node.label} ${node.sublabel} ${node.resource.resource_key}`.toLowerCase().includes(resourceSearch.trim().toLowerCase())) && <p className="p-2 text-sm text-muted-foreground">No matching resources. Try another name.</p>}
               </div>
             </div>
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
+            <div className="min-w-0 space-y-4 p-4">
             <div className="rounded-xl border border-border bg-muted/20 p-4">
               <div className="min-w-0">
-                <div className="truncate text-lg font-semibold text-foreground">{selectedNode?.label || "StackPilot Cluster"}</div>
+                <div className="break-words [overflow-wrap:anywhere] text-base font-semibold text-foreground">{selectedNode?.label || "StackPilot Cluster"}</div>
                 <div className="mt-1 truncate text-sm text-muted-foreground">
                   {selectedResource ? resourceSubtitle(selectedResource) : "StackPilot topology overview"}
                 </div>
@@ -1413,14 +1489,16 @@ export function ClusterVisualization() {
               </div>
             </div>
 
+            <DisclosureSection title="Resource details" description="Type, ownership, image, and runtime metrics">
             <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-1">
               {selectedMetricRows.map(([label, value]) => (
                 <div key={label} className="rounded-lg border border-border bg-background px-3 py-2 text-sm">
                   <div className="text-xs text-muted-foreground">{label}</div>
-                  <div className="mt-1 truncate font-medium text-foreground">{value}</div>
+                  <div className="mt-1 break-words [overflow-wrap:anywhere] font-medium text-foreground">{value}</div>
                 </div>
               ))}
             </div>
+            </DisclosureSection>
 
             <div className="flex flex-wrap gap-2">
               <Link href={selectedMonitorHref} className={buttonVariants({ variant: "outline", size: "sm" })}>
@@ -1553,13 +1631,13 @@ export function ClusterVisualization() {
 function MetricCard({ icon: Icon, label, value, detail }: { icon: LucideIcon; label: string; value: string; detail: string }) {
   return (
     <Card>
-      <CardContent className="flex items-center justify-between gap-4 p-5">
+      <CardContent className="flex items-center justify-between gap-3 p-3 sm:p-5">
         <div>
           <div className="text-sm text-muted-foreground">{label}</div>
           <div className="mt-2 text-3xl font-bold text-foreground">{value}</div>
           <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
         </div>
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-muted/30">
+        <div className="hidden h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-muted/30 sm:flex">
           <Icon className="h-5 w-5 text-primary" />
         </div>
       </CardContent>

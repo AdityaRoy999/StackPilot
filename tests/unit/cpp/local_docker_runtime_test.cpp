@@ -10,10 +10,26 @@
 
 #include "../../../src/services/LocalDockerRuntime.h"
 #include "../../../src/services/ComponentRuntimeVerification.h"
+#include "../../../src/services/BuildInputScope.h"
 #include <cstdlib>
 #include <limits>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 using namespace stackpilot;
+
+TEST(RuntimeInputs, BuildSigningCredentialsNeverEnterArtifactServer) {
+    Json::Value plan;plan["verification_scope"]="artifact_delivery";
+    plan["build_secrets"].append("SIGNING_PASSWORD");
+    EXPECT_TRUE(runtimeInputs({{"SIGNING_PASSWORD","secret"},{"DATABASE_URL","private"}},plan).empty());
+    plan["verification_scope"]="http_contract";
+    const auto values=runtimeInputs({{"SIGNING_PASSWORD","secret"},{"DATABASE_URL","private"}},plan);
+    EXPECT_EQ(values.size(),static_cast<size_t>(1));EXPECT_EQ(values[0].first,std::string("DATABASE_URL"));
+}
 
 TEST(CandidateName, RetainsFullJobIdentityWithinTheDnsLabelLimit) {
     const auto name=LocalDockerRuntime::candidateContainerName("d16c0247-cb31-4012-b7b0-357bde712345",std::numeric_limits<int>::max());
@@ -72,6 +88,37 @@ TEST(RunCommand, CarriesHealthRouteAndRejectsAmbiguousPorts) {
 }
 
 #ifndef _WIN32
+TEST(RunCommand, ACrashLoopFailsImmediatelyWithItsOriginalLogs) {
+    const auto directory=std::filesystem::temp_directory_path()/("stackpilot-restart-probe-"+std::to_string(getpid()));
+    std::filesystem::create_directory(directory);
+    {
+        std::ofstream fake(directory/"docker");
+        fake << R"(#!/bin/sh
+case "$1" in
+ info|image) exit 0;;
+ run) echo fixture-id; exit 0;;
+ port) echo 127.0.0.1:12345; exit 0;;
+ inspect)
+  [ "$2" = --format ] || exit 1
+  case "$3" in *RestartCount*) echo 1;; *) echo restarting;; esac; exit 0;;
+ logs) echo 'python: cannot open missing.py'; exit 0;;
+esac
+exit 1
+)";
+    }
+    std::filesystem::permissions(directory/"docker",std::filesystem::perms::owner_all);
+    const char* path=std::getenv("PATH");const std::string original=path?path:"";
+    setenv("PATH",(directory.string()+":"+original).c_str(),1);
+    std::string output;const auto start=std::chrono::steady_clock::now();
+    const int status=LocalDockerRuntime::run(LocalDockerRuntime::makeRunCommand("fixture","fixture:1",3000,{}),output);
+    setenv("PATH",original.c_str(),1);
+    std::filesystem::remove(directory/"docker");std::filesystem::remove(directory);
+    EXPECT_TRUE(status != 0);
+    EXPECT_CONTAINS(output,"python: cannot open missing.py");
+    EXPECT_TRUE(output.find("__STACKPILOT_LOCAL_DOCKER_RUNNING__")==std::string::npos);
+    EXPECT_TRUE(std::chrono::steady_clock::now()-start<std::chrono::seconds(5));
+}
+
 TEST(RunCommand, LinuxReadinessUsesPrivateNetworkWhileHostPortStaysLoopback) {
     const char* prior = std::getenv("STACKPILOT_RUNTIME_NETWORK");
     const std::string saved = prior ? prior : "";

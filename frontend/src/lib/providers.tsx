@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 
 import { ThemeProvider } from "next-themes";
 import { WorkspaceProvider } from "@/context/WorkspaceContext";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const ReactQueryDevtools = process.env.NODE_ENV === "development"
   ? dynamic(() => import("@tanstack/react-query-devtools").then((module) => module.ReactQueryDevtools), { ssr: false })
@@ -36,7 +37,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-        <WorkspaceProvider>{children}</WorkspaceProvider>
+        <TooltipProvider><WorkspaceProvider>{children}</WorkspaceProvider></TooltipProvider>
       </ThemeProvider>
           {desktopDevtools && ReactQueryDevtools && <ReactQueryDevtools initialIsOpen={false} />}
     </QueryClientProvider>

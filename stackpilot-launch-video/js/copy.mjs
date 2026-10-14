@@ -1,0 +1,2 @@
+export const NAME='StackPilot', SLUG='stackpilot-launch', LANG='en';
+export const COPY={hook:['Your code.','Ready for launch.'],tagline:'Application delivery cockpit',pipeline:['Repository','Environment','Release'],flow:['Build.','Verify.','Deploy.'],agent:['Inspect.','Repair.','Retry.'],runtime:['Runtime.','Logs.','Browser checks.'],remote:['Your remote desktop.','Inside StackPilot.'],end:['Your stack.','Your control.'],cta:'Start building with StackPilot',url:'github.com/AdityaRoy999/StackPilot'};

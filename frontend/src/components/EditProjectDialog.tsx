@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import api from "@/lib/api";
+import { FolderPickerDialog } from "@/components/projects/FolderPickerDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +25,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronRight, FolderTree, GitBranch, HardDrive, Link2, Plus, RefreshCw, Server, Settings2, ShieldCheck, Trash2 } from "@/lib/platform-icons";
+import { CheckCircle2, FolderTree, GitBranch, Link2, Plus, RefreshCw, Server, Settings2, ShieldCheck, Trash2 } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
 import { ProjectEnvEditor, ProjectEnvVar } from "@/components/ProjectEnvEditor";
@@ -98,29 +99,6 @@ interface SshConnectionsResponse {
   connections: SshConnection[];
 }
 
-interface SshBrowseEntry {
-  name: string;
-  directory: boolean;
-  path: string;
-}
-
-interface SshBrowseResponse {
-  path: string;
-  entries: SshBrowseEntry[];
-}
-
-interface LocalBrowseEntry {
-  name: string;
-  directory: boolean;
-  path: string;
-}
-
-interface LocalBrowseResponse {
-  path: string;
-  roots: { name: string; path: string }[];
-  entries: LocalBrowseEntry[];
-}
-
 interface ProjectEnvironmentDraft {
   id: string;
   name: string;
@@ -142,10 +120,15 @@ interface ProjectEnvironmentsResponse {
 
 interface EditProjectDialogProps {
   project: ProjectSummary;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }
 
-export function EditProjectDialog({ project }: EditProjectDialogProps) {
-  const [open, setOpen] = useState(false);
+export function EditProjectDialog({ project, open: controlledOpen, onOpenChange, hideTrigger }: EditProjectDialogProps) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = controlledOpen ?? localOpen;
+  const setOpen = onOpenChange ?? setLocalOpen;
 
   const queryClient = useQueryClient();
   const projectQuery = useQuery({
@@ -159,14 +142,14 @@ export function EditProjectDialog({ project }: EditProjectDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
+      {!hideTrigger && <DialogTrigger
         render={
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
             <AppIcon name="settings2" fallback={Settings2} className="h-4 w-4"  />
             <span className="sr-only">Edit project</span>
           </Button>
         }
-      />
+      />}
       <DialogContent className="!flex h-[min(84vh,840px)] !w-[min(94vw,920px)] !max-w-[920px] flex-col overflow-hidden rounded-2xl p-0">
         <DialogHeader className="shrink-0 border-b border-border p-6">
           <DialogTitle className="flex items-center gap-2">
@@ -235,11 +218,7 @@ function EditProjectForm({
   const [runtimeScheme, setRuntimeScheme] = useState<"http" | "https">(
     project.runtime_scheme === "https" ? "https" : "http"
   );
-  const [remoteBrowsePath, setRemoteBrowsePath] = useState(project.source_path || "");
-  const [remoteEntries, setRemoteEntries] = useState<SshBrowseEntry[]>([]);
-  const [localBrowsePath, setLocalBrowsePath] = useState(project.source_path || "");
-  const [localRoots, setLocalRoots] = useState<LocalBrowseResponse["roots"]>([]);
-  const [localEntries, setLocalEntries] = useState<LocalBrowseEntry[]>([]);
+  const [folderPicker, setFolderPicker] = useState<"local" | "remote" | null>(null);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const sourceType = project.source_type || "github";
   const sourceLocationLocked = sourceType !== "github";
@@ -304,43 +283,6 @@ const segmentedButtonActiveClass =
       ) ?? null,
     [selectedRemoteConnectionId, sshConnectionsQuery.data?.connections]
   );
-
-  const browseRemoteMutation = useMutation({
-    mutationFn: async (path: string) => {
-      const res = await api.post(`/ssh/connections/${selectedRemoteConnectionId}/browse`, { path });
-      return res.data as SshBrowseResponse;
-    },
-    onSuccess: (data) => {
-      setRemoteBrowsePath(data.path);
-      setRemoteEntries(data.entries);
-    },
-    onError: (error: unknown) => {
-      const message =
-        error instanceof AxiosError
-          ? (error.response?.data as { error?: string } | undefined)?.error || "Unable to browse remote path"
-          : "Unable to browse remote path";
-      toast.error(message);
-    },
-  });
-
-  const browseLocalMutation = useMutation({
-    mutationFn: async (path: string) => {
-      const res = await api.post("/local/sources/browse", { path });
-      return res.data as LocalBrowseResponse;
-    },
-    onSuccess: (data) => {
-      setLocalBrowsePath(data.path || "");
-      setLocalRoots(data.roots || []);
-      setLocalEntries(data.entries || []);
-    },
-    onError: (error: unknown) => {
-      const message =
-        error instanceof AxiosError
-          ? (error.response?.data as { error?: string } | undefined)?.error || "Unable to browse local source path"
-          : "Unable to browse local source path";
-      toast.error(message);
-    },
-  });
 
   const fetchReposMutation = useMutation({
     mutationFn: async (pat?: string) => {
@@ -494,6 +436,7 @@ const segmentedButtonActiveClass =
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["projects"] });
       queryClient.invalidateQueries({ queryKey: ["project", project.id] });
+      queryClient.invalidateQueries({ queryKey: ["project-stack", project.id] });
       toast.success(data.message || "Project updated successfully");
       setDeletedEnvironmentIds([]);
       onSaved();
@@ -762,36 +705,16 @@ const segmentedButtonActiveClass =
                         <Button
                           type="button"
                           variant="outline"
-                          onClick={() => browseRemoteMutation.mutate(remoteBrowsePath || sourcePath || "/")}
-                          disabled={!selectedRemoteConnectionId || browseRemoteMutation.isPending}
+                          onClick={() => setFolderPicker("remote")}
+                          disabled={!selectedRemoteConnectionId}
                         >
-                          {browseRemoteMutation.isPending ? (
-                            <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                          ) : (
+
                             <AppIcon name="folder-tree" fallback={FolderTree} className="mr-2 h-4 w-4"  />
-                          )}
+
                           Browse
                         </Button>
                       </div>
-                      {remoteEntries.length > 0 && (
-                        <div className="mt-3 max-h-[180px] overflow-y-auto rounded-lg border border-border bg-card scrollbar-thin">
-                          {remoteEntries.map((entry) => (
-                            <button
-                              key={entry.path}
-                              type="button"
-                              onClick={() => {
-                                setSourcePath(entry.path);
-                                setRemoteBrowsePath(entry.path);
-                                if (entry.directory) browseRemoteMutation.mutate(entry.path);
-                              }}
-                              className="flex w-full items-center justify-between border-b border-border/60 px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-accent"
-                            >
-                              <span className="truncate text-foreground">{entry.name}</span>
-                              <AppIcon name="chevron-right" fallback={ChevronRight} className="h-4 w-4 shrink-0 text-muted-foreground"  />
-                            </button>
-                          ))}
-                        </div>
-                      )}
+
                     </div>
                   </div>
                 )}
@@ -822,24 +745,12 @@ const segmentedButtonActiveClass =
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      if (sourceType === "local") {
-                        browseLocalMutation.mutate(localBrowsePath || sourcePath || "");
-                      } else {
-                        browseRemoteMutation.mutate(remoteBrowsePath || sourcePath || "/");
-                      }
-                    }}
-                    disabled={
-                      sourceType === "local"
-                        ? browseLocalMutation.isPending
-                        : !selectedRemoteConnectionId || browseRemoteMutation.isPending
-                    }
+                    onClick={() => setFolderPicker(sourceType === "local" ? "local" : "remote")}
+                    disabled={sourceType !== "local" && !selectedRemoteConnectionId}
                   >
-                    {(sourceType === "local" ? browseLocalMutation.isPending : browseRemoteMutation.isPending) ? (
-                      <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4 animate-spin"  />
-                    ) : (
+
                       <AppIcon name="folder-tree" fallback={FolderTree} className="mr-2 h-4 w-4"  />
-                    )}
+
                     Browse
                   </Button>
                 </div>
@@ -849,49 +760,8 @@ const segmentedButtonActiveClass =
                     workspace. Create a new project for a different folder or server path.
                   </p>
                 )}
-                {sourceType === "local" && localRoots.length > 0 && !localBrowsePath && (
-                  <div className="mt-3 grid gap-2 md:grid-cols-2">
-                    {localRoots.map((root) => (
-                      <Button
-                        key={root.path}
-                        type="button"
-                        variant="outline"
-                        className="justify-start"
-                        onClick={() => browseLocalMutation.mutate(root.path)}
-                      >
-                        <AppIcon name="hard-drive" fallback={HardDrive} className="mr-2 h-4 w-4"  />
-                        <span className="truncate">{root.path}</span>
-                      </Button>
-                    ))}
-                  </div>
-                )}
-                {(sourceType === "local" ? localEntries.length > 0 : remoteEntries.length > 0) && (
-                  <div className="mt-3 max-h-[180px] overflow-y-auto rounded-lg border border-border bg-card scrollbar-thin">
-                    {(sourceType === "local" ? localEntries : remoteEntries).map((entry) => (
-                      <button
-                        key={entry.path}
-                        type="button"
-                        onClick={() => {
-                          setSourcePath(entry.path);
-                          if (sourceType === "local") {
-                            setLocalBrowsePath(entry.path);
-                            browseLocalMutation.mutate(entry.path);
-                          } else {
-                            setRemoteBrowsePath(entry.path);
-                            browseRemoteMutation.mutate(entry.path);
-                          }
-                        }}
-                        className={cn(
-                          "flex w-full items-center justify-between border-b border-border/60 px-3 py-2 text-left text-sm transition-colors last:border-b-0 hover:bg-accent",
-                          sourcePath === entry.path && "bg-accent"
-                        )}
-                      >
-                        <span className="truncate text-foreground">{entry.name}</span>
-                        <AppIcon name="chevron-right" fallback={ChevronRight} className="h-4 w-4 shrink-0 text-muted-foreground"  />
-                      </button>
-                    ))}
-                  </div>
-                )}
+
+
               </div>
             )}
           </div>
@@ -1152,6 +1022,7 @@ const segmentedButtonActiveClass =
           )}
         </Button>
       </DialogFooter>
+      <FolderPickerDialog open={folderPicker !== null} onOpenChange={value => { if (!value) setFolderPicker(null); }} mode={folderPicker || "local"} connectionId={selectedRemoteConnectionId} initialPath={sourcePath} onSelect={setSourcePath} />
     </form>
   );
 }

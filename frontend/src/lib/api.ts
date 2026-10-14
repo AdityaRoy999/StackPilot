@@ -1,8 +1,9 @@
 import axios from "axios";
 import { isRemotePlatform, remoteHeaders, forgetRemoteDevice } from "./remote-platform";
+import { apiTransportBase } from "./platform-transport";
 
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8090/api/v1",
+  baseURL: apiTransportBase(),
   withCredentials: true,
   timeout: 25000,
   headers: {

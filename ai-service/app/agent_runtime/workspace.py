@@ -15,6 +15,8 @@ from pathlib import Path, PurePosixPath
 
 
 IGNORED = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.gradle', '.next', '.stackpilot-runtime'}
+GENERATED_METADATA = {'.stackpilot-source.json', '.stackpilot-context.json', '.stackpilot-plan.json',
+                      '.stackpilot-sdk.json', '.stackpilot-signing-job.json'}
 MAX_FILES = 20000
 MAX_BYTES = 256 * 1024 * 1024
 _locks = {}
@@ -35,6 +37,17 @@ def validate_scope(scopes):
 
 def allowed(path, scopes):
     return any(scope == '**' or path == scope or (scope.endswith('/**') and path.startswith(scope[:-2])) for scope in scopes)
+
+
+def normalize_scope(root, scopes):
+    """An explicitly selected existing directory grants only its descendants.
+
+    Store the directory prefix before inheritance/overlap checks. Exact file
+    capabilities and nonexistent paths keep their original meaning.
+    """
+    return [scope.rstrip('/')+'/**' if scope != '**' and not scope.endswith('/**')
+            and safe_path(root, scope).is_dir() else scope
+            for scope in validate_scope(scopes)]
 
 
 def scope_contains(parent, child):
@@ -69,6 +82,8 @@ def safe_path(root, value):
     path = PurePosixPath(value)
     if path.is_absolute() or any(part in {'.git', '..'} for part in path.parts):
         raise PermissionError('Path traversal or Git metadata access denied')
+    if any(part in GENERATED_METADATA or part=='.stackpilot-runtime' for part in path.parts):
+        raise PermissionError('Generated runtime metadata is not application source. Edit stackpilot.json; rebuilding regenerates plans and runtime launchers.')
     target = root.joinpath(*path.parts)
     current = target
     while current != root:
@@ -88,7 +103,7 @@ def source_files(root):
         directories[:] = sorted(name for name in directories if name not in IGNORED)
         for name in sorted(files):
             path = Path(current)/name
-            if name in {'.git', '.stackpilot-source.json'} or name == '.env' or (name.startswith('.env.') and not name.endswith(('example', 'sample', 'template'))):
+            if name == '.git' or name in GENERATED_METADATA or name == '.env' or (name.startswith('.env.') and not name.endswith(('example', 'sample', 'template'))) or (name.endswith('.env') and not name.startswith('.env.')):
                 continue
             if path.is_symlink():
                 raise ValueError('Source symlink requires explicit portable packaging')
@@ -284,12 +299,15 @@ class Workspaces:
         path = safe_path(self.directory(run_id, agent_id), relative)
         if not path.is_file() or path.stat().st_size > 1024*1024:
             raise ValueError('File missing or exceeds 1 MiB')
-        return {'content': path.read_text(encoding='utf-8'), 'file_path': relative, 'revision': digest(path)}
+        from .project_context import is_env_file,env_observation
+        content=path.read_text(encoding='utf-8')
+        return {'content': env_observation(content) if is_env_file(path) else content, 'file_path': relative, 'revision': digest(path)}
 
     def write(self, run_id, agent_id, relative, content, scopes, expected=None, delete=False):
         if not allowed(relative, scopes):
             raise PermissionError('File is outside the assigned write scope')
         path = safe_path(self.directory(run_id, agent_id), relative)
+        if path.name=='.stackpilot-context.json':raise PermissionError('Deployment context is owned by the executor')
         current = digest(path)
         if current != expected:
             raise ValueError('Stale file revision; read the current file before editing')
@@ -298,6 +316,13 @@ class Workspaces:
         else:
             if not isinstance(content, str) or len(content.encode()) > 1024*1024:
                 raise ValueError('File content must not exceed 1 MiB')
+            if path.name in {'stackpilot.json', 'stackpilot.completion.json'}:
+                try:
+                    contract = json.loads(content)
+                except ValueError as error:
+                    raise ValueError('Deployment and completion contracts require valid JSON; the previous file was preserved') from error
+                if not isinstance(contract, dict):
+                    raise ValueError('Deployment and completion contracts must be JSON objects')
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_name(path.name+'.stackpilot-write')
             temporary.write_text(content, encoding='utf-8', newline='')

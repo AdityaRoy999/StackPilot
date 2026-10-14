@@ -24,10 +24,51 @@ class IsolationTests(unittest.IsolatedAsyncioTestCase):
         manager = BrowserManager()
         manager.sessions['existing'] = BrowserSession('existing')
         manager.sessions['existing'].is_connected = True
+        manager.sessions['existing'].listeners.add(lambda event: None)
         with patch.dict('os.environ',{'BROWSER_MAX_SESSIONS':'1'}), patch.object(BrowserSession,'connect',AsyncMock()) as connect:
             with self.assertRaisesRegex(RuntimeError,'capacity'):
                 await manager.get_or_create_session('overflow')
             connect.assert_not_awaited()
+
+    async def test_full_chat_pool_reclaims_only_unviewed_inactive_tab(self):
+        manager = BrowserManager()
+        stale = BrowserSession('closed-chat')
+        stale.is_connected = True
+        stale.close = AsyncMock()
+        manager.sessions['closed-chat'] = stale
+        async def connect(session): session.is_connected = True
+        with patch.dict('os.environ', {'BROWSER_MAX_SESSIONS': '1'}), patch.object(BrowserSession, 'connect', connect):
+            fresh = await manager.get_or_create_session('new-chat')
+        stale.close.assert_awaited_once()
+        self.assertEqual(set(manager.sessions), {'new-chat'})
+        self.assertIs(manager.sessions['new-chat'], fresh)
+
+    async def test_run_awaiting_planner_keeps_its_tab_without_a_viewer(self):
+        manager = BrowserManager()
+        active = BrowserSession('testing')
+        active.is_connected = True
+        manager.sessions['testing'] = active
+        manager.protected_sessions.add('testing')
+        with patch.dict('os.environ', {'BROWSER_MAX_SESSIONS': '1'}), patch.object(BrowserSession, 'connect', AsyncMock()) as connect:
+            with self.assertRaisesRegex(RuntimeError, 'capacity'):
+                await manager.get_or_create_session('new-chat')
+        connect.assert_not_awaited()
+        self.assertIs(manager.sessions['testing'], active)
+
+    async def test_release_checks_have_bounded_capacity_separate_from_viewed_chats(self):
+        manager = BrowserManager()
+        viewed = BrowserSession('viewed')
+        viewed.is_connected = True
+        viewed.listeners.add(lambda event: None)
+        manager.sessions['viewed'] = viewed
+        async def connect(session): session.is_connected = True
+        with patch.dict('os.environ', {'BROWSER_MAX_SESSIONS': '1', 'BROWSER_VERIFICATION_MAX_SESSIONS': '1'}), patch.object(BrowserSession, 'connect', connect):
+            check = await manager.get_or_create_session('check', purpose='verification')
+            with self.assertRaisesRegex(RuntimeError, 'capacity'):
+                await manager.get_or_create_session('another-check', purpose='verification')
+        self.assertIs(manager.sessions['viewed'], viewed)
+        self.assertEqual(check.purpose, 'verification')
+        self.assertEqual(len(manager.sessions), 2)
     async def test_context_lifetime_is_bound_to_persistent_owner_connection(self):
         commands = AsyncMock(side_effect=[{'browserContextId':'owned'}, {'targetId':'target'},
                                          {'windowId':7}, {}])

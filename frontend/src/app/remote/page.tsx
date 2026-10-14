@@ -13,6 +13,7 @@ export default function RemotePhonePage() {
   const [device, setDevice] = useState<Device | null>(null);
   const [secret, setSecret] = useState("");
   const [name, setName] = useState("My phone");
+  const [location, setLocation] = useState("");
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -58,7 +59,7 @@ export default function RemotePhonePage() {
     setBusy(true); setError("");
     const token = deviceSecret(); localStorage.setItem(DEVICE_KEY, token);
     try {
-      const current = await remoteRequest<Device>("/connect", { secret, name: name.trim() || "My phone" });
+      const current = await remoteRequest<Device>("/connect", { secret, name: name.trim() || "My phone", location_label: location.trim(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
       setDevice(current); setSecret("");
     } catch (e) { forgetRemoteDevice(); setError(e instanceof Error ? e.message : "Pairing failed."); }
     finally { pairing.current = false; setBusy(false); }
@@ -70,7 +71,7 @@ export default function RemotePhonePage() {
       {error && <p role="alert" className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
       {!ready || device?.status === "approved" ? <p className="flex items-center gap-2 text-sm"><Loader2 className="size-4 animate-spin" />Opening your dashboard...</p>
       : device?.status === "pending" ? <div className="space-y-4"><ShieldCheck className="size-7 text-primary" /><h2 className="text-xl font-semibold">Confirm this phone on your computer</h2><p className="text-sm text-muted-foreground">Open Remote in StackPilot and approve the matching code.</p><p className="rounded-xl bg-muted p-5 text-center font-mono text-4xl font-semibold tracking-[.18em]">{device.confirmation_code}</p><p className="text-sm text-muted-foreground">Your full dashboard opens automatically after approval.</p></div>
-      : secret ? <div className="space-y-4"><p className="text-sm leading-relaxed text-muted-foreground">Connect to your existing account to manage projects, deployments, monitoring, infrastructure, AI, secrets, organizations and settings.</p><label htmlFor="phone-name" className="block text-sm font-medium">Device name</label><Input id="phone-name" value={name} onChange={e => setName(e.target.value)} maxLength={80} /><Button className="w-full min-h-11" disabled={busy} onClick={() => void pair()}>{busy && <Loader2 className="size-4 animate-spin" />}Connect this phone</Button></div>
+      : secret ? <div className="space-y-4"><p className="text-sm leading-relaxed text-muted-foreground">Connect to your existing account to manage projects, deployments, monitoring, infrastructure, AI, secrets, organizations and settings.</p><label htmlFor="phone-name" className="block text-sm font-medium">Device name</label><Input id="phone-name" value={name} onChange={e => setName(e.target.value)} maxLength={80} /><label htmlFor="phone-location" className="block text-sm font-medium">Location label (optional)</label><Input id="phone-location" value={location} onChange={e => setLocation(e.target.value)} maxLength={80} placeholder="Home, office, or city" /><p className="text-xs text-muted-foreground">Shown on your computer. Your GPS location is not collected.</p><Button className="w-full min-h-11" disabled={busy} onClick={() => void pair()}>{busy && <Loader2 className="size-4 animate-spin" />}Connect this phone</Button></div>
       : <div className="space-y-4"><p className="text-sm leading-relaxed text-muted-foreground">On your computer, open <strong>Remote</strong> above Settings, enable the secure link, and scan the pairing QR code with this phone.</p><Button className="w-full min-h-11" variant="outline" onClick={() => void refresh()}><RefreshCw className="size-4" />Check connection</Button></div>}
       <p className="text-xs leading-relaxed text-muted-foreground">The same projects, controls and permissions as your computer. Keep your StackPilot host running. You can disconnect this phone from Remote at any time.</p>
     </section>

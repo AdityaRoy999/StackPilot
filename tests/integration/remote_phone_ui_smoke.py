@@ -66,7 +66,8 @@ window.WebSocket=class {
 };"""))
             await cdp.call('Emulation.setDeviceMetricsOverride',dict(width=1440,height=1000,deviceScaleFactor=1,mobile=False))
             await cdp.call('Page.navigate',dict(url='http://frontend:3000/dashboard/remote'))
-            await wait_for(cdp,"document.body?.innerText.includes('Pair a phone')",30)
+            await wait_for(cdp,"document.body?.innerText.includes('Connect remote device')",30)
+            await cdp.evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Connect remote device')).click()")
             await wait_for(cdp,"document.querySelector('#remote-origin')?.value.includes('fixture')",30)
             sidebar=await cdp.evaluate("[...document.querySelectorAll('aside a')].map(a=>a.getAttribute('href'))")
             assert sidebar.index('/dashboard/remote')<sidebar.index('/dashboard/settings'),sidebar

@@ -65,11 +65,23 @@ docker compose --profile ai --profile browser up -d --build
 
 The core profiles start the dashboard, backend, AI service and browser. Observability services are enabled separately with `--profile monitoring`.
 
+The remote browser is also optional. After configuring the remote worker URL, SSH host, and pinned SSH key volume, start its tunnel explicitly:
+
+```bash
+docker compose --profile remote-browser up -d remote-browser-tunnel
+docker compose --profile remote-browser ps remote-browser-tunnel
+```
+
+The SSH host and pinned key volume are a one-time setup. Start the tunnel profile once so Compose creates its container. After that, selecting **Remote** or reopening an expired Remote browser session automatically starts a stopped tunnel and waits briefly for its browser worker. If the remote machine or SSH credentials are unavailable, the Local browser remains selected when a switch fails and StackPilot reports the connection error. A standard `docker compose up` without this profile does not create the tunnel container.
+
 ## Production Compose
 
 ```bash
 python scripts/configure.py --domain stackpilot.example.com --email admin@example.com
 docker compose -f docker-compose.prod.yml --profile ai --profile browser up -d --build
+
+# Only if a remote browser worker is configured:
+docker compose -f docker-compose.prod.yml --profile remote-browser up -d remote-browser-tunnel
 ```
 
 Production compose adds Caddy and serves the app through a single HTTPS domain.

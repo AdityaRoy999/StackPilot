@@ -25,11 +25,20 @@ FIXTURE = """<!doctype html><html><head><title>Agent QA Fixture</title></head><b
 <ul id="suggestions" role="listbox"></ul>
 <input id="readonly" readonly value="locked">
 <button id="noop">No effect</button>
+<button id="theme-icon" aria-label="Switch to dark theme">◐</button>
 <button id="validate" onclick="document.getElementById('feedback').innerHTML='<p role=alert>Email is required</p>'">Submit validation</button>
 <button id="disabled" disabled>Disabled button</button>
+<button id="delayed-enable" disabled onclick="window.delayedClicks=(window.delayedClicks||0)+1;this.setAttribute('aria-pressed','true')">Delayed button</button>
 <div id="feedback"></div>
 <div id="results" hidden></div>
 <button id="slow" onclick="document.getElementById('feedback').textContent='Unrelated mutation';setTimeout(()=>{let r=document.getElementById('results');r.hidden=false;r.textContent='Mumbai to Delhi | 2027-01-02';},400)">Search fixture</button>
+<div id="custom-control" style="cursor:pointer;width:160px;height:36px"><span id="custom-label">Choose date</span></div>
+<div id="origin-wrapper"><span>From</span><input id="origin-unlabelled" type="text"></div>
+<div id="async-picker" style="cursor:pointer;width:160px;height:36px" onclick="window.pickerClicks=(window.pickerClicks||0)+1;setTimeout(()=>{this.textContent='Picker opened'},120)">Choose station</div>
+<div id="plain-picker"><span>Origin</span><input id="plain-autocomplete" oninput="plainSuggest()"><ul id="plain-options" hidden></ul></div>
+<div id="unmount-wrapper"><div id="unmount-field">From Enter Origin</div><div id="unmount-popup"><span>From</span><input id="unmount-autocomplete" oninput="unmountSuggest()"><ul id="unmount-options" hidden></ul></div></div>
+<div id="oversized-pointer" style="cursor:pointer;width:180px;height:80px">A layout shell with a long description that is deliberately not an action name. A layout shell with a long description that is deliberately not an action name. A layout shell with a long description that is deliberately not an action name. <span id="nested-pointer">Nested choice</span></div>
+<nav style="position:relative;height:40px"><button id="nav-target" aria-pressed="false" onclick="this.setAttribute('aria-pressed','true')">Open route</button><div id="hover-cover" style="position:absolute;inset:0;z-index:3;background:rgba(0,0,0,.01)"></div></nav>
 <input id="travel-date" type="date" oninput="window.dateInputs=(window.dateInputs||0)+1" onchange="window.dateChanges=(window.dateChanges||0)+1">
 <input id="password" type="password" value="fixture-secret">
 <div class="ambiguous">First</div><div class="ambiguous">Second</div>
@@ -42,6 +51,29 @@ function fixtureSuggest() {
     document.getElementById('suggestions').replaceChildren(option);
   }, 180);
 }
+function plainSuggest() {
+  setTimeout(() => {
+    const list=document.getElementById('plain-options');list.hidden=false;
+    const item=document.createElement('li');item.textContent='Delhi';
+    item.onclick=()=>{document.getElementById('plain-autocomplete').value='Delhi';list.hidden=true};
+    list.replaceChildren(item);
+  }, 80);
+}
+function unmountSuggest() {
+  setTimeout(() => {
+    const list=document.getElementById('unmount-options');list.hidden=false;
+    const item=document.createElement('li');item.textContent='BPL, Bhopal - All Stations';
+    item.onclick=()=>{document.getElementById('unmount-field').textContent='From BPL, Bhopal';document.getElementById('unmount-popup').remove()};
+    list.replaceChildren(item);
+  }, 80);
+}
+document.getElementById('custom-control').addEventListener('click', function () {
+  this.textContent='Date picker opened';
+});
+document.getElementById('oversized-pointer').addEventListener('click', event => {
+  if (event.target.id === 'nested-pointer') event.target.textContent='Nested opened';
+});
+document.addEventListener('mousemove', () => document.getElementById('hover-cover')?.remove(), {once:true});
 </script>
 </body></html>"""
 
@@ -78,6 +110,89 @@ class LiveBrowserTests(unittest.IsolatedAsyncioTestCase):
 
     def element_id(self, dom_id):
         return next(e["id"] for e in self.session.interactive_elements if e.get("input_id") == dom_id)
+
+    async def test_noop_label_cannot_complete_the_task_in_chromium(self):
+        self.session.task_context = {'goal': 'Click the no effect button and verify its action'}
+        ref = self.element_id('noop')
+        result = await execute_tool_call('browser_interact_batch', {
+            'session_id': self.session.session_id, 'include_frame': False, 'complete_task': True,
+            'actions': [{'action': 'assert', 'purpose': 'outcome',
+                         'expectations': [{'kind': 'text', 'element_id': ref, 'expected': 'No effect'}]}]}, 'fixture')
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertEqual(result['results'][0]['purpose'], 'checkpoint')
+        self.assertFalse(result['completion_verified'])
+
+    async def test_smooth_section_navigation_verifies_destination_not_nav_label(self):
+        tree = await self.session.send_command('Page.getFrameTree')
+        await self.session.send_command('Page.setDocumentContent', {
+            'frameId': tree['frameTree']['frame']['id'],
+            'html': '<html><head><title>Portfolio</title></head><body>'
+                    '<button id="about-nav" onclick="document.getElementById(\'about-section\').scrollIntoView({behavior:\'smooth\'})">About</button>'
+                    '<div style="height:1500px"></div><section id="about-section" style="height:400px">About the author</section>'
+                    '</body></html>'})
+        await self.session.extract_interactive_tree()
+        self.session.task_context = {'goal': 'Open the About section'}
+        self.session.current_url = 'about:blank'
+        await self.interact('click', 'about-nav')
+        result = await execute_tool_call('browser_interact_batch', {
+            'session_id': self.session.session_id, 'include_frame': False, 'complete_task': True,
+            'actions': [{'action': 'assert', 'purpose': 'outcome',
+                         'expectations': [{'kind': 'in_viewport', 'selector': '#about-section'}]}]}, 'fixture')
+        self.assertTrue(result['completion_verified'], result)
+        self.assertTrue(result['results'][0]['assertions'][0]['actual']['in_viewport'])
+
+    async def test_delegated_pointer_control_is_observed_once_and_clickable(self):
+        custom=self.element_id('custom-control')
+        self.assertNotIn('custom-label',[e.get('input_id') for e in self.session.interactive_elements])
+        result=await self.interact('click','custom-control')
+        self.assertEqual(result.get('status'),'passed',result)
+        self.assertEqual(await self.session.evaluate("document.getElementById('custom-control').textContent"),
+                         'Date picker opened')
+
+    async def test_unlabelled_custom_input_inherits_short_wrapper_caption(self):
+        control = next(e for e in self.session.interactive_elements if e.get('input_id') == 'origin-unlabelled')
+        self.assertEqual(control['text'], 'From')
+
+    async def test_password_value_is_not_used_as_a_control_label(self):
+        control = next(e for e in self.session.interactive_elements if e.get('input_id') == 'password')
+        self.assertNotIn('fixture-secret',str(control))
+
+    async def test_fast_custom_picker_waits_for_effect_without_double_click(self):
+        result = await self.interact('click', 'async-picker')
+        self.assertEqual(result.get('status'), 'passed', result)
+        self.assertEqual(await self.session.evaluate("document.getElementById('async-picker').textContent"),
+                         'Picker opened')
+        self.assertEqual(await self.session.evaluate('window.pickerClicks'), 1)
+
+    async def test_plain_list_autocomplete_has_observable_options_and_commits(self):
+        control_id=self.element_id('plain-autocomplete')
+        await self.session.type_text('Del',element_id=control_id)
+        await asyncio.sleep(.15)
+        from app.browser_testing.widgets import observe_widgets
+        widgets=await observe_widgets(self.session)
+        self.assertEqual(widgets['popup_options'][0]['controls'][0]['text'], 'Delhi')
+        result=await self.interact('choose_option','plain-autocomplete',option_text='Delhi')
+        self.assertEqual(result.get('status'),'passed',result)
+        self.assertEqual(await self.session.evaluate("document.getElementById('plain-autocomplete').value"),'Delhi')
+
+    async def test_autocomplete_input_unmounts_but_field_display_confirms_choice(self):
+        result=await self.interact('choose_option','unmount-autocomplete',
+                                   text='Bho',option_text='BPL, Bhopal - All Stations')
+        self.assertEqual(result.get('status'),'passed',(result.get('error'),self.session.last_actionability))
+        self.assertEqual(await self.session.evaluate("document.getElementById('unmount-field').textContent"),
+                         'From BPL, Bhopal')
+        self.assertIsNone(await self.session.evaluate("document.getElementById('unmount-autocomplete')"))
+
+    async def test_navigation_control_recovers_from_unnamed_hover_cover(self):
+        self.assertIsNotNone(await self.session.evaluate("document.getElementById('hover-cover')"))
+        result=await self.interact('click','nav-target')
+        self.assertEqual(result.get('status'),'passed',result)
+        self.assertEqual(await self.session.evaluate("document.getElementById('nav-target').getAttribute('aria-pressed')"),'true')
+
+    async def test_named_child_of_oversized_pointer_shell_is_observed(self):
+        result=await self.interact('click','nested-pointer')
+        self.assertEqual(result.get('status'),'passed',result)
+        self.assertEqual(await self.session.evaluate("document.getElementById('nested-pointer').textContent"),'Nested opened')
 
     async def interact(self, action, dom_id=None, approved=False, **kwargs):
         args = {"session_id": self.session.session_id, "action": action, "include_frame": False, **kwargs}
@@ -129,10 +244,81 @@ class LiveBrowserTests(unittest.IsolatedAsyncioTestCase):
         result = await self.interact("click", "checkbox")
         self.assertTrue(await self.session.evaluate("document.getElementById('checkbox').checked"))
         self.assertEqual(result["status"], "passed")
+        self.assertGreaterEqual(result['timing']['target_resolve_ms'], 0)
+        self.assertGreaterEqual(result['timing']['dispatch_ms'], 0)
+        self.assertGreaterEqual(result['timing']['verify_ms'], 0)
 
     async def test_no_effect_is_unverified(self):
         result = await self.interact("click", "noop")
         self.assertEqual(result["status"], "unverified")
+
+    async def test_text_field_focus_is_an_idempotent_preparation_checkpoint(self):
+        for _ in range(2):
+            result = await self.interact('click', 'email')
+            self.assertEqual(result['status'], 'passed')
+            self.assertEqual(result['verification']['effect_type'], 'field_focus')
+        self.assertFalse(result.get('completion_verified', False))
+
+    async def test_long_form_plan_is_compiled_and_asserted_without_redundant_clicks(self):
+        fields = ['email', 'origin-unlabelled', 'plain-autocomplete']
+        actions = []
+        for index, field in enumerate(fields):
+            ref = self.element_id(field)
+            actions.extend([
+                {'action': 'click', 'element_id': ref, 'description': 'Focus field'},
+                {'action': 'type', 'element_id': ref, 'text': 'QA ' + str(index)},
+                {'action': 'assert', 'element_id': ref,
+                 'expectations': [{'kind': 'value', 'expected': 'QA ' + str(index)}]},
+            ])
+        result = await execute_tool_call('browser_interact_batch', {
+            'session_id': self.session.session_id, 'actions': actions, 'include_frame': False}, 'fixture')
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertEqual(result['planned_count'], 9)
+        self.assertEqual(result['compiled_count'], 6)
+        self.assertEqual(result['executed_count'], 6)
+
+    async def test_long_plan_executes_all_known_checkpoints(self):
+        ref = self.element_id('email')
+        actions = [{'action': 'type', 'element_id': ref, 'text': 'QA'}] + [
+            {'action': 'assert', 'expectations': [{'kind': 'value', 'element_id': ref, 'expected': 'QA'}],
+             'timeout_seconds': 0} for _ in range(8)]
+        result = await execute_tool_call('browser_interact_batch', {
+            'session_id': self.session.session_id, 'actions': actions, 'include_frame': False}, 'fixture')
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertEqual(result['executed_count'], 9)
+        self.assertEqual(result['remaining_count'], 0)
+        self.assertFalse(result['completion_verified'])
+
+    async def test_long_plan_rejects_malformed_tail_before_input(self):
+        actions = [{'action': 'type', 'element_id': self.element_id('email'), 'text': 'Must not type'}] + [
+            {'action': 'get_theme'} for _ in range(8)] + [{'action': 'click'}]
+        result = await execute_tool_call('browser_interact_batch', {
+            'session_id': self.session.session_id, 'actions': actions, 'include_frame': False}, 'fixture')
+        self.assertEqual(result['status'], 'failed', result)
+        self.assertIn('No actions executed', result['error'])
+        self.assertEqual(await self.session.evaluate("document.getElementById('email').value"), '')
+
+    async def test_popup_transition_stops_batch_before_background_input(self):
+        await self.session.evaluate("""(() => {
+          const button = document.createElement('button'); button.id = 'open-details';
+          button.textContent = 'Open details'; button.onclick = () => {
+            const dialog = document.createElement('div'); dialog.role = 'dialog';
+            dialog.setAttribute('aria-modal', 'true'); dialog.textContent = 'Details';
+            dialog.style = 'position:fixed;inset:50px;background:white;z-index:999';
+            document.body.append(dialog);
+          }; document.body.append(button); button.scrollIntoView();
+        })()""")
+        await self.session.extract_interactive_tree()
+        result = await execute_tool_call('browser_interact_batch', {
+            'session_id': self.session.session_id, 'include_frame': False, 'actions': [
+                {'action': 'click', 'element_id': self.element_id('open-details')},
+                {'action': 'type', 'element_id': self.element_id('email'), 'text': 'Must not type'},
+            ]}, 'fixture')
+        self.assertEqual(result['executed_count'], 1, result)
+        self.assertEqual(result['results'][0]['verification']['effect_type'], 'modal_open')
+        self.assertEqual(result['remaining_count'], 1)
+        self.assertFalse(result['completion_verified'])
+        self.assertEqual(await self.session.evaluate("document.getElementById('email').value"), '')
 
     async def test_validation_is_failed(self):
         result = await self.interact("click", "validate",approved=True)
@@ -152,17 +338,27 @@ class LiveBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "stale_element")
         self.assertEqual(await self.session.evaluate("document.getElementById('email').value"), "")
 
-    async def test_replaced_control_cannot_inherit_old_reference(self):
+    async def test_replaced_control_is_rebound_only_when_unique(self):
         old = self.element_id('checkbox')
         await self.session.evaluate("document.getElementById('checkbox').replaceWith(document.getElementById('checkbox').cloneNode(true))")
         await self.session.extract_interactive_tree()
         self.assertNotEqual(old,self.element_id('checkbox'))
         result = await self.interact('click',element_id=old)
-        self.assertIn(result['status'],{'stale_element','failed'})
-        self.assertFalse(await self.session.evaluate("document.getElementById('checkbox').checked"))
+        self.assertEqual(result['status'],'passed')
+        self.assertTrue(await self.session.evaluate("document.getElementById('checkbox').checked"))
         result = await execute_tool_call('browser_assert',{'session_id':self.session.session_id,
             'timeout_seconds':0,'expectations':[{'kind':'checked','element_id':old,'expected':False}]},'fixture')
         self.assertNotEqual(result['status'],'passed')
+
+    async def test_replaced_control_with_duplicate_match_is_not_dispatched(self):
+        old = self.element_id('checkbox')
+        await self.session.evaluate("""const original=document.getElementById('checkbox');
+            original.replaceWith(original.cloneNode(true), original.cloneNode(true));""")
+        result = await self.interact('click',element_id=old)
+        self.assertEqual(result['status'],'stale_element')
+        self.assertEqual(result['candidate_count'],2)
+        self.assertFalse(await self.session.evaluate(
+            "[...document.querySelectorAll('input[type=checkbox]')].some(node=>node.checked)"))
 
     async def test_repeated_observation_is_fresh_without_rewriting_control_ids(self):
         old = self.element_id('checkbox')
@@ -210,6 +406,12 @@ class LiveBrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_disabled_target_not_clicked(self):
         result = await self.interact("click", "disabled")
         self.assertIn(result["status"], {"failed", "stale_element"})
+
+    async def test_control_enabled_after_hydration_is_clicked_once(self):
+        await self.session.evaluate("setTimeout(()=>document.getElementById('delayed-enable').disabled=false,220)")
+        result = await self.interact('click', 'delayed-enable')
+        self.assertEqual(result['status'], 'passed', result)
+        self.assertEqual(await self.session.evaluate('window.delayedClicks'), 1)
 
     async def test_async_autocomplete_is_selected_once(self):
         result = await self.interact("type", "autocomplete", text="Mumbai", auto_select_suggestion="Mumbai")
@@ -304,6 +506,17 @@ class LiveBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["recovery"]["reason"], "disabled")
         self.assertEqual(result["recovery"]["invalid_fields"][0]["label"], "Postal code")
 
+    async def test_enabled_submit_does_not_fire_with_missing_required_fact(self):
+        await self.session.evaluate("""document.body.insertAdjacentHTML('beforeend',
+            '<form id=travel><input name=travelDate type=date required aria-label="Travel date"><button id=book type=submit onclick="window.bookClicks=(window.bookClicks||0)+1">Book</button></form>');
+            document.getElementById('travel').onsubmit=e=>e.preventDefault();""")
+        self.session.task_context = {'goal': 'Book a train for me'}
+        await self.session.extract_interactive_tree()
+        result = await self.interact('click', 'book')
+        self.assertEqual(result['status'], 'failed')
+        self.assertIn('required fields', result['error'])
+        self.assertEqual(await self.session.evaluate('window.bookClicks||0'), 0)
+
     async def test_native_select_exact_quoted_value_dispatches_once(self):
         await self.session.evaluate("document.body.insertAdjacentHTML('beforeend','<select id=choice onchange=\"window.selectChanges=(window.selectChanges||0)+1\"><option value=none>None</option><option value=two>Second</option></select>');document.getElementById('choice').options[1].text='A \"quoted\" choice'")
         await self.session.extract_interactive_tree()
@@ -360,6 +573,16 @@ class LiveBrowserTests(unittest.IsolatedAsyncioTestCase):
         await self.interact("click", "slow")
         result = await self.assert_state([{"kind": "text", "selector": "#results", "expected": "Mumbai to Chennai | 2027-01-02"}], .6)
         self.assertEqual(result["status"], "failed")
+
+    async def test_icon_button_accessible_name_is_not_visible_text(self):
+        result = await self.assert_state([{"kind": "accessible_name", "selector": "#theme-icon", "expected": "Switch to dark theme"}], 0)
+        self.assertEqual(result["status"], "passed")
+        visible_text = await self.assert_state([{"kind": "text", "selector": "#theme-icon", "expected": "Switch to dark theme"}], 0)
+        self.assertEqual(visible_text["status"], "failed")
+        title = await self.assert_state([{"kind": "title", "element_id": self.element_id("theme-icon"), "expected": "Agent QA Fixture"}], 0)
+        self.assertEqual(title["status"], "passed")
+        in_viewport = await self.assert_state([{"kind": "in_viewport", "selector": "#theme-icon", "expected": True}], 0)
+        self.assertEqual(in_viewport["status"], "passed")
 
     async def test_expected_validation_rejection_passes_negative_case(self):
         await self.interact("click", "validate",approved=True)

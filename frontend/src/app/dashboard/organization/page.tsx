@@ -20,6 +20,7 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DisclosureSection } from "@/components/ui/disclosure-section";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -367,16 +368,11 @@ export default function OrganizationPage() {
               <>
                 {/* Add Member / Invite Teammate */}
                 {canManage && (
-                  <Card className="bg-card border-border/70">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-base font-semibold">Invite Teammate</CardTitle>
-                      <CardDescription>
-                        Invite team members by email. If they do not have an account yet, a secure invite link is generated and they will automatically join when they register.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
+                  <DisclosureSection title="Invite teammate" description="Add a member by email and choose their access level">
+                    <div className="space-y-4">
+
                       <div className="flex flex-wrap items-end gap-3">
-                        <div className="flex min-w-64 flex-1 flex-col gap-1.5">
+                        <div className="flex min-w-0 basis-56 flex-1 flex-col gap-1.5">
                           <Label htmlFor="invite-email" className="text-xs font-semibold text-muted-foreground uppercase">
                             Email Address
                           </Label>
@@ -426,8 +422,8 @@ export default function OrganizationPage() {
                         </Button>
                       </div>
                       <p className="text-xs text-muted-foreground">{ROLE_SUMMARY[inviteRole]}</p>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </DisclosureSection>
                 )}
 
                 {/* Pending Invitations Section */}

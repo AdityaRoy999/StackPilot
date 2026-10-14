@@ -4,11 +4,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CreateProjectDialog } from "@/components/CreateProjectDialog";
-import { EditProjectDialog } from "@/components/EditProjectDialog";
+import { NewProjectButton as CreateProjectDialog } from "@/components/projects/NewProjectButton";
+import { ProjectInfoDialog } from "@/components/projects/ProjectInfoDialog";
+import { ProjectStackIcons } from "@/components/projects/ProjectStack";
+import { ProjectEditButton as EditProjectDialog } from "@/components/projects/ProjectEditButton";
 import { DeleteProjectDialog } from "@/components/DeleteProjectDialog";
 import { useWorkspace } from "@/context/WorkspaceContext";
-import { Building2, ExternalLink, Code2, Loader2, Play, CheckCircle, Clock, Server, Search, Boxes } from "@/lib/platform-icons";
+import { Building2, ExternalLink, Code2, Loader2, Play, Clock, Server, Search, Boxes } from "@/lib/platform-icons";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +19,7 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { AppIcon } from "@/lib/custom-icons";
 import { toast } from "sonner";
+import { projectReleaseLabel, type ProjectRelease } from "@/lib/project-release";
 
 interface Project {
   id: string;
@@ -35,9 +38,11 @@ interface Project {
   env_var_count?: number;
   status: string;
   created_at: string;
+  updated_at?: string;
+  latest_deployment?: DeploymentListItem | null;
 }
 
-interface DeploymentListItem {
+interface DeploymentListItem extends ProjectRelease {
   id: string;
   project_id?: string;
   project_name?: string;
@@ -88,16 +93,21 @@ export default function DashboardPage() {
       if (!Array.isArray(res.data.projects)) throw new Error("Invalid projects response");
       return res.data;
     },
-    refetchInterval: 5000, // Poll every 5 seconds
+    refetchInterval: 15000,
+  });
+
+  const legacyReleaseListing = !!data?.projects.some(project => project.latest_deployment === undefined);
+  const releasesQuery = useQuery({
+    queryKey: ["deployments"],
+    queryFn: async () => (await api.get<DeploymentsCache>("/deployments")).data,
+    refetchInterval: 10000,
+    enabled: legacyReleaseListing,
   });
 
   const deployMutation = useMutation({
     mutationFn: async (project: Project) => {
       setDeployingId(project.id);
-      const depRes = await api.post(`/projects/${project.id}/deployments`, {
-        version: "v1.0." + Math.floor(Math.random() * 100),
-        commit_hash: "manual-trigger"
-      });
+      const depRes = await api.post(`/projects/${project.id}/deployments`, { trigger_source: "manual" });
       const deployment = depRes.data.deployment as DeploymentListItem;
       const deploymentId = deployment.id;
 
@@ -134,7 +144,7 @@ export default function DashboardPage() {
         };
       });
 
-      await api.post(`/deployments/${deploymentId}/trigger`);
+      const trigger = await api.post(`/deployments/${deploymentId}/trigger`);
       queryClient.setQueryData<DeploymentsCache>(["deployments"], (current) => {
         if (!Array.isArray(current?.deployments)) {
           return current;
@@ -143,7 +153,7 @@ export default function DashboardPage() {
         return {
           ...current,
           deployments: current.deployments.map((item) =>
-            item.id === deploymentId ? { ...item, status: "queued" } : item
+            item.id === deploymentId ? { ...item, status: trigger.data.status || "queued" } : item
           )
         };
       });
@@ -152,9 +162,12 @@ export default function DashboardPage() {
     onSuccess: () => {
       router.push("/dashboard/deployments");
       queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || "Deployment failed");
+      queryClient.invalidateQueries({ queryKey: ["deployments"] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
     onSettled: () => {
       setDeployingId(null);
@@ -169,6 +182,17 @@ export default function DashboardPage() {
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.description?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+  const latestReleases = new Map<string, DeploymentListItem>();
+  for (const project of projects) if (project.latest_deployment) latestReleases.set(project.id, project.latest_deployment);
+  for (const release of releasesQuery.data?.deployments || []) {
+    if (!release.project_id) continue;
+    const current = latestReleases.get(release.project_id);
+    if (!current || (release.created_at || "") > (current.created_at || "")) latestReleases.set(release.project_id, release);
+  }
+  const verifiedCount = projects.filter(project => projectReleaseLabel(latestReleases.get(project.id)).tone === "positive").length;
+  const failedCount = projects.filter(project => projectReleaseLabel(latestReleases.get(project.id)).tone === "negative").length;
+  const releaseStatusLoading = legacyReleaseListing && releasesQuery.isPending;
+  const releaseStatusError = isError || (legacyReleaseListing && releasesQuery.isError);
 
   if (isLoading || workspaceLoading) {
     return (
@@ -180,11 +204,12 @@ export default function DashboardPage() {
 
   return (
     <div className="min-w-0 max-w-6xl mx-auto space-y-6 sm:space-y-8">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="workspace-page-heading flex flex-col lg:flex-row lg:items-end justify-between gap-5">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Projects</h1>
+          <p className="workspace-section-label mb-3">Application workspace</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Projects</h1>
           <p className="text-muted-foreground mt-1">
-            Build and manage your autonomous application deployments.
+            Your source, releases, and runtime. All in one place.
           </p>
           {activeWorkspace && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -201,11 +226,22 @@ export default function DashboardPage() {
               aria-label="Search projects"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-card"
+              className="h-11 pl-10 bg-card sm:h-9"
             />
           </div>
           <CreateProjectDialog />
         </div>
+      </div>
+
+      <div className="workspace-stats" aria-label="Project summary">
+        <div className="workspace-stat"><span className="workspace-section-label">Projects</span><span className="workspace-stat-number">{projects.length.toString().padStart(2, "0")}</span></div>
+        <div className="workspace-stat"><span className="workspace-section-label">Verified releases</span><span className="workspace-stat-number">{releaseStatusLoading || releaseStatusError ? "—" : verifiedCount.toString().padStart(2, "0")}</span></div>
+        <div className="workspace-stat"><span className="workspace-section-label">Needs attention</span><span className="workspace-stat-number">{releaseStatusLoading || releaseStatusError ? "—" : failedCount.toString().padStart(2, "0")}</span></div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium">{searchTerm ? "Search results" : "Your projects"} <span className="ml-1 font-mono text-xs text-muted-foreground">({filteredProjects.length})</span></h2>
+        <Link href="/dashboard/deployments" className="text-xs text-muted-foreground hover:text-foreground">Release history <span aria-hidden="true">↗</span></Link>
       </div>
 
       {isError && (
@@ -233,14 +269,21 @@ export default function DashboardPage() {
             : <CreateProjectDialog />}
         </Card>
       ) : (
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {filteredProjects.map((project) => (
-            <Card key={project.id} className="group min-w-0 flex flex-col border-border/70 hover:ring-1 hover:ring-primary/30 transition-colors bg-card overflow-hidden">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {filteredProjects.map((project) => {
+            const release = latestReleases.get(project.id);
+            const summary = projectReleaseLabel(release, releaseStatusError);
+            return (
+            <Card key={project.id} className="group min-w-0 flex flex-col border-border transition-colors hover:border-foreground/30 bg-card overflow-hidden">
               <CardHeader className="pb-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className="project-source-glyph"><Code2 className="h-4 w-4" /></span>
+                  <div className="flex items-center gap-1"><ProjectInfoDialog project={project} /><EditProjectDialog project={project} /><DeleteProjectDialog projectId={project.id} projectName={project.name} /></div>
+                </div>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1 basis-32 space-y-1.5">
-                    <CardTitle className="break-words [overflow-wrap:anywhere] text-lg font-bold text-foreground group-hover:text-primary transition-colors">
-                      {displayProjectName(project)}
+                    <CardTitle className="break-words [overflow-wrap:anywhere] text-lg font-semibold text-foreground">
+                    <Link prefetch={false} href={`/dashboard/projects/${project.id}`} className="hover:underline underline-offset-4">{displayProjectName(project)}</Link>
                     </CardTitle>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="flex items-center">
@@ -250,22 +293,19 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    <EditProjectDialog project={project} />
-                    <DeleteProjectDialog projectId={project.id} projectName={project.name} />
-                  </div>
-                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30">
-                      <AppIcon name="check-circle-2" fallback={CheckCircle} size={12} className="w-3 h-3 mr-1" />
-                      Active
+                    <Badge variant="outline" className={cn("text-[10px] font-normal", summary.tone === "positive" && "text-emerald-700 dark:text-emerald-400", summary.tone === "negative" && "text-destructive", summary.tone === "pending" && "text-amber-700 dark:text-amber-400")}>
+                      <span className={cn("mr-1.5 h-1.5 w-1.5 rounded-full", summary.tone === "positive" ? "bg-emerald-500" : summary.tone === "negative" ? "bg-destructive" : "bg-muted-foreground")} />
+                      {releaseStatusLoading ? "Loading status" : summary.label}
                     </Badge>
                   </div>
                 </div>
                 <CardDescription className="line-clamp-2 text-muted-foreground text-sm mt-2">
-                  {project.description || "No description provided."}
+                  {project.description || (project.source_type === "application" ? "Managed application" : "Source project")}
                 </CardDescription>
               </CardHeader>
               
               <CardContent className="flex-1">
+                <div className="mb-3"><ProjectStackIcons projectId={project.id} updatedAt={project.updated_at} /></div>
                 {projectSourceLabel(project) && (
                   <div className="flex items-center text-[11px] font-mono text-muted-foreground bg-muted/50 p-2 rounded border border-border/50 overflow-hidden">
                     {project.source_type === "application" ? (
@@ -274,11 +314,6 @@ export default function DashboardPage() {
                       <AppIcon name="code-2" fallback={Code2} size={14} className="h-3.5 w-3.5 mr-2 text-muted-foreground/70 flex-shrink-0" />
                     )}
                     <span className="truncate">{projectSourceLabel(project)}</span>
-                  </div>
-                )}
-                {(project.env_var_count ?? 0) > 0 && (
-                  <div className="mt-2 text-xs text-muted-foreground">
-                    {(project.env_var_count ?? 0)} environment variable{(project.env_var_count ?? 0) === 1 ? "" : "s"} configured
                   </div>
                 )}
               </CardContent>
@@ -297,7 +332,7 @@ export default function DashboardPage() {
                 <Button 
                   size="sm" 
                   onClick={() => deployMutation.mutate(project)}
-                  disabled={deployingId === project.id || !projectCanDeploy(project)}
+                  disabled={deployMutation.isPending || !projectCanDeploy(project)}
                 >
                   {deployingId === project.id ? (
                     <AppIcon name="loader2" fallback={Loader2} className="w-4 h-4 mr-2 animate-spin"  />
@@ -308,7 +343,7 @@ export default function DashboardPage() {
                 </Button>
               </CardFooter>
             </Card>
-          ))}
+          );})}
         </div>
       )}
     </div>

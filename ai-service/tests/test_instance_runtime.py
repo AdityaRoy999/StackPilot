@@ -22,6 +22,91 @@ MIGRATIONS=Path(os.getenv('STACKPILOT_TEST_MIGRATIONS',str(Path(__file__).resolv
 
 
 class InstanceRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_receives_actual_frozen_test_command_before_first_model_turn(self):
+        run=self.create_run(); self.store.acquire_lead(run['id'],'fixture-lead')
+        from app.agent_runtime.completion import normalize
+        contract=normalize({'workload':'api','summary':'Preserve original API tests','features':[{'id':'api-tests','description':'Original suite','checks':[{
+            'root':'.','argv':['python','-m','pytest','-q'],'image':'python:3.12-slim','network':True}]}]})
+        self.store.freeze_completion(run['id'],'fixture-lead',contract,'repository_contract')
+        actor=self.worker(run); task=self.store.task(actor.agent_id,actor.run_id)
+        self.runtime.provider=SimpleNamespace(complete=AsyncMock(return_value=({'content':'No source changes needed'},{})))
+        await self.runtime.agent_loop(actor,task)
+        messages=self.runtime.provider.complete.call_args.args[1]
+        context=next(message['content'] for message in messages if 'Frozen original acceptance checks' in str(message.get('content')))
+        check=json.loads(context.partition(': ')[2].split('\n',1)[0])['checks'][0]
+        self.assertEqual(check['argv'],['python','-m','pytest','-q'])
+        self.assertEqual(check['image'],'python:3.12-slim')
+        self.assertTrue(check['network'])
+        self.assertIn('do not invent replacement tests or weaken coverage',context)
+
+    async def test_existing_component_directory_scope_allows_only_that_component(self):
+        component=self.source/'apps/api'; component.mkdir(parents=True); (component/'test.py').write_text('original\n')
+        run=self.create_run(); self.store.acquire_lead(run['id'],'fixture-lead')
+        actor=Actor(self.runtime,run['id'],'lead','fixture-owner',owner='fixture-lead')
+        result=await self.runtime.handle(actor,'spawn_agent',{'goal':'Add meaningful API tests','write_scope':['apps/api']})
+        task=self.store.task(result['agent_id'],run['id'])
+        self.assertEqual(json.loads(task['spec'])['write_scope'],['apps/api/**'])
+        from app.agent_runtime.workspace import allowed
+        self.assertTrue(allowed('apps/api/tests/test_added.py',json.loads(task['spec'])['write_scope']))
+        self.assertFalse(allowed('apps/web/test.py',json.loads(task['spec'])['write_scope']))
+
+    async def test_directory_normalization_cannot_expand_parent_file_scope(self):
+        component=self.source/'apps/api'; component.mkdir(parents=True); (component/'test.py').write_text('original\n')
+        actor=self.worker(spec={'write_scope':['apps/api/test.py']})
+        with self.assertRaisesRegex(PermissionError,'parent capability'):
+            await self.runtime.handle(actor,'spawn_agent',{'goal':'Edit the whole API','write_scope':['apps/api']})
+
+    async def test_failed_check_evidence_survives_submission_in_same_tool_batch(self):
+        actor=self.worker(); task=self.store.task(actor.agent_id,actor.run_id)
+        calls=[{'id':'run','function':{'name':'run_worker_command','arguments':'{"argv":["python","-m","pytest"]}'}},
+               {'id':'submit','function':{'name':'submit_agent_patch','arguments':'{"summary":"Tests passed"}'}}]
+        self.runtime.provider=SimpleNamespace(complete=AsyncMock(return_value=({'tool_calls':calls},{})))
+        async def execute(name,args,user):
+            if name=='run_worker_command':return {'status':'failed','exit_code':1,'output':'FAIL Required test coverage of 90% not reached'}
+            return await self.runtime.handle(actor,name,args)
+        with patch('app.tools.execute_tool_call',side_effect=execute):await self.runtime.agent_loop(actor,task)
+        result=self.store.task(actor.agent_id,actor.run_id)
+        self.assertEqual(result['state'],'failed')
+        self.assertIn('coverage',json.loads(result['result'])['error'])
+        self.assertEqual(self.runtime.provider.complete.await_count,1)
+
+    async def test_source_fix_resets_unchanged_command_failure_budget(self):
+        actor=self.worker(); task=self.store.task(actor.agent_id,actor.run_id)
+        command={'id':'run','function':{'name':'run_worker_command','arguments':'{"argv":["python","-m","pytest"]}'}}
+        observed=self.workspaces.read(actor.run_id,actor.agent_id,'allowed.txt')
+        edit={'id':'edit','function':{'name':'workspace_write_file','arguments':json.dumps({'file_path':'allowed.txt','content':'fixed\n','expected_revision':observed['revision']})}}
+        self.runtime.provider=SimpleNamespace(complete=AsyncMock(side_effect=[({'tool_calls':[call]}, {}) for call in [command,command,edit,command,command,command]]))
+        async def execute(name,args,user):
+            if name=='run_worker_command':return {'status':'failed','exit_code':1,'output':'test assertion failed'}
+            return await self.runtime.handle(actor,name,args)
+        with patch('app.tools.execute_tool_call',side_effect=execute):
+            with self.assertRaisesRegex(RuntimeError,'Repeated tool failure'):await self.runtime.agent_loop(actor,task)
+        self.assertEqual(self.runtime.provider.complete.await_count,6)
+        self.assertEqual(self.workspaces.read(actor.run_id,actor.agent_id,'allowed.txt')['content'],'fixed\n')
+
+    async def test_worker_summary_cannot_turn_a_failed_check_into_completed_task(self):
+        actor=self.worker()
+        commands=[{'status':'failed','exit_code':1,'reason':'Original test coverage requirement was not met'}]
+        self.store.fence(actor.agent_id,actor.owner,actor.attempt,{'command_results':commands})
+        state,result=self.runtime.finalize(actor,'All tests passed',{})
+        self.assertEqual(state,'failed')
+        self.assertFalse(result['verified'])
+        self.assertEqual(result['command_results'],commands)
+        self.assertIn('coverage',result['error'])
+
+    async def test_nonzero_exit_without_error_exhausts_repeated_command_budget(self):
+        actor=self.worker()
+        task=self.store.task(actor.agent_id,actor.run_id)
+        call={'id':'fixture','function':{'name':'run_worker_command','arguments':json.dumps({'argv':['python','-m','pytest']})}}
+        self.runtime.provider=SimpleNamespace(complete=AsyncMock(return_value=({'tool_calls':[call]},{})))
+        with patch('app.tools.execute_tool_call',new=AsyncMock(return_value={'status':'failed','exit_code':1,'output':'No module named pytest'})):
+            with self.assertRaisesRegex(RuntimeError,'Repeated tool failure'):
+                await self.runtime.agent_loop(actor,task)
+        self.assertEqual(self.runtime.provider.complete.await_count,3)
+        checkpoint=json.loads(self.store.task(actor.agent_id,actor.run_id)['checkpoint'])
+        self.assertEqual(list(checkpoint['failures'].values()),[3])
+        self.assertIn('Missing command/dependency',list(checkpoint['failures'])[0])
+
     async def asyncSetUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         self.source=self.root/'source';self.source.mkdir()

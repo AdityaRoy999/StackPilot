@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,8 +19,17 @@ import threading
 import time
 import urllib.request
 
-SKIP = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.gradle', '.next', '.stackpilot-runtime'}
+SKIP = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.gradle', '.next', '.stackpilot-runtime', '.pytest_cache', '.mypy_cache', '.ruff_cache'}
 from sandbox_capabilities import DEFAULT_IMAGES, select
+
+
+def capture_output(captured, block):
+    """Keep the beginning and failure tail of verbose package/build output."""
+    captured.extend(block)
+    if len(captured) > 65000:
+        del captured[8192:len(captured)-56808]
+        return True
+    return False
 
 
 def inventory(root):
@@ -59,6 +69,17 @@ def execute(source, spec):
     argv = spec.get('argv')
     if not isinstance(argv, list) or not 1 <= len(argv) <= 100 or not argv[0] or any(not isinstance(arg, str) or '\0' in arg or len(arg) > 12000 for arg in argv):
         raise ValueError('argv must be a bounded nonempty string array')
+    root = spec.get('root', '.')
+    if not isinstance(root, str) or '\\' in root or Path(root).is_absolute() or '..' in Path(root).parts:
+        raise ValueError('Command root must be a repository-relative directory')
+    directory = (Path(source)/root).resolve()
+    if not directory.is_relative_to(Path(source).resolve()) or not directory.is_dir():
+        raise ValueError('Command root must remain inside the source snapshot')
+    setup = spec.get('setup', [])
+    if not isinstance(setup, list) or len(setup) > 32 or any(not isinstance(command, list) or not 1 <= len(command) <= 100 or not command[0] or any(not isinstance(arg, str) or '\0' in arg or len(arg) > 12000 for arg in command) for command in setup):
+        raise ValueError('Setup must be bounded argv arrays')
+    if argv[0] in {'cd', 'export', 'source'} or any(arg in {'&&', '||', ';', '|', '>'} for arg in argv[1:]):
+        raise ValueError('argv does not interpret shell operators. Use root for cwd and setup for dependency commands, or explicitly invoke ["sh", "-lc", "..."]')
     image = spec.get('image') or 'python:3.12-slim'
     placement = select(spec.get('capabilities', []), image, purpose='command',owned_run=spec.get('run_id'))
     if placement['status'] != 'ready':
@@ -66,6 +87,18 @@ def execute(source, spec):
     network = bool(spec.get('network'))
     if network and os.getenv('STACKPILOT_AGENT_WORKER_NETWORK', 'false').lower() != 'true':
         raise ValueError('Worker network capability is unavailable; request it explicitly')
+    if setup and not network:
+        # A profile can deliberately use an offline SDK; do not override that
+        # choice. Give a useful error for commands that require package servers.
+        installs = any(not any(a in {'--no-index','--offline'} for a in c) and ((c[0] in {'pip', 'pip3', 'npm', 'pnpm', 'yarn', 'apt', 'apt-get'} and any(a in {'install', 'ci', 'update'} for a in c[1:])) or (c[:3] in (['python', '-m', 'pip'], ['python3', '-m', 'pip']) and 'install' in c[3:])) for c in setup)
+        if installs:
+            raise ValueError('Dependency setup needs network=true and admitted worker network; offline installs need an explicit prebuilt SDK')
+    guest_argv = argv
+    if setup:
+        # Quote every argument; model strings are data, never interpolated shell
+        # syntax. Setup failure stops before the requested check can claim success.
+        script = 'set -e\n'+'\n'.join(shlex.join(command) for command in setup)+'\nexec '+shlex.join(argv)
+        guest_argv = ['sh', '-c', script]
     timeout = max(1, min(300, int(spec.get('timeout_seconds', 120))))
     container = 'stackpilot-agent-'+uuid.uuid4().hex
     with tempfile.TemporaryDirectory(prefix='stackpilot-agent-') as temporary:
@@ -77,26 +110,35 @@ def execute(source, spec):
                 if name in SKIP:
                     shutil.rmtree(Path(current)/name)
                     directories.remove(name)
+        # docker cp can retain source UID/mode from the unprivileged broker.
+        # A cap-drop worker cannot override those permissions, even as UID 0.
+        # Normalize only this disposable copy so admitted image users can build
+        # and edit it; returned edits still pass scope and revision checks.
+        for current, _, files in os.walk(input_root):
+            Path(current).chmod(0o777)
+            for name in files:
+                path = Path(current)/name
+                path.chmod(0o666 | (path.stat().st_mode & 0o111))
         created = False
         try:
             if not lease_valid(spec):
                 raise PermissionError('Task execution lease revoked before worker creation')
             creation = ['docker','create','--name',container,'--network','bridge' if network else 'none',
-                '--memory',os.getenv('STACKPILOT_AGENT_WORKER_MEMORY','512m'),'--cpus','1','--pids-limit','128',
-                '--cap-drop','ALL','--security-opt','no-new-privileges','--workdir','/workspace',
-                '--label','stackpilot.agent-task='+str(spec['task_id']), '--entrypoint', argv[0], image, *argv[1:]]
+                '--memory',os.getenv('STACKPILOT_AGENT_WORKER_MEMORY','1g'),'--cpus','1','--pids-limit','128',
+                '--cap-drop','ALL','--security-opt','no-new-privileges','--workdir','/workspace'+('/'+root if root != '.' else ''),
+                '--label','stackpilot.agent-task='+str(spec['task_id']), '--entrypoint', guest_argv[0], image, *guest_argv[1:]]
             created = True
             subprocess.run(creation, check=True, capture_output=True, timeout=120)
             subprocess.run(['docker','cp',str(input_root)+'/.',container+':/workspace'], check=True, capture_output=True, timeout=60)
             timed_out = False
             process = subprocess.Popen(['docker','start','-a',container], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             captured = bytearray()
+            truncated = False
             def drain():
+                nonlocal truncated
                 with process.stdout:
                     while block := process.stdout.read(4096):
-                        remaining = 65536-len(captured)
-                        if remaining > 0:
-                            captured.extend(block[:remaining])
+                        truncated = capture_output(captured, block) or truncated
             reader = threading.Thread(target=drain,daemon=True)
             reader.start()
             started, checked, revoked = time.monotonic(), 0, False
@@ -114,6 +156,8 @@ def execute(source, spec):
                 time.sleep(.2)
             reader.join(timeout=5)
             output = captured.decode(errors='replace')
+            if truncated:
+                output = captured[:8192].decode(errors='replace')+'\n[intermediate output truncated]\n'+captured[8192:].decode(errors='replace')
             if revoked or not lease_valid(spec):
                 raise PermissionError('Task execution lease revoked; worker output cannot mutate source')
             status = json.loads(subprocess.run(['docker','inspect','--format','{{json .State}}',container], check=True, capture_output=True, timeout=15).stdout)
@@ -145,7 +189,8 @@ def execute(source, spec):
                 raise ValueError('Worker patch exceeds 200 files')
             return {'status':'failed' if timed_out or status['ExitCode'] else 'completed',
                 'exit_code':124 if timed_out else status['ExitCode'], 'output':output, 'timed_out':timed_out,
-                'image_id':image_id,'argv':argv,'changes':changes,'verified':False,'scope':'command_execution'}
+                'image_id':image_id,'argv':argv,'root':root,'setup':setup,'network':network,
+                'changes':changes,'verified':False,'scope':'command_execution'}
         finally:
             if created:
                 subprocess.run(['docker','rm','-f',container], capture_output=True, timeout=20)

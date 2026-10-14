@@ -1,5 +1,8 @@
 "use client";
+
+import { browserRecording, recordingOutcome } from "@/lib/browser-recording";
 import { RemoteRunRecovery } from "@/components/RemoteRunRecovery";
+import { BrowserCampaignCard } from "@/components/BrowserCampaignCard";
 import { isRemotePlatform } from "@/lib/remote-platform";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,9 +46,8 @@ import {
   Zap,
   ArrowRight,
 } from "@/lib/platform-icons";
+import { MoreHorizontal } from "lucide-react";
 import { AppIcon } from "@/lib/custom-icons";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { ThinkingOrb, type OrbState } from "thinking-orbs";
@@ -54,7 +56,7 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import { AiProviderConnections } from "@/components/AiProviderConnections";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -67,11 +69,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { Label } from "@/components/ui/label";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { StatusVerb } from "@/components/ui/status-verb";
 import { ThinkingPanel } from "@/components/ui/thinking-panel";
 import { ToolCallCard, ToolCall, ToolsPanel } from "@/components/ui/tool-call-card";
 import { ChatMarkdown } from "@/components/ui/chat-markdown";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PermissionsPanel, type MessagePermission } from "@/components/ui/permissions-panel";
 import { chatMessageId, permissionRequestId, upsertChatMessage, joinContinuation } from "@/lib/chat-continuation";
 import dynamic from "next/dynamic";
@@ -85,6 +89,8 @@ const InteractiveBrowserCanvas = dynamic(
   { ssr: false }
 );
 import { streamAgentReply } from "@/lib/stream-agent";
+import { MAX_VOICE_BYTES } from "@/lib/voice-recorder";
+import { Dictation, dictationText } from "@/lib/dictation";
 import { useAiSession } from "@/lib/use-ai-session";
 import { AiSessionChangedError } from "@/lib/ai-session";
 import { requestBrowserMode, type BrowserSandboxMode } from "@/lib/browser-sandbox";
@@ -190,8 +196,16 @@ interface ChatAttachment {
   size: number;
   type: string;
   isImage: boolean;
+  isAudio?: boolean;
   dataUrl?: string;
   text?: string;
+  durationMs?: number;
+}
+
+interface ChatAudio {
+  dataUrl: string;
+  mimeType: string;
+  durationMs?: number;
 }
 
 interface ChatMessage {
@@ -199,6 +213,7 @@ interface ChatMessage {
   role: Role;
   content: string;
   images?: string[];
+  audio?: ChatAudio;
   meta?: string;
   /** The model's working, when it exposes reasoning_content. */
   reasoning?: string;
@@ -890,8 +905,8 @@ function conciseApplicationProjectName(template: AgentApplicationTemplate) {
   return names[template.id] || template.name;
 }
 
-const AssistantMessageBody = memo(function AssistantMessageBody({message, generating, orbStyle, onOpenTerminal}: {
-  message: ChatMessage; generating: boolean; orbStyle: ThinkingOrbStyle; onOpenTerminal: (command?: string) => void;
+const AssistantMessageBody = memo(function AssistantMessageBody({message, generating, orbStyle, onOpenTerminal, sessionId}: {
+  message: ChatMessage; generating: boolean; orbStyle: ThinkingOrbStyle; onOpenTerminal: (command?: string) => void; sessionId: string;
 }) {
   const parsed = parseAssistantMessageContent(message.content,message.reasoning,message.subagents,message.toolCalls);
   const tools = message.toolCalls?.filter(tc=>tc.name !== "invoke_subagent" && tc.name !== "subagent_spawn" &&
@@ -901,6 +916,8 @@ const AssistantMessageBody = memo(function AssistantMessageBody({message, genera
     <ThinkingPanel reasoning={parsed.reasoningBlocks.length ? parsed.reasoningBlocks : undefined} stats={message.stats} isGenerating={generating} orbStyle={orbStyle} />
     {!!parsed.subagents?.length && <SubagentsPanel subagents={parsed.subagents} isGenerating={generating} onOpenTerminal={onOpenTerminal} />}
     {!!tools?.length && <ToolsPanel toolCalls={tools} isGenerating={generating} onOpenTerminal={onOpenTerminal} />}
+    {sessionId && Array.from(new Set(message.toolCalls?.filter(call => call.name === "browser_start_campaign" && typeof call.result?.campaign_id === "string").map(call => String(call.result?.campaign_id)) || [])).map(id =>
+      <BrowserCampaignCard key={id} sessionId={sessionId} campaignId={id} />)}
     {!!parsed.content && <div className="prose-ai min-w-0 max-w-full break-words [overflow-wrap:anywhere] text-[13px] leading-relaxed sm:text-sm"><ChatMarkdown content={parsed.content} components={markdownComponents} /></div>}
   </>;
 });
@@ -917,6 +934,8 @@ export default function AiAgentPage() {
   const approvedMessageRef = useRef<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const latestInputRef = useRef(input);
+  useEffect(() => { latestInputRef.current = input; }, [input]);
   const [mobileOptionsOpen, setMobileOptionsOpen] = useState(false);
   const [mode, setMode] = useState<AiMode>("fast");
   const [selectedModel, setSelectedModel] = useState<string>("");
@@ -959,9 +978,9 @@ export default function AiAgentPage() {
   const [customTargetUrl, setCustomTargetUrl] = useState("");
   const [customUrlInput, setCustomUrlInput] = useState("");
   const [showCustomUrlDialog, setShowCustomUrlDialog] = useState(false);
-  const hasInitializedTargetRef = useRef(false);
   const [showCommands, setShowCommands] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("answers");
   const [composerModelOpen, setComposerModelOpen] = useState(false);
   const [commandPickerOpen, setCommandPickerOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -986,7 +1005,6 @@ export default function AiAgentPage() {
 
       if (initSession) {
         setActiveSessionId(initSession);
-        setBrowserOpen(true);
       }
       if (initBrowser === "true" || initBrowser === "open") {
         setBrowserOpen(true);
@@ -1068,6 +1086,11 @@ export default function AiAgentPage() {
   const [allowAgentQuestions, setAllowAgentQuestions] = useState<boolean>(true);
   const [orbStyle, setOrbStyle] = useState<ThinkingOrbStyle>("solving");
   const [isListening, setIsListening] = useState(false);
+  const dictationRef = useRef<Dictation | null>(null);
+  const voiceStoppingRef = useRef<Promise<void> | null>(null);
+  const voiceCaptureGenerationRef = useRef(0);
+  const submittingRef = useRef(false);
+  const voiceActive = isListening;
   const [isDesktop, setIsDesktop] = useState(true);
 
   useEffect(() => {
@@ -1089,6 +1112,7 @@ export default function AiAgentPage() {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const isImage = file.type.startsWith("image/");
+      const isAudio = file.type.startsWith("audio/");
       const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
       if (isImage) {
@@ -1110,6 +1134,27 @@ export default function AiAgentPage() {
         } catch {
           toast.error(`Failed to read image ${file.name}`);
         }
+      } else if (isAudio) {
+        if (newAttachments.some(item => item.isAudio)) {
+          toast.info("Attach one voice recording per message.");
+          continue;
+        }
+        if (file.size > MAX_VOICE_BYTES) {
+          toast.error(`${file.name} is too large. Keep voice recordings under 8 MB.`);
+          continue;
+        }
+        try {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          newAttachments.push({ id, name: file.name, size: file.size, type: file.type,
+            isImage: false, isAudio: true, dataUrl });
+        } catch {
+          toast.error(`Failed to read audio ${file.name}`);
+        }
       } else {
         let text: string | undefined = undefined;
         if (file.size < 1024 * 1024) {
@@ -1130,7 +1175,10 @@ export default function AiAgentPage() {
       }
     }
 
-    setAttachments((prev) => [...prev, ...newAttachments]);
+    setAttachments((prev) => [
+      ...prev.filter(item => !item.isAudio || !newAttachments.some(attachment => attachment.isAudio)),
+      ...newAttachments,
+    ]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -1186,9 +1234,6 @@ export default function AiAgentPage() {
     return () => window.removeEventListener("resize", updateMedia);
   }, []);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
-  const baseTextRef = useRef<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const settingsHydratedRef = useRef(false);
 
@@ -1202,10 +1247,11 @@ export default function AiAgentPage() {
 
   const modelsQuery = useQuery({
     queryKey: ["ai-models"],
-    queryFn: async () => {
-      const res = await api.get("/ai/models", { timeout: AI_REQUEST_TIMEOUT_MS });
+    queryFn: async ({ signal }) => {
+      const res = await api.get("/ai/models", { timeout: AI_REQUEST_TIMEOUT_MS, signal });
       return res.data as AiModelsResponse;
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const fetchModelsWithCurrentKey = async () => {
@@ -1238,7 +1284,7 @@ export default function AiAgentPage() {
       const res = await api.get<unknown>("/deployments");
       return arrayFromResponse<Deployment>(res.data, ["deployments", "data", "items"]);
     },
-    refetchInterval: 8000,
+    refetchInterval: projectOpen || commandPickerOpen || input.trimStart().startsWith("/") ? 8000 : false,
   });
 
   const sessionsQuery = useQuery({
@@ -1253,7 +1299,7 @@ export default function AiAgentPage() {
       const hasActiveHealing = sessList.some(
         (s) => s.session_type === "sre_incident" && s.status === "healing"
       );
-      return hasActiveHealing ? 3000 : 12000;
+      return hasActiveHealing ? 3000 : 30000;
     },
   });
 
@@ -1315,8 +1361,10 @@ export default function AiAgentPage() {
     return deployments.find((d) => d.project_id === selectedProjectId);
   }, [selectedProjectId, selectedDeployment, deployments]);
 
-  // Keep selectedDeploymentId in sync when a project is selected, or auto-select running project
+  // Keep the current chat scoped to its deployment. A different project's live
+  // runtime must never become a failed deployment's implicit browser target.
   useEffect(() => {
+    if (activeSessionId || selectedDeploymentId) return;
     if (selectedProjectId) {
       if (!selectedDeployment || selectedDeployment.project_id !== selectedProjectId) {
         const matching = deployments.find(
@@ -1326,18 +1374,12 @@ export default function AiAgentPage() {
           setSelectedDeploymentId(matching.id);
         }
       }
-    } else if (!hasInitializedTargetRef.current && deployments.length > 0) {
-      hasInitializedTargetRef.current = true;
-      // On initial load, prioritize any running project with a runtime_url
-      const runningDep = deployments.find(
-        (d) => d.status === "running" && Boolean(d.runtime_url) && !d.runtime_url?.includes("localhost:3000")
-      );
-      if (runningDep?.project_id) {
-        setSelectedProjectId(runningDep.project_id);
-        setSelectedDeploymentId(runningDep.id);
-      }
     }
-  }, [selectedProjectId, deployments, selectedDeployment]);
+  }, [selectedProjectId, deployments, selectedDeployment, selectedDeploymentId, activeSessionId]);
+
+  useEffect(() => {
+    if (selectedDeployment?.project_id && !selectedProjectId) setSelectedProjectId(selectedDeployment.project_id);
+  }, [selectedDeployment, selectedProjectId]);
 
   // Dynamically resolve target URL for Live Application Canvas
   const canvasTargetUrl = useMemo(() => {
@@ -1356,18 +1398,6 @@ export default function AiAgentPage() {
       );
       return dep?.runtime_url || "about:blank";
     }
-    // Fallback to any running user project deployment (e.g. portfolio on port 57621)
-    const runningUserDep = deployments.find(
-      (d) => d.status === "running" && Boolean(d.runtime_url) && !d.runtime_url?.includes("localhost:3000")
-    );
-    if (runningUserDep?.runtime_url) return runningUserDep.runtime_url;
-
-    // Or any user deployment with a runtime_url
-    const anyDepWithUrl = deployments.find(
-      (d) => Boolean(d.runtime_url) && !d.runtime_url?.includes("localhost:3000")
-    );
-    if (anyDepWithUrl?.runtime_url) return anyDepWithUrl.runtime_url;
-
     return "about:blank";
   }, [customTargetUrl, activeProjectDeployment, selectedDeployment, selectedProjectId, deployments]);
   // A command with a trailing space is a command waiting for its argument.
@@ -1501,117 +1531,57 @@ export default function AiAgentPage() {
     } catch {}
   }, [agentAccessMode, remoteTerminalPermission, allowAgentQuestions, orbStyle, selectedModel]);
 
-  const startListening = async () => {
-    if (typeof window === "undefined") return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  const disposeVoiceCapture = useCallback(() => {
+    voiceCaptureGenerationRef.current++;
+    dictationRef.current?.cancel();
+    dictationRef.current = null;
+    voiceStoppingRef.current = null;
+  }, []);
 
-    if (!SpeechRecognitionClass) {
-      toast.error("Voice input is not supported in this browser. Please use Chrome, Edge, or Safari.");
-      return;
-    }
-
-    try {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch {}
-      }
-
-      const recognition = new SpeechRecognitionClass();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = typeof navigator !== "undefined" && navigator.language ? navigator.language : "en-US";
-
-      baseTextRef.current = input;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        toast.info("Voice input active. Speak into your microphone...");
-      };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      recognition.onresult = (event: any) => {
-        let interimTranscript = "";
-        let finalTranscript = "";
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const item = event.results[i];
-          if (item && item[0]) {
-            if (item.isFinal) {
-              finalTranscript += item[0].transcript;
-            } else {
-              interimTranscript += item[0].transcript;
-            }
-          }
-        }
-
-        const currentSpeech = (finalTranscript || interimTranscript).trim();
-        if (currentSpeech) {
-          const prefix = baseTextRef.current.trim();
-          const combined = prefix ? `${prefix} ${currentSpeech}` : currentSpeech;
-          setInput(combined);
-        }
-      };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      recognition.onerror = (event: any) => {
-        console.warn("Speech recognition error:", event.error);
-        if (event.error === "not-allowed" || event.error === "permission-denied") {
-          toast.error("Microphone permission denied. Please allow microphone access in your browser settings.");
-        } else if (event.error === "no-speech") {
-          // Normal silence, do not spam toasts
-        } else if (event.error === "aborted") {
-          // Normal stop, do not spam toasts
-        } else {
-          toast.error(`Voice recognition error: ${event.error}`);
-        }
+  const startListening = () => {
+    if (dictationRef.current || voiceStoppingRef.current) return;
+    const base = latestInputRef.current;
+    const capture = new Dictation({
+      text: speech => {
+        if (dictationRef.current !== capture) return;
+        const next = dictationText(base, speech);
+        latestInputRef.current = next;
+        setInput(next);
+      },
+      active: active => { if (dictationRef.current === capture) setIsListening(active); },
+      error: message => {
+        if (dictationRef.current !== capture) return;
+        dictationRef.current = null;
         setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-      // SpeechRecognition.start() must run inside the original button gesture.
-      // Awaiting getUserMedia first consumes the transient user activation in
-      // Chrome, which makes the microphone silently fail with NotAllowedError.
-      recognition.start();
-    } catch (err) {
-      console.error("Failed to start speech recognition:", err);
-      toast.error("Could not start microphone.");
-      setIsListening(false);
-    }
+        toast.error(message);
+      },
+    });
+    dictationRef.current = capture;
+    setIsListening(true);
+    void capture.start().then(started => {
+      if (!started && dictationRef.current === capture) { dictationRef.current = null; setIsListening(false); }
+    });
   };
 
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {}
-      recognitionRef.current = null;
-    }
+  const stopListening = (): Promise<void> => {
+    if (voiceStoppingRef.current) return voiceStoppingRef.current;
+    const capture = dictationRef.current;
+    if (!capture) return Promise.resolve();
     setIsListening(false);
+    const stopped = capture.stop().finally(() => {
+      if (dictationRef.current === capture) dictationRef.current = null;
+      if (voiceStoppingRef.current === stopped) voiceStoppingRef.current = null;
+    });
+    voiceStoppingRef.current = stopped;
+    return stopped;
   };
 
   const toggleListening = () => {
-    if (isListening) {
-      stopListening();
-    } else {
-      startListening();
-    }
+    if (dictationRef.current) void stopListening();
+    else startListening();
   };
 
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.abort();
-        } catch {}
-      }
-    };
-  }, []);
+  useEffect(() => () => disposeVoiceCapture(), [disposeVoiceCapture]);
 
   const chooseModel = (model: AiModel) => {
     setSelectedModel(model.id);
@@ -1653,10 +1623,17 @@ export default function AiAgentPage() {
   };
 
   const startNewChat = () => {
+    disposeVoiceCapture();
+    setIsListening(false);
+    setAttachments([]);
     discardActiveTurn();
     sessionRequestRef.current += 1;
     loadedSessionIdRef.current = "";
     setActiveSessionId("");
+    setBrowserOpen(false);
+    setSelectedProjectId("");
+    setSelectedDeploymentId("");
+    setCustomTargetUrl("");
     setBrowserSessionError("");
     setBrowserSessionRetry(attempt => attempt + 1);
     setMessages(starterMessages);
@@ -1675,6 +1652,11 @@ export default function AiAgentPage() {
   };
 
   const loadSession = useCallback(async (sessionId: string, background = false) => {
+    if (!background && loadedSessionIdRef.current !== sessionId) {
+      disposeVoiceCapture();
+        setIsListening(false);
+      setAttachments([]);
+    }
     if (!background && turnsRef.current.current?.sessionId && turnsRef.current.current.sessionId !== sessionId) discardActiveTurn();
     const requestId = ++sessionRequestRef.current;
     if (!background) setIsSessionLoading(true);
@@ -1684,6 +1666,13 @@ export default function AiAgentPage() {
       });
       if (requestId !== sessionRequestRef.current) return;
       const data = res.data as { session?: AiChatSession; messages?: AiChatMessage[] };
+      if (!background) {
+        setSelectedProjectId(data.session?.project_id || "");
+        setSelectedDeploymentId(data.session?.deployment_id || "");
+        setCustomTargetUrl("");
+        setBrowserOpen(false);
+        if (data.session?.session_type === "sre_incident") setMode("thinking");
+      }
       setActiveSessionId(sessionId);
       setSessionRefreshError("");
       loadedSessionIdRef.current = sessionId;
@@ -1707,6 +1696,14 @@ export default function AiAgentPage() {
             id: message.id,
             role: message.role as Role,
             content: message.content || "",
+            audio: meta.audio_attachment && typeof meta.audio_attachment.data_url === "string" &&
+              meta.audio_attachment.data_url.startsWith("data:audio/")
+              ? {
+                  dataUrl: meta.audio_attachment.data_url,
+                  mimeType: typeof meta.audio_attachment.mime_type === "string" ? meta.audio_attachment.mime_type : "audio/webm",
+                  durationMs: typeof meta.audio_attachment.duration_ms === "number" ? meta.audio_attachment.duration_ms : undefined,
+                }
+              : undefined,
             reasoning: typeof meta.reasoning === "string" && meta.reasoning.trim() ? meta.reasoning : undefined,
             toolCalls: Array.isArray(meta.tool_calls) && meta.tool_calls.length > 0 ? meta.tool_calls : undefined,
             permissions: Array.isArray(meta.permissions) ? meta.permissions : undefined,
@@ -1724,6 +1721,7 @@ export default function AiAgentPage() {
         })
         .filter((message) => Boolean(
           message.content.trim() ||
+          message.audio?.dataUrl ||
           message.reasoning?.trim() ||
           (message.toolCalls && message.toolCalls.length > 0) ||
           (message.subagents && message.subagents.length > 0)
@@ -1769,7 +1767,7 @@ export default function AiAgentPage() {
         setIsSessionLoading(false);
       }
     }
-  }, []);
+  }, [disposeVoiceCapture]);
 
   useEffect(() => {
     if (!activeSessionId || loadedSessionIdRef.current === activeSessionId) return;
@@ -1871,7 +1869,7 @@ export default function AiAgentPage() {
         : (selectedDeploymentId || activeSession?.deployment_id || undefined);
       const targetProjectId = (parsedUuid && !isDeploymentTarget)
         ? parsedUuid
-        : (selectedProjectId || activeSession?.project_id || undefined);
+        : (deployments.find((deployment) => deployment.id === targetDeploymentId)?.project_id || activeSession?.project_id || selectedProjectId || undefined);
       const workflowType = activeSession?.session_type || (parsedCommand ? "agent_chat" : undefined);
 
       const res = await api.post(
@@ -2594,8 +2592,11 @@ export default function AiAgentPage() {
         const detail = error instanceof Error && !(error instanceof AxiosError)
           ? error.message
           : errorMessage(error, "Could not switch the browser sandbox.");
-        setBrowserSwitchError(detail);
-        toast.error(detail);
+        const attempted = mode === "remote" ? "Remote" : mode === "host" ? "Host Chrome" : "Local";
+        const current = browserSandboxMode === "remote" ? "Remote" : browserSandboxMode === "host" ? "Host Chrome" : "Local";
+        const message = `Could not switch to ${attempted}. ${current} remains selected. ${detail}${mode === "remote" ? " Check the remote-browser tunnel if this persists." : ""}`;
+        setBrowserSwitchError(message);
+        toast.error(message);
       }
     } finally {
       if (generation === browserSwitchGeneration.current) {
@@ -2651,11 +2652,15 @@ export default function AiAgentPage() {
   const [streamToolCalls, setStreamToolCalls] = useState<ToolCall[]>([]);
   const [streamSubagents, setStreamSubagents] = useState<SubagentTask[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [browserRecordingActive, setBrowserRecordingActive] = useState(false);
+  const browserCaptureOpen = browserOpen || browserRecordingActive;
   const streamAbortRef = useRef<AbortController | null>(null);
 
   const discardActiveTurn = useCallback(() => {
     const turn = turnsRef.current.cancel(true);
     const sessionId = turn?.sessionId || pendingApprovalRef.current?.sessionId;
+    if (sessionId) browserRecording(sessionId).finish("stopped");
+    setBrowserRecordingActive(false);
     if (sessionId && !isRemotePlatform()) api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
     streamAbortRef.current = null;
     setPendingApproval(null);
@@ -2670,6 +2675,7 @@ export default function AiAgentPage() {
   useEffect(() => () => {
     const turn = turnsRef.current.cancel(true);
     const sessionId = turn?.sessionId || pendingApprovalRef.current?.sessionId;
+    if (sessionId) browserRecording(sessionId).finish("stopped");
     if (sessionId && !isRemotePlatform()) api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
   }, []);
 
@@ -2688,12 +2694,14 @@ export default function AiAgentPage() {
 
     // 2. Notify backend stop endpoint to immediately halt agent & browser testing
     const sessionId = turn?.sessionId || activeSessionIdRef.current;
+    if (sessionId) browserRecording(sessionId).finish("stopped");
+    setBrowserRecordingActive(false);
     if (sessionId) api.post("/ai/chat/stop", { session_id: sessionId }).catch(() => {});
 
     // 3. Notify the authenticated browser session if window has active connection
     try {
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("stackpilot:browser:stop"));
+        window.dispatchEvent(new CustomEvent("stackpilot:browser:stop", { detail: { sessionId } }));
       }
     } catch {}
   }, [setPendingApproval]);
@@ -2708,7 +2716,7 @@ export default function AiAgentPage() {
   }, [browserOpen, isDesktop]);
 
 
-  const sendStreaming = async (prompt: string, images?: string[], continueThread: boolean = false, approvalToken?: string) => {
+  const sendStreaming = async (prompt: string, images?: string[], continueThread: boolean = false, approvalToken?: string, audioAttachment?: ChatAudio) => {
     const turn = turnsRef.current.begin();
     if (!turn) {
       toast.info("Wait for the current turn to finish, or stop it first.");
@@ -2720,11 +2728,6 @@ export default function AiAgentPage() {
     isUserScrolledUpRef.current = false;
     setShowScrollBottom(false);
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "auto" });
-
-    // Notify browser canvas to return to live feed on new AI action
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("stackpilot:browser:stream_start"));
-    }
 
     // Check if prompt contains an explicit URL or fallback to current canvas URL
     let effectiveTargetUrl = customTargetUrl || canvasTargetUrl || undefined;
@@ -2757,7 +2760,7 @@ export default function AiAgentPage() {
       : (selectedDeploymentId || activeSession?.deployment_id || undefined);
     let targetProjectId = (parsedUuid && !isDeploymentTarget)
       ? parsedUuid
-      : (selectedProjectId || activeSession?.project_id || undefined);
+      : (deployments.find((deployment) => deployment.id === targetDeploymentId)?.project_id || activeSession?.project_id || selectedProjectId || undefined);
 
     // Auto-resolve active running deployment if targetProjectId is set
     if (!targetDeploymentId && targetProjectId) {
@@ -2884,6 +2887,13 @@ export default function AiAgentPage() {
       const sessionId = await ensureChatSession();
       turn.sessionId = sessionId;
       if (controller.signal.aborted || !turnsRef.current.owns(turn)) return;
+      const recording = browserRecording(sessionId);
+      const startRecording = () => {
+        if (browserUsed) return;
+        browserUsed = true;
+        recording.start(messageId, continueThread);
+        setBrowserRecordingActive(true);
+      };
       await streamAgentReply({
         approvalToken,
         continuation: continueThread,
@@ -2901,6 +2911,7 @@ export default function AiAgentPage() {
         remoteTerminal: remoteTerminalPermission,
         allowAgentQuestions,
         images,
+        audioAttachment,
         sandboxMode: browserSandboxMode,
         signal: controller.signal,
         onEvent: (event) => {
@@ -2912,6 +2923,8 @@ export default function AiAgentPage() {
             queueStreamFlush();
             if (event.type !== "done") return;
           }
+          // A worker's done/error is not the end of the overall browser test.
+          if (event.agent_id && event.agent_id !== "lead") return;
           if (event.type === "start" && event.session_id) {
             if (event.session_id !== activeSessionId) {
               setActiveSessionId(event.session_id);
@@ -2920,6 +2933,8 @@ export default function AiAgentPage() {
               }
               queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] });
             }
+          } else if (event.type === "browser_run") {
+            startRecording();
           } else if (event.type === "reasoning") {
             reasoningBuffer += event.delta;
             reasoning = reasoningBuffer;
@@ -2934,15 +2949,16 @@ export default function AiAgentPage() {
             setStreamToolCalls([...toolCalls]);
             queueStreamFlush();
             if (event.name.startsWith("browser_")) {
-              browserUsed = true;
-              setBrowserOpen(true);
+              startRecording();
               setBrowserActive(true);
             }
           } else if (event.type === "tool_step") {
+            if (event.name.startsWith("browser_")) { startRecording(); recording.recordToolResult(event.result); }
             toolCalls = [...toolCalls, {id:event.id, name:event.name, arguments:event.arguments, result:event.result}];
             setStreamToolCalls([...toolCalls]);
             queueStreamFlush();
           } else if (event.type === "tool_result") {
+            if (event.name.startsWith("browser_")) { startRecording(); recording.recordToolResult(event.result); }
             let foundIdx = -1;
             for (let i = toolCalls.length - 1; i >= 0; i--) {
               if ((event.id ? toolCalls[i].id === event.id : toolCalls[i].name === event.name) && (toolCalls[i].result === undefined || toolCalls[i].result === null)) {
@@ -3015,11 +3031,16 @@ export default function AiAgentPage() {
             content = contentBuffer;
             queueStreamFlush();
           } else if (event.type === "error") {
+            recording.finish("unverified", messageId);
+            setBrowserRecordingActive(false);
             streamFailed = true;
             contentBuffer += `\n\n_${event.error || event.message || "The agent reported an error."}_`;
             content = contentBuffer;
             queueStreamFlush();
           } else if (event.type === "done") {
+            // Close capture at the authoritative done event, not fetch EOF.
+            recording.finish(recordingOutcome(event.status, event.verified, event.stopped), messageId);
+            setBrowserRecordingActive(false);
             doneReceived = true;
             doneStatus = event.stopped ? "stopped" : event.status;
             doneVerified = event.verified;
@@ -3085,6 +3106,7 @@ export default function AiAgentPage() {
         saveResponse(joinContinuation(content,errorMessage(error, "Streaming failed.")));
       }
     } finally {
+      if (turnsRef.current.owns(turn) && turn.sessionId) browserRecording(turn.sessionId).finish(controller.signal.aborted ? "stopped" : "unverified", messageId);
       if (streamRafId !== null) {
         clearTimeout(streamRafId);
         streamRafId = null;
@@ -3093,6 +3115,7 @@ export default function AiAgentPage() {
         appendStoppedResponse();
       }
       if (!turnsRef.current.finish(turn)) return;
+      setBrowserRecordingActive(false);
       setIsStreaming(false);
       setStreamMessageId("");
       approvedMessageRef.current = null;
@@ -3101,13 +3124,6 @@ export default function AiAgentPage() {
       setStreamToolCalls([]);
       setStreamSubagents([]);
       streamAbortRef.current = null;
-      if (typeof window !== "undefined") {
-        try {
-          if (doneReceived && !controller.signal.aborted && !streamFailed && streamOutcome(doneStatus, doneVerified, browserUsed, toolCalls.length > 0).browserCompleted) {
-            window.dispatchEvent(new CustomEvent("stackpilot:browser:test_completed"));
-          }
-        } catch {}
-      }
       queryClient.invalidateQueries({ queryKey: ["ai-chat-sessions"] });
       sessionsQuery.refetch();
     }
@@ -3169,50 +3185,70 @@ export default function AiAgentPage() {
     return "";
   }, [messages]);
 
-  const submit = () => {
-    if (isListening) {
-      stopListening();
-    }
-    const trimmed = input.trim();
-    if ((!trimmed && attachments.length === 0) || isRunning) return;
+  const submit = async () => {
+    if (submittingRef.current || isRunning) return;
+    submittingRef.current = true;
+    try {
+      const voiceGeneration = voiceCaptureGenerationRef.current;
+      const outgoingAttachments = attachments;
+      if (dictationRef.current || voiceStoppingRef.current) {
+        await stopListening();
+        if (voiceCaptureGenerationRef.current !== voiceGeneration) return;
+      }
+      const trimmed = latestInputRef.current.trim();
+      if (!trimmed && outgoingAttachments.length === 0) return;
+      if (!trimmed && outgoingAttachments.some(item => item.isAudio) && outgoingAttachments.every(item => item.isAudio)) {
+        toast.info("Add a message or transcript before sending your recording.");
+        return;
+      }
 
-    // Collect images
-    const outgoingImages = attachments.filter((a) => a.isImage && a.dataUrl).map((a) => a.dataUrl as string);
-    const docAttachments = attachments.filter((a) => !a.isImage && a.text);
+      // Collect images
+      const outgoingImages = outgoingAttachments.filter((a) => a.isImage && a.dataUrl).map((a) => a.dataUrl as string);
+      const outgoingAudioAttachment = outgoingAttachments.find((a) => a.isAudio && a.dataUrl);
+      const outgoingAudio: ChatAudio | undefined = outgoingAudioAttachment?.dataUrl ? {
+        dataUrl: outgoingAudioAttachment.dataUrl,
+        mimeType: outgoingAudioAttachment.type || "audio/webm",
+        durationMs: outgoingAudioAttachment.durationMs,
+      } : undefined;
+      const docAttachments = outgoingAttachments.filter((a) => !a.isImage && !a.isAudio && a.text);
 
-    let combinedPrompt = trimmed;
-    if (docAttachments.length > 0) {
-      const docsContext = docAttachments
-        .map((d) => `--- Attached File: ${d.name} ---\n${d.text}\n--- End of ${d.name} ---`)
-        .join("\n\n");
-      combinedPrompt = combinedPrompt ? `${combinedPrompt}\n\n[Attached Files & Context]:\n${docsContext}` : docsContext;
-    }
+      let combinedPrompt = trimmed;
+      if (docAttachments.length > 0) {
+        const docsContext = docAttachments
+          .map((d) => `--- Attached File: ${d.name} ---\n${d.text}\n--- End of ${d.name} ---`)
+          .join("\n\n");
+        combinedPrompt = combinedPrompt ? `${combinedPrompt}\n\n[Attached Files & Context]:\n${docsContext}` : docsContext;
+      }
 
-    appendMessage({
-      role: "user",
-      content: trimmed || (outgoingImages.length > 0 ? "Attached photos" : "Attached files"),
-      images: outgoingImages.length > 0 ? outgoingImages : undefined,
-    });
-    setInput("");
-    setAttachments([]);
-    setShowCommands(false);
+      appendMessage({
+        role: "user",
+        content: trimmed || (outgoingImages.length > 0 ? "Attached photos" : outgoingAudio ? "Voice message" : "Attached files"),
+        images: outgoingImages.length > 0 ? outgoingImages : undefined,
+        audio: outgoingAudio,
+      });
+      setInput("");
+      setAttachments([]);
+      setShowCommands(false);
 
-    const isAiCommand =
-      /^\/(architect|swarm|plan|audit|review|code|repair|fix|diagnose|analyze|dockerfile|terminal|run|exec)\b/i.test(trimmed) ||
-      (/^\/deploy\b/i.test(trimmed) && trimmed.replace(/^\/deploy\b/i, "").trim().length > 10);
+      const isAiCommand =
+        /^\/(architect|swarm|plan|audit|review|code|repair|fix|diagnose|analyze|dockerfile|terminal|run|exec)\b/i.test(trimmed) ||
+        (/^\/deploy\b/i.test(trimmed) && trimmed.replace(/^\/deploy\b/i, "").trim().length > 10);
 
-    const isPlatformCommand = /^\/(cost|org|environments|build|app|help|events|metrics|rollback|pause|resume|scale|drift|secrets)\b/i.test(trimmed);
+      const isPlatformCommand = /^\/(cost|org|environments|build|app|help|events|metrics|rollback|pause|resume|scale|drift|secrets)\b/i.test(trimmed);
 
-    if (isAiCommand || (!isPlatformCommand && trimmed.startsWith("/"))) {
-      void sendStreaming(combinedPrompt, outgoingImages);
-    } else if (trimmed.startsWith("/")) {
-      commandMutation.mutate(trimmed);
-    } else if (isDeployIntent(trimmed)) {
-      autonomousDeployMutation.mutate(trimmed);
-    } else if (streamingEnabled) {
-      void sendStreaming(combinedPrompt, outgoingImages);
-    } else {
-      runAgentMutation.mutate(combinedPrompt);
+      if (outgoingAudio || isAiCommand || (!isPlatformCommand && trimmed.startsWith("/"))) {
+        void sendStreaming(combinedPrompt, outgoingImages, false, undefined, outgoingAudio);
+      } else if (trimmed.startsWith("/")) {
+        commandMutation.mutate(trimmed);
+      } else if (isDeployIntent(trimmed)) {
+        autonomousDeployMutation.mutate(trimmed);
+      } else if (streamingEnabled) {
+        void sendStreaming(combinedPrompt, outgoingImages, false, undefined, outgoingAudio);
+      } else {
+        runAgentMutation.mutate(combinedPrompt);
+      }
+    } finally {
+      submittingRef.current = false;
     }
   };
 
@@ -3541,24 +3577,21 @@ export default function AiAgentPage() {
         </DialogContent>
       </Dialog>
       <div className="flex h-full min-h-0 min-w-0 overflow-hidden bg-background text-foreground">
-        <section className={cn("min-h-0 min-w-0 flex-1 flex-col", browserOpen && !isDesktop ? "hidden" : "flex")}>
-        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/40 px-3 py-2 sm:px-6 sm:py-3">
+        <section className={cn("chat-action-container min-h-0 min-w-0 flex-1 flex-col", browserOpen && !isDesktop ? "hidden" : "flex")}>
+        <header data-chat-toolbar className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-3 py-2 sm:px-6">
           <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs"
+              className="h-11 gap-1.5 text-xs sm:h-8"
               onClick={startNewChat}
             >
               <AppIcon name="plus" fallback={Plus} className="h-3.5 w-3.5" />
               New Chat
             </Button>
-            {activeSession?.title && (
+            {activeSession?.session_type === "sre_incident" && (
               <div className="hidden items-center gap-2 sm:flex">
-                <span className="max-w-xs truncate text-xs text-muted-foreground">
-                  {activeSession.title}
-                </span>
                 {activeSession.session_type === "sre_incident" && activeSession.status === "healing" && (
                   <Badge variant="outline" className="gap-1 border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-400 py-0 h-5">
                     <AppIcon name="loader2" fallback={Loader2} className="h-2.5 w-2.5 animate-spin" />
@@ -3586,48 +3619,46 @@ export default function AiAgentPage() {
               variant={browserOpen ? "secondary" : "ghost"}
               size="sm"
               className={cn(
-                "h-8 gap-1.5 px-3 text-xs transition-colors",
+                "h-11 gap-1.5 px-3 text-xs transition-colors sm:h-8",
                 browserOpen ? "text-foreground font-medium bg-muted" : "text-muted-foreground hover:text-foreground"
               )}
               onClick={() => setBrowserOpen((open) => !open)}
               title="Toggle Live Application Screen (Computer Use)"
             >
               <Globe className="h-3.5 w-3.5 text-sky-400" />
-              <span className="sr-only sm:not-sr-only">Live App</span>
+              <span>Live App</span>
               {browserActive && (
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
               )}
             </Button>
-            <Button
-              type="button"
-              variant={terminalOpen ? "secondary" : "ghost"}
-              size="sm"
-              className={cn(
-                "h-8 gap-1.5 px-3 text-xs transition-colors",
-                terminalOpen ? "text-foreground font-medium bg-muted" : "text-muted-foreground hover:text-foreground"
-              )}
-              onClick={() => setTerminalOpen((open) => !open)}
-              title="Toggle Workspace Terminal"
-            >
-              <AppIcon name="terminal" fallback={Terminal} className="h-3.5 w-3.5 mr-1" />
-              <span className="sr-only sm:not-sr-only">Terminal</span>
-            </Button>
-            <Link href="/dashboard/ai/history">
-              <Button type="button" variant="ghost" size="sm" className="h-8 gap-1.5 px-3 text-xs text-muted-foreground hover:text-foreground">
-                <AppIcon name="clock" fallback={Clock} className="h-3.5 w-3.5" />
-                <span className="sr-only sm:not-sr-only">History</span>
+            <div data-chat-actions className="chat-full-actions items-center gap-3">
+              <Button
+                variant={terminalOpen ? "secondary" : "ghost"}
+                size="sm"
+                className="h-8 gap-1.5 text-xs text-muted-foreground"
+                aria-label={terminalOpen ? "Hide terminal" : "Open terminal"}
+                aria-pressed={terminalOpen}
+                onClick={() => setTerminalOpen(open => !open)}
+              >
+                <Terminal className="h-3.5 w-3.5" />Terminal
               </Button>
-            </Link>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-              aria-label="Agent settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <AppIcon name="settings" fallback={Settings} className="h-4 w-4" />
-            </Button>
+              <Link href="/dashboard/ai/history" data-slot="button" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-8 gap-1.5 text-xs text-muted-foreground")}>
+                <Clock className="h-3.5 w-3.5" />History
+              </Link>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" aria-label="Agent settings" title="Agent settings" onClick={() => setSettingsOpen(true)}>
+                <Settings className="h-4 w-4" />
+              </Button>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="chat-overflow-menu h-11 w-11 text-muted-foreground sm:h-8 sm:w-8" aria-label="Chat menu" />}>
+                <MoreHorizontal className="h-4 w-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-52 [&>[role=menuitem]]:min-h-11 sm:[&>[role=menuitem]]:min-h-8">
+                <DropdownMenuItem onClick={() => setTerminalOpen(open => !open)}><Terminal className="h-4 w-4" />{terminalOpen ? "Hide terminal" : "Open terminal"}</DropdownMenuItem>
+                <DropdownMenuItem render={<Link href="/dashboard/ai/history" />}><Clock className="h-4 w-4" />Chat history</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setSettingsOpen(true)}><Settings className="h-4 w-4" />Agent settings</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -3688,7 +3719,7 @@ export default function AiAgentPage() {
                     message.role === "user" ? "max-w-[85%] rounded-2xl bg-muted px-4 py-2.5 text-foreground sm:bg-primary sm:text-primary-foreground" : "w-full max-w-full px-2 py-2 sm:w-auto sm:border sm:border-border sm:bg-background"
                   )}
                 >
-                  {message.role === "assistant" && <AssistantMessageBody message={message} generating={isStreaming && message.id === streamMessageId} orbStyle={orbStyle} onOpenTerminal={openTerminalWithCommand} />}
+                  {message.role === "assistant" && <AssistantMessageBody message={message} generating={isStreaming && message.id === streamMessageId} orbStyle={orbStyle} onOpenTerminal={openTerminalWithCommand} sessionId={activeSessionId || ""} />}
                   {message.role === "assistant" && <PermissionsPanel
                     permissions={message.permissions?.length ? message.permissions : pendingApproval && !pendingApproval.messageId && messageIndex === messages.length - 1 ? [{...pendingApproval,status:"pending"}] : []}
                     pendingId={pendingApproval?.id} disabled={isRunning}
@@ -3778,6 +3809,15 @@ export default function AiAgentPage() {
                                   />
                                 ))}
                               </div>
+                            )}
+                            {message.audio?.dataUrl && (
+                              <audio
+                                controls
+                                preload="metadata"
+                                src={message.audio.dataUrl}
+                                className="mb-2 h-9 w-full max-w-[320px]"
+                                aria-label="Voice message recording"
+                              />
                             )}
                             <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[13px] leading-relaxed sm:text-sm">{message.content}</p>
                           </div>
@@ -4085,6 +4125,8 @@ export default function AiAgentPage() {
                             className="h-full w-full object-cover"
                           />
                         </div>
+                      ) : att.isAudio && att.dataUrl ? (
+                        <audio controls preload="metadata" src={att.dataUrl} className="h-8 max-w-[190px]" aria-label="Voice message preview" />
                       ) : (
                         <FileText className="h-4 w-4 text-primary shrink-0" />
                       )}
@@ -4120,6 +4162,8 @@ export default function AiAgentPage() {
                 ref={textareaRef}
                 value={input}
                 onChange={(event) => {
+                  if (dictationRef.current) { disposeVoiceCapture(); setIsListening(false); }
+                  latestInputRef.current = event.target.value;
                   setInput(event.target.value);
                   // Only while the command name itself is being typed. Once a
                   // space is entered the user has moved on to the argument,
@@ -4145,7 +4189,7 @@ export default function AiAgentPage() {
                 <Button type="button" variant="ghost" className="h-11 min-w-0 flex-1 justify-start gap-1.5 px-2 text-xs" aria-label={`Choose model: ${modelLabel(activeModel)}`} onClick={() => setModelPickerOpen(true)} suppressHydrationWarning>
                   <span className="truncate" suppressHydrationWarning>{mode === "thinking" ? "Think" : isVisionActive ? "Vision" : "Fast"} · {mounted ? shortId(modelLabel(activeModel).split("/").pop() || "Select model", 16) : "Select model"}</span><ChevronDown className="size-3 shrink-0" />
                 </Button>
-                <Button type="button" variant={isListening ? "destructive" : "ghost"} size="icon" className="size-11 shrink-0 rounded-full" disabled={isRunning} onClick={toggleListening} aria-label={isListening ? "Stop voice input" : "Start voice input"}>{isListening ? <Square className="size-4" /> : <Mic className="size-4" />}</Button>
+                <Button type="button" variant="ghost" size="icon" className="size-11 shrink-0 rounded-full" disabled={isRunning} onClick={toggleListening} aria-label={voiceActive ? "Stop dictation" : "Start dictation"}>{voiceActive ? <ThinkingOrb state="listening" size={20} theme="dark" className="dictation-orb" /> : <Mic className="size-4" />}</Button>
                 <Button type="button" size="icon" className="size-11 shrink-0 rounded-full" onClick={isStreaming ? handleStopGeneration : submit} disabled={!isStreaming && ((!input.trim() && attachments.length === 0) || isRunning)} aria-label={isStreaming ? "Stop generating response" : "Send message"}>{isStreaming ? <Square className="size-4 fill-current" /> : isRunning ? <Loader2 className="size-4 animate-spin" /> : <ArrowDown className="size-5 rotate-180" />}</Button>
               </div>
               <div className="relative hidden min-w-0 items-center justify-between gap-1 pt-1 sm:flex">
@@ -4268,7 +4312,7 @@ export default function AiAgentPage() {
                     ref={fileInputRef}
                     onChange={(e) => handleFilesSelected(e.target.files)}
                     multiple
-                    accept="image/*,.pdf,.txt,.md,.json,.csv,.doc,.docx,.yaml,.yml,.py,.ts,.tsx,.js,.jsx,.go,.rs,.cpp,.c,.h,.sh,.sql"
+                    accept="image/*,audio/*,.pdf,.txt,.md,.json,.csv,.doc,.docx,.yaml,.yml,.py,.ts,.tsx,.js,.jsx,.go,.rs,.cpp,.c,.h,.sh,.sql"
                     className="hidden"
                   />
 
@@ -4297,25 +4341,17 @@ export default function AiAgentPage() {
 
                   <Button
                     type="button"
-                    variant={isListening ? "destructive" : "outline"}
-                    size={isListening ? "default" : "icon"}
+                    variant="outline"
+                    size="icon"
                     onClick={toggleListening}
                     disabled={isRunning}
-                    className={cn(
-                      "h-8 shrink-0 transition-all",
-                      isListening
-                        ? "gap-2 px-3 bg-red-500 hover:bg-red-600 text-white shadow-md animate-pulse border-red-500"
-                        : "w-8 text-muted-foreground hover:text-foreground"
-                    )}
-                    title={isListening ? "Listening... Click to finish voice input" : "Voice input (Speech to text)"}
-                    aria-label={isListening ? "Stop voice input" : "Start voice input"}
+                    className="size-8 shrink-0 text-muted-foreground hover:text-foreground"
+                    title={voiceActive ? "Stop dictation" : "Dictate a message"}
+                    aria-pressed={voiceActive}
+                    aria-label={voiceActive ? "Stop dictation" : "Start dictation"}
                   >
-                    {isListening ? (
-                      <>
-                        <ThinkingOrb state="listening" size={20} theme="dark" />
-                        <span className="text-xs font-medium">Listening...</span>
-                        <AppIcon name="square" fallback={Square} className="h-3 w-3 fill-current ml-0.5" />
-                      </>
+                    {voiceActive ? (
+                      <ThinkingOrb state="listening" size={20} theme="dark" className="dictation-orb" />
                     ) : (
                       <AppIcon name="mic" fallback={Mic} className="h-3.5 w-3.5" />
                     )}
@@ -4358,13 +4394,13 @@ export default function AiAgentPage() {
 
         {/* Phones use a dedicated view in the dashboard instead of a floating
             desktop window over messages. The chat stays mounted with its draft. */}
-        {browserOpen && !isDesktop && (
-          <div data-mobile-computer className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+        {browserCaptureOpen && !isDesktop && (
+          <div data-mobile-computer className={cn("h-full min-h-0 min-w-0 flex-1 flex-col", browserOpen ? "flex" : "hidden")}>
             {activeSessionId ? <InteractiveBrowserCanvas
               sessionId={activeSessionId}
               initialUrl={canvasTargetUrl}
               sandboxMode={browserSandboxMode}
-              isOpen={browserOpen}
+              isOpen={browserCaptureOpen}
               onClose={closeBrowser}
               embedded
               closeLabel="Back to chat"
@@ -4375,16 +4411,17 @@ export default function AiAgentPage() {
         )}
 
         {/* Live Application Canvas Drawer (Desktop Side-by-Side Split View) */}
-        {browserOpen && isDesktop && (
+        {browserCaptureOpen && isDesktop && (
           <>
             {/* Full-screen Shield during Resizing to prevent canvas pointer interception */}
-            {isDraggingDrawer && (
+            {browserOpen && isDraggingDrawer && (
               <div className="fixed inset-0 z-[99999] cursor-col-resize select-none pointer-events-auto bg-transparent" />
             )}
 
             {/* Draggable Vertical Resizer Handle */}
             <div
               role="separator"
+              style={{ display: browserOpen ? undefined : "none" }}
               aria-orientation="vertical"
               onPointerDown={startDraggingDrawer}
               className={cn(
@@ -4404,13 +4441,13 @@ export default function AiAgentPage() {
             </div>
             <div
               style={{ width: `${drawerWidth}px` }}
-              className="flex h-full border-l border-border/60 bg-muted/10 p-3 flex-col shrink-0 relative"
+              className={cn("h-full border-l border-border/60 bg-muted/10 p-3 flex-col shrink-0 relative", browserOpen ? "flex" : "hidden")}
             >
               {activeSessionId ? <InteractiveBrowserCanvas
                 sessionId={activeSessionId}
                 initialUrl={canvasTargetUrl}
                 sandboxMode={browserSandboxMode}
-                isOpen={browserOpen}
+                isOpen={browserCaptureOpen}
                 onClose={closeBrowser}
                 embedded={true}
                 onUrlChange={observeBrowserUrl}
@@ -4427,15 +4464,23 @@ export default function AiAgentPage() {
           if (!open) closePickers();
         }}
       >
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-6xl max-w-[calc(100vw-2rem)] [--dialog-padding:1.25rem] sm:[--dialog-padding:1.75rem]">
-          <DialogHeader>
+        <DialogContent resizeKey={settingsSection} data-agent-settings className="!flex !w-[min(calc(100vw-1rem),1120px)] !max-w-[1120px] max-h-[min(85dvh,680px)] flex-col overflow-hidden [--dialog-padding:1.25rem]">
+          <DialogHeader className="shrink-0 pr-8">
             <DialogTitle>Agent Settings</DialogTitle>
-            <DialogDescription>Configure provider keys, model, reasoning mode, project context, and deployment context.</DialogDescription>
+            <DialogDescription>Choose a category to configure your agent.</DialogDescription>
           </DialogHeader>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-            <div className="space-y-6">
-            {/* ── 1. How it answers ─────────────────────────────── */}
+          <Tabs value={settingsSection} onValueChange={setSettingsSection} className="min-h-0 flex-auto !flex-col gap-4 overflow-hidden">
+            <TabsList aria-label="Agent settings categories" className="section-tabs section-tabs-stretch agent-settings-tabs !grid !h-auto !w-full !min-w-0 shrink-0 grid-cols-3 !overflow-visible bg-muted/30 md:grid-cols-6">
+              <TabsTrigger className="!min-w-0 min-h-11 flex-none !whitespace-normal px-3 text-xs leading-snug md:min-h-9" value="answers">Model & replies</TabsTrigger>
+              <TabsTrigger className="!min-w-0 min-h-11 flex-none !whitespace-normal px-3 text-xs leading-snug md:min-h-9" value="providers">AI providers</TabsTrigger>
+              <TabsTrigger className="!min-w-0 min-h-11 flex-none !whitespace-normal px-3 text-xs leading-snug md:min-h-9" value="browser">Browser</TabsTrigger>
+              <TabsTrigger className="!min-w-0 min-h-11 flex-none !whitespace-normal px-3 text-xs leading-snug md:min-h-9" value="permissions">Permissions</TabsTrigger>
+              <TabsTrigger className="!min-w-0 min-h-11 flex-none !whitespace-normal px-3 text-xs leading-snug md:min-h-9" value="context">Project context</TabsTrigger>
+              <TabsTrigger className="!min-w-0 min-h-11 flex-none !whitespace-normal px-3 text-xs leading-snug md:min-h-9" value="appearance">Appearance</TabsTrigger>
+            </TabsList>
+            <div data-agent-settings-panel className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-2">
+              <TabsContent value="answers" className="space-y-4">
             <section className="space-y-3">
               <div>
                 <h3 className="text-sm font-medium">How it answers</h3>
@@ -4510,6 +4555,58 @@ export default function AiAgentPage() {
               </div>
 
               <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <Label>Model</Label>
+                  <span className="text-xs text-muted-foreground">
+                    {availableModels.length > 0 ? `${availableModels.length} models available` : "Enter any model"}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    value={selectedModel}
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    placeholder={activeModelId || "Type or choose any model ID"}
+                    className="min-w-0 flex-1 font-mono text-xs"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setModelPickerOpen(true);
+                    }}
+                    title="Choose a model"
+                    aria-label="Choose a model"
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Pick from the dynamic provider list or type any custom model ID directly.
+                </p>
+              </div>
+
+            </section>
+              </TabsContent>
+              <TabsContent value="providers" className="space-y-4">
+            <AiProviderConnections onActivated={async (connection) => {
+              const refreshed = await settingsQuery.refetch();
+              const engine = connection?.provider || refreshed.data?.provider || "nvidia_nim";
+              setProvider(engine);
+              setCompatibleBaseUrl(connection?.base_url || refreshed.data?.openai_compatible_base_url || "");
+              setCustomModelList(null);
+              const catalog = await modelsQuery.refetch();
+              const models = catalog.data?.models || [];
+              setCustomModelList(models);
+              if (models.length && !models.some((model) => model.id === selectedModel)) {
+                setSelectedModel(models[0].id);
+                await api.put("/ai/settings", { provider: engine, model: models[0].id });
+              }
+            }} />
+
+
+              </TabsContent>
+              <TabsContent value="browser" className="space-y-4">
+              <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <Label>Browser sandbox</Label>
                   <div className="relative group">
@@ -4561,111 +4658,101 @@ export default function AiAgentPage() {
                 {browserSwitchError && <p role="alert" className="text-xs text-destructive">{browserSwitchError}</p>}
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Model</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {availableModels.length > 0 ? `${availableModels.length} models available` : "Enter any model"}
-                  </span>
+
+              </TabsContent>
+              <TabsContent value="permissions" className="space-y-4">
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <div>
+                <Label>Agent Permissions</Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Choose when the agent asks for approval before running browser, workspace, and deployment actions.
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Button
+                  type="button"
+                  variant={agentAccessMode === "ask" ? "default" : "outline"}
+                  onClick={() => setAgentAccessMode("ask")}
+                >
+                  Ask first
+                </Button>
+                <Button
+                  type="button"
+                  variant={agentAccessMode === "auto_review" ? "default" : "outline"}
+                  onClick={() => setAgentAccessMode("auto_review")}
+                >
+                  Auto review
+                </Button>
+                <Button
+                  type="button"
+                  variant={agentAccessMode === "full_access" ? "default" : "outline"}
+                  onClick={() => setAgentAccessMode("full_access")}
+                >
+                  Full access
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Button
+                  type="button"
+                  variant={remoteTerminalPermission === "ask" ? "default" : "outline"}
+                  onClick={() => setRemoteTerminalPermission("ask")}
+                >
+                  Ask for remote terminal
+                </Button>
+                <Button
+                  type="button"
+                  variant={remoteTerminalPermission === "allow" ? "default" : "outline"}
+                  onClick={() => setRemoteTerminalPermission("allow")}
+                >
+                  Allow remote terminal
+                </Button>
+              </div>
+
+              <div className="space-y-1.5 pt-3 border-t border-border/50">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label className="text-xs font-semibold text-foreground">Interactive Questions by AI Agent</Label>
+                  <Badge variant="outline" className={cn("shrink-0 text-[10px] font-mono", allowAgentQuestions ? "border-sky-500/40 text-sky-400" : "border-amber-500/40 text-amber-400")}>
+                    {allowAgentQuestions ? "Interactive" : "Autonomous"}
+                  </Badge>
                 </div>
-                <div className="flex gap-2">
-                  <Input
-                    value={selectedModel}
-                    onChange={(event) => setSelectedModel(event.target.value)}
-                    placeholder={activeModelId || "Type or choose any model ID"}
-                    className="font-mono text-xs"
-                  />
+                <p className="text-xs text-muted-foreground">
+                  Ask when missing information affects the task, or let the agent choose safe defaults and continue testing independently.
+                </p>
+                <div className="grid grid-cols-1 gap-2 pt-1 lg:grid-cols-2">
                   <Button
                     type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setModelPickerOpen(true);
-                    }}
-                    title="Open Categorized Model Picker"
+                    variant={allowAgentQuestions ? "default" : "outline"}
+                    className={cn(
+                      "h-auto min-h-8 w-full min-w-0 justify-center px-3 py-2 text-center text-xs leading-tight whitespace-normal",
+                      allowAgentQuestions && "bg-sky-600 font-medium text-white hover:bg-sky-700",
+                    )}
+                    onClick={() => setAllowAgentQuestions(true)}
                   >
-                    <ChevronDown className="h-4 w-4" />
+                    Ask when needed (Recommended)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={!allowAgentQuestions ? "default" : "outline"}
+                    className={cn(
+                      "h-auto min-h-8 w-full min-w-0 justify-center px-3 py-2 text-center text-xs leading-tight whitespace-normal",
+                      !allowAgentQuestions && "bg-amber-600 font-medium text-white hover:bg-amber-700",
+                    )}
+                    onClick={() => setAllowAgentQuestions(false)}
+                  >
+                    Autonomous (Never ask)
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Pick from the dynamic provider list or type any custom model ID directly.
-                </p>
               </div>
 
-              {/* ── Thinking Orb Effect ───────────────────────────── */}
-              <div className="space-y-2 border-t border-border/70 pt-3">
-                <div className="flex items-center justify-between">
-                  <Label>Thinking Orb Effect</Label>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {orbStyle === "off" ? "Off" : orbStyle}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Select which animated orb to show during thinking & streaming, or disable it completely.
-                </p>
-
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 rounded-lg border border-border bg-muted/20 p-2">
-                  {ORB_STYLES.map((style) => {
-                    const isSelected = orbStyle === style.id;
-                    return (
-                      <button
-                        key={style.id}
-                        type="button"
-                        onClick={() => setOrbStyle(style.id)}
-                        className={cn(
-                          "flex flex-col items-center justify-center rounded-md p-2 text-xs transition-all border",
-                          isSelected
-                            ? "bg-primary text-primary-foreground shadow-sm border-primary font-semibold"
-                            : "border-transparent hover:bg-muted text-muted-foreground hover:text-foreground"
-                        )}
-                        title={style.description}
-                      >
-                        <div className="h-6 w-6 flex items-center justify-center mb-1">
-                          {style.id === "off" ? (
-                            <span className="text-xs font-bold opacity-75">✕</span>
-                          ) : (
-                            <ThinkingOrb
-                              state={style.id}
-                              size={20}
-                              theme={isSelected ? (isDark ? "dark" : "light") : "auto"}
-                            />
-                          )}
-                        </div>
-                        <span className="truncate max-w-[4.2rem] text-[11px] leading-tight">
-                          {style.label.split(" ")[0]}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Live Preview Card */}
-                <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-muted/30 p-2.5">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-background border border-border">
-                    {orbStyle === "off" ? (
-                      <span className="text-xs font-bold text-muted-foreground">OFF</span>
-                    ) : (
-                      <ThinkingOrb state={orbStyle} size={20} theme={isDark ? "dark" : "light"} />
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                      <span>{ORB_STYLES.find((s) => s.id === orbStyle)?.label || "Solving"}</span>
-                      {orbStyle === "off" ? (
-                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground font-normal">Disabled</span>
-                      ) : (
-                        <span className="text-[10px] rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 font-normal">Active</span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
-                      {ORB_STYLES.find((s) => s.id === orbStyle)?.description || ""}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            {/* ── 3. What it can see ────────────────────────────── */}
-            <section className="space-y-3 border-t border-border pt-4">
+              <p className="text-xs text-muted-foreground">
+                {agentAccessMode === "full_access"
+                  ? "Full access runs actions within your requested task without an additional approval card."
+                  : "Ask first and Auto review prepare the action plan, then require your explicit approval before real deploy work."}
+              </p>
+            </div>
+              </TabsContent>
+              <TabsContent value="context" className="space-y-4">
+            <section className="space-y-3">
               <div>
                 <h3 className="text-sm font-medium">What it can see</h3>
                 <p className="text-xs text-muted-foreground">
@@ -4674,7 +4761,7 @@ export default function AiAgentPage() {
                 </p>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-4">
                 <div className="space-y-2">
                   <Label>Project</Label>
                   <div className="relative">
@@ -4782,121 +4869,92 @@ export default function AiAgentPage() {
                 </div>
               </div>
             </section>
-            </div>
-
-            {/* Right Column: Where it runs & Permissions */}
-            <div className="space-y-6">
-            <AiProviderConnections onActivated={async (connection) => {
-              const refreshed = await settingsQuery.refetch();
-              const engine = connection?.provider || refreshed.data?.provider || "nvidia_nim";
-              setProvider(engine);
-              setCompatibleBaseUrl(connection?.base_url || refreshed.data?.openai_compatible_base_url || "");
-              setCustomModelList(null);
-              const catalog = await modelsQuery.refetch();
-              const models = catalog.data?.models || [];
-              setCustomModelList(models);
-              if (models.length && !models.some((model) => model.id === selectedModel)) {
-                setSelectedModel(models[0].id);
-                await api.put("/ai/settings", { provider: engine, model: models[0].id });
-              }
-            }} />
-
-            <div className="space-y-2 rounded-lg border border-border p-3">
-              <div>
-                <Label>Agent Permissions</Label>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These permissions are persisted locally, sent with agent context, and used to gate natural-language deploy actions.
-                </p>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <Button
-                  type="button"
-                  variant={agentAccessMode === "ask" ? "default" : "outline"}
-                  onClick={() => setAgentAccessMode("ask")}
-                >
-                  Ask first
-                </Button>
-                <Button
-                  type="button"
-                  variant={agentAccessMode === "auto_review" ? "default" : "outline"}
-                  onClick={() => setAgentAccessMode("auto_review")}
-                >
-                  Auto review
-                </Button>
-                <Button
-                  type="button"
-                  variant={agentAccessMode === "full_access" ? "default" : "outline"}
-                  onClick={() => setAgentAccessMode("full_access")}
-                >
-                  Full access
-                </Button>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Button
-                  type="button"
-                  variant={remoteTerminalPermission === "ask" ? "default" : "outline"}
-                  onClick={() => setRemoteTerminalPermission("ask")}
-                >
-                  Ask for remote terminal
-                </Button>
-                <Button
-                  type="button"
-                  variant={remoteTerminalPermission === "allow" ? "default" : "outline"}
-                  onClick={() => setRemoteTerminalPermission("allow")}
-                >
-                  Allow remote terminal
-                </Button>
-              </div>
-
-              <div className="space-y-1.5 pt-3 border-t border-border/50">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Label className="text-xs font-semibold text-foreground">Interactive Questions by AI Agent</Label>
-                  <Badge variant="outline" className={cn("shrink-0 text-[10px] font-mono", allowAgentQuestions ? "border-sky-500/40 text-sky-400" : "border-amber-500/40 text-amber-400")}>
-                    {allowAgentQuestions ? "Interactive" : "Autonomous"}
-                  </Badge>
+              </TabsContent>
+              <TabsContent value="appearance" className="space-y-4">
+              {/* ── Thinking Orb Effect ───────────────────────────── */}
+              <div className="space-y-2 border-t border-border/70 pt-3">
+                <div className="flex items-center justify-between">
+                  <Label>Thinking Orb Effect</Label>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {orbStyle === "off" ? "Off" : orbStyle}
+                  </span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  When ambiguous choices are encountered (e.g. multiple railway stations or airport codes for a city like Mumbai), the AI will prompt you with interactive dropdowns directly in chat.
+                  Select which animated orb to show during thinking & streaming, or disable it completely.
                 </p>
-                <div className="grid grid-cols-1 gap-2 pt-1 lg:grid-cols-2">
-                  <Button
-                    type="button"
-                    variant={allowAgentQuestions ? "default" : "outline"}
-                    className={cn(
-                      "h-auto min-h-8 w-full min-w-0 justify-center px-3 py-2 text-center text-xs leading-tight whitespace-normal",
-                      allowAgentQuestions && "bg-sky-600 font-medium text-white hover:bg-sky-700",
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 rounded-lg border border-border bg-muted/20 p-2">
+                  {ORB_STYLES.map((style) => {
+                    const isSelected = orbStyle === style.id;
+                    return (
+                      <button
+                        key={style.id}
+                        type="button"
+                        onClick={() => setOrbStyle(style.id)}
+                        className={cn(
+                          "flex flex-col items-center justify-center rounded-md p-2 text-xs transition-all border",
+                          isSelected
+                            ? "bg-primary text-primary-foreground shadow-sm border-primary font-semibold"
+                            : "border-transparent hover:bg-muted text-muted-foreground hover:text-foreground"
+                        )}
+                        title={style.description}
+                      >
+                        <div className="h-6 w-6 flex items-center justify-center mb-1">
+                          {style.id === "off" ? (
+                            <span className="text-xs font-bold opacity-75">✕</span>
+                          ) : (
+                            <ThinkingOrb
+                              state={style.id}
+                              size={20}
+                              theme={isSelected ? (isDark ? "dark" : "light") : "auto"}
+                            />
+                          )}
+                        </div>
+                        <span className="truncate max-w-[4.2rem] text-[11px] leading-tight">
+                          {style.label.split(" ")[0]}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Live Preview Card */}
+                <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-muted/30 p-2.5">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-background border border-border">
+                    {orbStyle === "off" ? (
+                      <span className="text-xs font-bold text-muted-foreground">OFF</span>
+                    ) : (
+                      <ThinkingOrb state={orbStyle} size={20} theme={isDark ? "dark" : "light"} />
                     )}
-                    onClick={() => setAllowAgentQuestions(true)}
-                  >
-                    Ask when needed (Recommended)
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={!allowAgentQuestions ? "default" : "outline"}
-                    className={cn(
-                      "h-auto min-h-8 w-full min-w-0 justify-center px-3 py-2 text-center text-xs leading-tight whitespace-normal",
-                      !allowAgentQuestions && "bg-amber-600 font-medium text-white hover:bg-amber-700",
-                    )}
-                    onClick={() => setAllowAgentQuestions(false)}
-                  >
-                    Autonomous (Never ask)
-                  </Button>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <span>{ORB_STYLES.find((s) => s.id === orbStyle)?.label || "Solving"}</span>
+                      {orbStyle === "off" ? (
+                        <span className="text-[10px] rounded bg-muted px-1.5 py-0.5 text-muted-foreground font-normal">Disabled</span>
+                      ) : (
+                        <span className="text-[10px] rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 font-normal">Active</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                      {ORB_STYLES.find((s) => s.id === orbStyle)?.description || ""}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <p className="text-xs text-muted-foreground">
-                {agentAccessMode === "full_access"
-                  ? "Full access lets natural-language deploy requests create deployments and queue builds."
-                  : "Ask first and Auto review prepare the action plan, then require your explicit approval before real deploy work."}
-              </p>
+              </TabsContent>
             </div>
-            </div>
+          </Tabs>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-3">
+            <p className="text-xs text-muted-foreground">Changes apply immediately.</p>
+            <Button onClick={() => setSettingsOpen(false)}>Done</Button>
           </div>
         </DialogContent>
       </Dialog>
 
       {/* Categorized Model Picker Dialog */}
-      <ModelPickerModal
+      {modelPickerOpen && <ModelPickerModal
         open={modelPickerOpen}
         onOpenChange={setModelPickerOpen}
         selectedModelId={activeModelId}
@@ -4922,24 +4980,20 @@ export default function AiAgentPage() {
         availableModels={availableModels}
         onRefresh={fetchModelsWithCurrentKey}
         isRefreshing={isFetchingModels}
-      />
+      />}
 
       {/* Custom Target Website / URL Modal */}
       <Dialog
         open={showCustomUrlDialog}
         onOpenChange={setShowCustomUrlDialog}
       >
-        <DialogContent className="sm:max-w-md [--dialog-padding:1.5rem]">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
               <Globe className="h-5 w-5 text-sky-400" />
-              Test Any Website / Custom URL
+              Website target
             </DialogTitle>
-            <DialogDescription className="text-xs">
-              Enter any external website URL or local development port (e.g.{" "}
-              <code className="bg-muted px-1 py-0.5 rounded text-sky-400">https://github.com</code> or{" "}
-              <code className="bg-muted px-1 py-0.5 rounded text-sky-400">http://localhost:52249</code>) to test with the AI Agent and Live Browser.
-            </DialogDescription>
+            <DialogDescription>Choose a website or local app for the live browser.</DialogDescription>
           </DialogHeader>
 
           <form
@@ -4963,12 +5017,13 @@ export default function AiAgentPage() {
               <Input
                 id="custom-url-input"
                 type="text"
-                placeholder="https://example.com or http://localhost:5173"
+                placeholder="https://example.com"
                 value={customUrlInput}
                 onChange={(e) => setCustomUrlInput(e.target.value)}
-                className="font-mono text-xs"
+                className="text-sm"
                 autoFocus
               />
+              <p className="text-xs text-muted-foreground">Local apps can use http://localhost:5173.</p>
             </div>
 
             <DialogFooter className="flex items-center justify-between sm:justify-between gap-2 pt-2">
@@ -4984,7 +5039,7 @@ export default function AiAgentPage() {
                   }}
                   className="text-destructive hover:text-destructive text-xs"
                 >
-                  Clear Custom URL
+                  Clear target
                 </Button>
               ) : (
                 <div />
@@ -5005,7 +5060,7 @@ export default function AiAgentPage() {
                   disabled={!customUrlInput.trim()}
                   className="bg-sky-600 hover:bg-sky-700 text-white font-medium text-xs"
                 >
-                  Set Target URL
+                  Use website
                 </Button>
               </div>
             </DialogFooter>

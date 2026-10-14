@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><style>*{margin:0}body{background:#0a0a0a}canvas{display:block}</style></head><body><canvas id="film" width="1920" height="1080"></canvas><script type="module">
+import{draw,SCENES}from'./js/launch.mjs';const canvas=document.querySelector('canvas'),c=canvas.getContext('2d'),off=document.createElement('canvas');off.width=1920;off.height=1080;const oc=off.getContext('2d');
+await Promise.all([new FontFace('Jakarta','url(public/Jakarta.ttf)').load().then(f=>document.fonts.add(f)),new FontFace('JetBrains','url(public/JetBrains.ttf)').load().then(f=>document.fonts.add(f))]);
+const data={images:{}};for(const name of['captions','amplitude'])try{data[name]=await fetch('public/'+name+'.json').then(r=>r.json())}catch{data[name]=[]}
+for(const name of['calculator','rdp']){const img=new Image();img.src='public/'+name+'.png';await img.decode();data.images[name]=img}
+window.drawFrame=(t,blur=false)=>{if(blur&&SCENES.some(s=>t>=s&&t<s+.35)){for(let i=0;i<3;i++){draw(oc,Math.max(0,t+(i-1)/180),data);c.globalAlpha=1/(i+1);c.drawImage(off,0,0)}c.globalAlpha=1}else draw(c,t,data)};
+window.drawFrame(0);window.ready=true;
+</script></body></html>

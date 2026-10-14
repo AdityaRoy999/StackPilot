@@ -13,15 +13,21 @@ def action_status(result: Any) -> str:
     if result.get("error") or result.get("status") in {"failed", "error", "blocked", "stale_element"}:
         return "failed"
     if result.get("action") == "batch":
+        if result.get("completion_verified") is True:
+            return "passed"
         statuses = [action_status(r) for r in result.get("results", [])]
         return "failed" if "failed" in statuses else ("passed" if statuses and all(s == "passed" for s in statuses) else "unverified")
     verification = result.get("verification") or {}
+    if result.get("requires_outcome"):
+        # A click/visual change is evidence of input dispatch, not proof that a
+        # consequential form, order, or message reached its intended outcome.
+        return "unverified"
     if result.get("action") == "assert":
         assertions = result.get("assertions") or []
         if any(a.get("status") == "failed" for a in assertions):
             return "failed"
         return "passed" if assertions and all(a.get("status") == "passed" for a in assertions) and verification.get("verified") is True else "unverified"
-    if verification.get("effect_type") in {"validation_error", "external_navigation", "dispatch_failed"}:
+    if verification.get("effect_type") in {"validation_error", "external_navigation", "dispatch_failed", "download_canceled"}:
         return "failed"
     if verification.get("verified") is True and verification.get("effect_type") not in {"no_effect", "focus"}:
         return "passed"
@@ -66,13 +72,17 @@ def build_test_report(cases: list[dict], url: str, title: str, console_errors: i
                       '', '| Discovered page | Status |', '| --- | --- |'])
         for route in coverage.get('routes',[]):
             lines.append('| '+str(route.get('url','')).replace('|','\\|')+' | '+str(route.get('status','untested'))+' |')
+        if coverage.get('detail_views'):
+            scenes = coverage['detail_views']
+            lines.append(f"**Detail views:** {len(scenes)} observed; {sum(s.get('parent_restored') is True for s in scenes)} parent returns verified. Views can share the same URL.")
         if coverage.get('stop_reason'):
             lines.append('**Coverage stop:** '+coverage['stop_reason'])
         remaining = coverage.get('controls_requiring_review',[])
         if remaining:
             lines.extend(['','**Untested scenarios requiring review:**'])
             for control in remaining[:60]:
-                lines.append('- '+str(control.get('label','Control'))+' on '+str(control.get('url',''))+': '+str(control.get('reason','Expected outcome is unknown.')))
+                context = ' ('+str(control['card_context'])+')' if control.get('card_context') else ''
+                lines.append('- '+str(control.get('label','Control'))+context+' on '+str(control.get('url',''))+': '+str(control.get('reason','Expected outcome is unknown.')))
             if len(remaining)>60:
                 lines.append(f'- {len(remaining)-60} additional scenarios remain in the structured coverage ledger.')
         if coverage.get('assets'):

@@ -1,5 +1,6 @@
 import api from "./api";
 import { isRemotePlatform, platformSocketBase } from "./remote-platform";
+import { socketTransportBase } from "./platform-transport";
 
 export type BrowserSandboxMode = "local" | "remote" | "host";
 
@@ -8,10 +9,7 @@ export function browserSocketUrl(sessionId: string) {
     return `${platformSocketBase()}/ws/browser/${sessionId}`;
   }
   const base = process.env.NEXT_PUBLIC_AI_SERVICE_WS_URL;
-  if (base) return `${base.replace(/\/$/, "")}/ws/browser/${sessionId}`;
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const host = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
-  return `${protocol}//${host}:8010/ws/browser/${sessionId}`;
+  return `${socketTransportBase(base)}/ws/browser/${sessionId}`;
 }
 
 export async function requestBrowserMode(sessionId: string, mode?: BrowserSandboxMode, url?: string): Promise<BrowserSandboxMode | null> {
@@ -30,7 +28,7 @@ export async function requestBrowserMode(sessionId: string, mode?: BrowserSandbo
       socket.close();
       if (error) reject(error); else resolve(value);
     };
-    const timeout = setTimeout(() => finish(new Error("The browser worker did not respond. Your previous sandbox is still selected.")), 25000);
+    const timeout = setTimeout(() => finish(new Error("The browser worker did not respond. Your previous sandbox is still selected.")), mode === "remote" ? 38000 : 25000);
     socket.onopen = () => socket.send(JSON.stringify(mode
       ? { type: "switch_mode", sandbox_mode: mode, url: url || "about:blank" }
       : { type: "get_mode" }));

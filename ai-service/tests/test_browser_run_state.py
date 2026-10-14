@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -41,6 +42,27 @@ class JournalTests(unittest.TestCase):
         self.journal.record(run,{'type':'tool_call','name':'browser_interact','id':'submit','arguments':{}})
         self.journal.record(run,{'type':'done','stopped':True})
         self.assertIsNotNone(self.journal.previous(self.owner))
+
+    def test_checkpoint_assertion_alone_cannot_verify_task(self):
+        run = self.journal.start(self.owner, 'Find a train result')
+        self.journal.record(run, {'type':'tool_result','name':'browser_assert','id':'checkpoint',
+            'result':{'action':'assert','purpose':'checkpoint','assertions':[{'status':'passed'}],
+                      'verification':{'verified':True,'effect_type':'assertion'}}})
+        self.journal.record(run, {'type':'done','status':'verified'})
+        self.assertEqual(self.journal.state(run)['state'], 'unverified')
+        self.assertEqual(self.journal.state(run)['outcomes'], 0)
+
+    def test_existing_journal_schema_gains_outcome_counter(self):
+        legacy_path = Path(self.directory.name) / 'legacy.sqlite3'
+        db = sqlite3.connect(legacy_path)
+        try:
+            db.execute('CREATE TABLE runs (id TEXT PRIMARY KEY, owner TEXT NOT NULL, goal_hash TEXT NOT NULL, state TEXT NOT NULL, updated REAL NOT NULL, pending TEXT NOT NULL, checks INTEGER NOT NULL DEFAULT 0)')
+            db.commit()
+        finally:
+            db.close()
+        migrated = RunJournal(legacy_path)
+        run = migrated.start(self.owner, 'Verify a result')
+        self.assertEqual(migrated.state(run)['outcomes'], 0)
 
     def test_verified_result_is_terminal_and_failed_result_requires_recovery(self):
         run = self.journal.start(self.owner,'Check a result')

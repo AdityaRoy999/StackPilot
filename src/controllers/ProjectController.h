@@ -27,6 +27,8 @@ public:
     ADD_METHOD_TO(ProjectController::listGitHubRepos, "/api/v1/github/repos", drogon::Post);
     ADD_METHOD_TO(ProjectController::listGitHubBranches, "/api/v1/github/branches", drogon::Post);
     ADD_METHOD_TO(ProjectController::browseLocalSources, "/api/v1/local/sources/browse", drogon::Post);
+    ADD_METHOD_TO(ProjectController::inspectStack, "/api/v1/projects/inspect-stack", drogon::Post);
+    ADD_METHOD_TO(ProjectController::getStack, "/api/v1/projects/{id}/stack", drogon::Get);
     METHOD_LIST_END
 
     void createProject(const drogon::HttpRequestPtr& req,
@@ -48,6 +50,18 @@ public:
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback);
     void browseLocalSources(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+
+private:
+    void inspectStackSource(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                            const std::string& projectId);
+
+public:
+    void inspectStack(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& callback);
+    void getStack(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& callback,
+                  const std::string& id);
 
 private:
     // Helper: extract user_id from JWT in Authorization header

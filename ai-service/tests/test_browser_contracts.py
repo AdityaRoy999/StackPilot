@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from app.browser_testing.intent import browser_task_context
 from app.browser_testing.assertions import assert_browser_state
@@ -10,6 +10,46 @@ from app.system1_decision_engine import extract_goal_intent, System1DecisionEngi
 from app.testing_runtime import action_status, build_test_report
 from app.browser_testing.observations import visual_observation_message, retain_recent_visual_observations
 from app.browser_testing.models import select_browser_planner
+
+
+class BrowserDomainBoundaryTests(unittest.TestCase):
+    def test_about_blank_is_only_allowed_for_about_blank_session(self):
+        from app.browser_driver import BrowserSession
+        session=BrowserSession('blank-domain',target_url='about:blank')
+        self.assertTrue(session.is_url_in_target_domain('about:blank'))
+        self.assertFalse(session.is_url_in_target_domain('https://example.com/'))
+
+    def test_explicit_www_alias_and_relative_routes_stay_in_target(self):
+        from app.browser_driver import BrowserSession
+        session=BrowserSession('domain-fixture',target_url='https://www.goibibo.com/')
+        self.assertTrue(session.is_url_in_target_domain('/trains/'))
+        self.assertTrue(session.is_url_in_target_domain('https://goibibo.com/trains/'))
+        self.assertFalse(session.is_url_in_target_domain('//unrelated.example/trains/'))
+        self.assertFalse(session.is_url_in_target_domain('javascript:alert(1)'))
+
+    def test_www_normalization_does_not_admit_unrelated_suffix(self):
+        from app.browser_driver import BrowserSession
+        session=BrowserSession('short-domain-fixture',target_url='https://www.wow.com/')
+        self.assertFalse(session.is_url_in_target_domain('https://other.com/'))
+        self.assertTrue(session.is_url_in_target_domain('https://www.wow.com/about'))
+
+
+class BrowserNavigationFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cdp_network_error_is_not_reported_as_navigation_success(self):
+        from app.browser_driver import BrowserSession
+        session=BrowserSession('failed-navigation',target_url='https://example.com/')
+        session.send_command=AsyncMock(return_value={'errorText':'net::ERR_HTTP2_PROTOCOL_ERROR'})
+        with self.assertRaisesRegex(RuntimeError,'ERR_HTTP2_PROTOCOL_ERROR'):
+            await session.navigate('https://example.com/')
+        self.assertFalse(session._navigating)
+
+    async def test_navigation_exception_clears_in_progress_state(self):
+        from app.browser_driver import BrowserSession
+        session=BrowserSession('navigation-exception',target_url='https://example.com/')
+        session.send_command=AsyncMock(side_effect=ConnectionError('CDP connection closed'))
+        with self.assertRaises(ConnectionError):
+            await session.navigate('https://example.com/')
+        self.assertFalse(session._navigating)
 
 
 class ObservedEffectsTests(unittest.TestCase):
@@ -30,6 +70,19 @@ class ObservedEffectsTests(unittest.TestCase):
 
 
 class PlannerModelTests(unittest.TestCase):
+    def test_inactive_campaign_tools_are_not_offered_to_browser_planner(self):
+        from app.browser_testing.planning import browser_planner_tools
+        from app.tools import AGENT_TOOLS
+        names = lambda selected: {tool['function']['name'] for tool in selected}
+        self.assertNotIn('browser_campaign_status', names(browser_planner_tools(AGENT_TOOLS, True)))
+        self.assertIn('browser_campaign_status', names(browser_planner_tools(AGENT_TOOLS, True, campaign_active=True)))
+
+    def test_never_ask_policy_omits_question_tool(self):
+        from app.browser_testing.planning import browser_planner_tools
+        from app.tools import AGENT_TOOLS
+        offered={tool['function']['name'] for tool in browser_planner_tools(AGENT_TOOLS, True, allow_questions=False)}
+        self.assertNotIn('ask_user_question',offered)
+
     def test_known_incompatible_vision_model_uses_configured_planner(self):
         model, notice = select_browser_planner('nvidia_nim', 'meta/llama-3.2-11b-vision-instruct', {}, ['openai/gpt-oss-20b'])
         self.assertEqual(model, 'openai/gpt-oss-20b')
@@ -112,6 +165,37 @@ class IntentTests(unittest.TestCase):
 
 
 class AssertionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_tool_hoists_consistent_nested_purpose(self):
+        from app.tools import _execute_tool_call
+        from app.browser_driver import browser_manager
+        session = SimpleNamespace(is_connected=True)
+        with patch.dict(browser_manager.sessions, {'purpose-fixture': session}), patch(
+                'app.browser_testing.assertions.assert_browser_state', new_callable=AsyncMock) as check:
+            check.return_value = {'status': 'passed'}
+            await _execute_tool_call('browser_assert', {
+                'session_id': 'purpose-fixture',
+                'expectations': [{'kind': 'text', 'expected': 'Done', 'purpose': 'outcome'}]}, 'fixture')
+        self.assertEqual(check.await_args.args[-1], 'outcome')
+
+    async def test_repeated_unchanged_mismatch_is_reprobed_once(self):
+        session = SimpleNamespace(evaluate=AsyncMock(return_value=[{"matched": False, "actual": "Send Message"}]),
+                                  dispatched_inputs=1, current_url='https://fixture.invalid/contact')
+        spec = [{"kind": "text", "element_id": 2, "expected": "Message Sent!"}]
+        first = await assert_browser_state(session, spec, .12, 'outcome')
+        before = session.evaluate.await_count
+        second = await assert_browser_state(session, spec, 5, 'checkpoint')
+        self.assertEqual(first['status'], 'failed')
+        self.assertEqual(second['status'], 'failed')
+        self.assertEqual(session.evaluate.await_count - before, 1)
+        self.assertEqual(second['attempts'], 1)
+        self.assertIn('reprobed once', second['hint'])
+
+    async def test_redundant_nested_purpose_does_not_invalidate_expectation(self):
+        session = SimpleNamespace(evaluate=AsyncMock(return_value=[{"matched": True, "actual": "Sent"}]))
+        result = await assert_browser_state(session, [{"kind": "text", "expected": "Sent", "purpose": "outcome"}], 0, "outcome")
+        self.assertEqual(result["status"], "passed")
+        self.assertNotIn("purpose", result["assertions"][0]["expectation"])
+
     async def test_unsupported_expectation_returns_without_waiting_for_deadline(self):
         session = SimpleNamespace(evaluate=AsyncMock(return_value=[{'matched':False,'unavailable':True,'reason':'Use checked'}]))
         result = await assert_browser_state(session, [{'kind':'value','selector':'input','expected':'on'}], 30)
@@ -151,10 +235,15 @@ class AssertionTests(unittest.IsolatedAsyncioTestCase):
         session = SimpleNamespace(evaluate=AsyncMock())
         for expectations in [[], [{"kind": "text", "expected": ""}], [{"kind": "value", "expected": "a"}],
                              [{"kind": "checked", "selector": "#flag", "expected": "false"}],
-                             [{"kind": "url", "selector": "#x", "expected": "https://fixture"}],
                              [{"kind": "visible", "selector": "#flag", "expected": False}]]:
             self.assertEqual((await assert_browser_state(session, expectations, 0))["status"], "failed")
         session.evaluate.assert_not_awaited()
+
+    async def test_page_assertion_ignores_redundant_element_target(self):
+        session = SimpleNamespace(evaluate=AsyncMock(return_value=[{"matched": True, "actual": "https://fixture"}]))
+        result = await assert_browser_state(session, [{"kind": "url", "selector": "#old-page", "expected": "https://fixture"}], 0)
+        self.assertEqual(result["status"], "passed")
+        self.assertNotIn("selector", result["assertions"][0]["expectation"])
 
     async def test_timeout_contract_is_bounded(self):
         session = SimpleNamespace(evaluate=AsyncMock())

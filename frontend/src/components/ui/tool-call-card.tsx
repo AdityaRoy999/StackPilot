@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AnimatedCollapse } from "@/components/ui/animated-collapse";
 import {
   Terminal,
   FolderTree,
@@ -285,7 +286,7 @@ export function ToolCallCard({
       </div>
 
       {/* Expanded Content Body */}
-      {open && (
+      <AnimatedCollapse open={open}>
         <div className="border-t border-border/60 bg-muted/10">
           {isDeclined && (
             <div className="px-3 py-2 bg-rose-500/5 border-b border-rose-500/20 text-xs text-rose-400 flex items-center gap-2">
@@ -447,7 +448,7 @@ export function ToolCallCard({
             </div>
           )}
         </div>
-      )}
+      </AnimatedCollapse>
     </div>
   );
 }

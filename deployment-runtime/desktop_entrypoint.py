@@ -69,6 +69,13 @@ def main():
         import shutil
         web=Path('/tmp/stackpilot-novnc')
         shutil.copytree('/usr/share/novnc',web,dirs_exist_ok=True)
+        artifacts=os.getenv('ARTIFACT_ROOT')
+        if artifacts:
+            from artifact_server import inventory
+            directory=web/'artifacts';directory.mkdir()
+            for entry in inventory(artifacts):shutil.copyfile(Path(artifacts)/entry['name'],directory/entry['name'])
+            manifest=Path(artifacts)/'manifest.json'
+            if manifest.is_file() and not manifest.is_symlink():shutil.copyfile(manifest,directory/'manifest.json')
         (web/'index.html').write_text('<!doctype html><meta http-equiv="refresh" content="0;url=vnc.html?autoconnect=1&resize=scale"><title>Application preview</title>')
         children.append(subprocess.Popen(['websockify','--web',str(web),'0.0.0.0:3000','127.0.0.1:5900']))
         while all(child.poll() is None for child in children):

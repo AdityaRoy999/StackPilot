@@ -1,21 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import {
-  AlertTriangle,
-  Boxes,
+  Plus,
   CheckCircle2,
-  ExternalLink,
-  GitBranch,
   KeyRound,
   Loader2,
-  Network,
-  Plus,
   RefreshCw,
-  Server,
   ShieldCheck,
   Trash2,
 } from "@/lib/platform-icons";
@@ -24,6 +18,8 @@ import { toast } from "sonner";
 
 import api from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
+import { DisclosureSection } from "@/components/ui/disclosure-section";
+import { SetupSteps } from "@/components/projects/ProjectSetupSteps";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -38,14 +34,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+
 
 interface SshConnection {
   id: string;
@@ -140,6 +129,13 @@ function statusBadgeVariant(status: string): "default" | "secondary" | "destruct
 
 export function ClusterBuilder() {
   const queryClient = useQueryClient();
+  const [creationOpen, setCreationOpen] = useState(false);
+  const [creationBusy, setCreationBusy] = useState(false);
+  const [creationDone, setCreationDone] = useState(false);
+  const [installedControlPlane, setInstalledControlPlane] = useState("");
+  const creationLock = useRef(false);
+  const [joinedWorkerIds, setJoinedWorkerIds] = useState<Set<string>>(() => new Set());
+  const [setupStep, setSetupStep] = useState<"server" | "install" | "workers" | "confirmation">("server");
   const [controlPlaneId, setControlPlaneId] = useState("");
   const [clusterName, setClusterName] = useState("");
   const [advertiseAddress, setAdvertiseAddress] = useState("");
@@ -148,6 +144,8 @@ export function ClusterBuilder() {
   const [workerSudo, setWorkerSudo] = useState("");
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
   const [actionResult, setActionResult] = useState<ClusterActionResponse | null>(null);
+  const [operationOutputs, setOperationOutputs] = useState<Record<string, ClusterActionResponse>>({});
+  const [outputCluster, setOutputCluster] = useState<KubernetesCluster | null>(null);
   const [clusterToDelete, setClusterToDelete] = useState<KubernetesCluster | null>(null);
   const [wipeServersOnDelete, setWipeServersOnDelete] = useState(false);
   const [deleteSudoPassword, setDeleteSudoPassword] = useState("");
@@ -190,7 +188,7 @@ export function ClusterBuilder() {
   });
   const activeMembership = (id: string) => clusters.flatMap((cluster) => cluster.nodes.filter((node) => node.status !== "removed" && node.connection_id === id).map((node) => ({ cluster, node })));
   const readiness = (connection: SshConnection) => connection.last_probe_error ? "Last probe failed" : !connection.last_probed_at ? "Readiness not checked" : `Docker ${connection.host_capabilities?.docker_daemon === "yes" ? "available" : "unavailable"} · Kubernetes ${connection.host_capabilities?.kubernetes_ready === "yes" ? "available" : "unavailable"}`;
-  const effectiveControlPlaneId = controlPlaneId || connections.find((connection) =>
+  const effectiveControlPlaneId = controlPlaneId || connections.find(connection => activeMembership(connection.id).length === 0)?.id || connections.find((connection) =>
     !activeMembership(connection.id).some(({ cluster }) => cluster.control_plane_connection_id !== connection.id)
   )?.id || "";
   const selectedControlPlane = connections.find((connection) => connection.id === effectiveControlPlaneId);
@@ -205,13 +203,19 @@ export function ClusterBuilder() {
 
   const effectiveSelectedWorkerIds = useMemo(() => {
     const validWorkerIdSet = new Set(workerOptions.map((w) => w.id));
-    return selectedWorkerIds.filter((id) => validWorkerIdSet.has(id) && !clusters.some((cluster) => cluster.nodes.some((node) => node.connection_id === id && node.status !== "removed")));
-  }, [selectedWorkerIds, workerOptions, clusters]);
+    return selectedWorkerIds.filter((id) => validWorkerIdSet.has(id) && !joinedWorkerIds.has(id) && !clusters.some((cluster) => cluster.nodes.some((node) => node.connection_id === id && node.role === "agent" && node.status !== "removed")));
+  }, [selectedWorkerIds, workerOptions, clusters, joinedWorkerIds]);
 
   const selectedCluster = useMemo(
     () => clusters.find((cluster) => cluster.control_plane_connection_id === effectiveControlPlaneId),
     [clusters, effectiveControlPlaneId]
   );
+
+  function recordActionResult(result: ClusterActionResponse, connectionId = effectiveControlPlaneId) {
+    setActionResult(result);
+    setOperationOutputs(current => ({ ...current, [connectionId]: result }));
+  }
+  const outputResult = operationOutputs[outputCluster?.control_plane_connection_id || ""];
 
   const initializeMutation = useMutation({
     mutationKey: ["kubernetes-cluster-init"],
@@ -229,15 +233,16 @@ export function ClusterBuilder() {
       return response.data;
     },
     onSuccess: (data) => {
-      setActionResult(data);
-      toast.success(data.message || "Kubernetes control plane initialized");
+      recordActionResult(data);
+      if (data.success) toast.success(data.message || "Kubernetes control plane initialized");
+      else toast.error(data.error || "Control-plane bootstrap failed");
       queryClient.invalidateQueries({ queryKey: ["kubernetes-clusters"] });
       queryClient.invalidateQueries({ queryKey: ["ssh-connections"] });
       setControlPlaneSudo("");
     },
     onError: (error: unknown) => {
       const data = errorPayload(error);
-      setActionResult(data ?? { success: false, error: "Control-plane bootstrap failed" });
+      recordActionResult(data ?? { success: false, error: "Control-plane bootstrap failed" });
       toast.error(data?.error || "Control-plane bootstrap failed", {
         description: data?.hint || (data?.details ? data.details.slice(0, 220) : undefined),
       });
@@ -264,12 +269,13 @@ export function ClusterBuilder() {
             },
             { timeout: 600000 }
           );
-          return response.data;
+          if (response.data.success) setJoinedWorkerIds(current => new Set([...current, workerId]));
+          return { ...response.data, worker_connection_id: workerId };
         } catch (error) {
           const data = errorPayload(error);
-          return data ?? {
+          return { ...data,
             success: false,
-            error: "Worker join failed",
+            error: data?.error || "Worker join failed",
             worker_connection_id: workerId,
           };
         }
@@ -284,7 +290,7 @@ export function ClusterBuilder() {
           return `# ${worker?.name || result.worker_connection_id || "worker"}\n${result.details || result.error || result.message || ""}`;
         })
         .join("\n\n");
-      setActionResult({
+      recordActionResult({
         success: failed.length === 0,
         message: failed.length === 0 ? "Selected workers joined the cluster" : `${failed.length} worker join operation failed`,
         details: combinedDetails,
@@ -296,6 +302,7 @@ export function ClusterBuilder() {
         (result.error || "").includes("already running k3s as its own control plane") ||
         (result.error || "").includes("already registered as the control plane")
       );
+      queryClient.invalidateQueries({ queryKey: ["kubernetes-clusters"] });
       if (alreadyServers.length > 0) {
         setReplaceCandidates(
           alreadyServers
@@ -308,6 +315,7 @@ export function ClusterBuilder() {
       if (failed.length === 0) {
         toast.success("Selected workers joined the cluster");
         setWorkerSudo("");
+        if (!creationLock.current) setCreationDone(true);
       } else {
         toast.warning(`${failed.length} worker join operation failed`);
       }
@@ -321,14 +329,15 @@ export function ClusterBuilder() {
       const response = await api.get<ClusterActionResponse>(`/ssh/connections/${connectionId}/cluster/status`);
       return response.data;
     },
-    onSuccess: (data) => {
-      setActionResult(data);
-      toast.success(data.message || "Cluster status loaded");
+    onSuccess: (data, connectionId) => {
+      recordActionResult(data, connectionId);
+      if (data.success) toast.success(data.message || "Cluster status loaded");
+      else toast.error(data.error || "Cluster status check failed");
       queryClient.invalidateQueries({ queryKey: ["kubernetes-clusters"] });
     },
-    onError: (error: unknown) => {
+    onError: (error: unknown, connectionId) => {
       const data = errorPayload(error);
-      setActionResult(data ?? { success: false, error: "Failed to inspect cluster" });
+      recordActionResult(data ?? { success: false, error: "Failed to inspect cluster" }, connectionId);
       const sanitizedDetails = data?.details
         ? data.details.replace(/__[A-Z0-9_]+__/g, "").replace(/E\d+\s+[\d:.]+\s+\d+\s+\S+\]/g, "").trim().slice(0, 180)
         : undefined;
@@ -408,21 +417,49 @@ export function ClusterBuilder() {
     );
   };
 
+  const operationBusy = creationBusy || initializeMutation.isPending || joinWorkersMutation.isPending || inspectMutation.isPending;
+  const steps = ["server", "install", "workers", "confirmation"] as const;
+  const reuseControlPlane = selectedCluster?.status === "ready" || installedControlPlane === effectiveControlPlaneId;
+  const openCreation = () => {
+    setSetupStep("server"); setCreationDone(false); setActionResult(null);
+    setControlPlaneId(connections.find(connection => activeMembership(connection.id).length === 0)?.id || connections.find(connection => !activeMembership(connection.id).some(({ cluster }) => cluster.control_plane_connection_id !== connection.id))?.id || ""); setClusterName(""); setAdvertiseAddress(""); setTlsSan(""); setJoinedWorkerIds(new Set());
+    setControlPlaneSudo(""); setWorkerSudo(""); setSelectedWorkerIds([]); setCreationOpen(true);
+  };
+  async function confirmCreation() {
+    if (creationLock.current || operationBusy || !effectiveControlPlaneId || !effectiveClusterName) return;
+    creationLock.current = true; setCreationBusy(true); setCreationDone(false); setActionResult(null);
+    try {
+      if (!reuseControlPlane) {
+        const result = await initializeMutation.mutateAsync();
+        if (!result.success) return;
+        setInstalledControlPlane(effectiveControlPlaneId);
+      }
+      if (effectiveSelectedWorkerIds.length) {
+        const results = await joinWorkersMutation.mutateAsync({});
+        if (results.some(result => !result.success)) return;
+      } else setActionResult({ success: true, message: "Cluster is ready", cluster: { id: selectedCluster?.id || "", name: effectiveClusterName, server_url: selectedCluster?.server_url || "", status: "ready" } });
+      setCreationDone(true); setControlPlaneSudo(""); setWorkerSudo("");
+    } catch { /* Mutations retain the backend error and any recoverable partial progress. */ }
+    finally { creationLock.current = false; setCreationBusy(false); }
+  }
+  function closeCreation(open: boolean) {
+    if (operationBusy) return;
+    setCreationOpen(open);
+    if (!open) { setControlPlaneSudo(""); setWorkerSudo(""); }
+  }
+
   return (
     <div className="space-y-6">
       {(connectionsQuery.isError || clustersQuery.isError) && <p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">Could not load saved servers or clusters. Use Refresh to retry.</p>}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/30 px-3 py-1 text-xs font-medium text-muted-foreground">
-            <AppIcon name="network" fallback={Network} className="h-3.5 w-3.5"  />
-            k3s multi-node bootstrap
-          </div>
-          <h1 className="text-4xl font-extrabold tracking-tight">Cluster Builder</h1>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Cluster Builder</h1>
           <p className="max-w-3xl text-muted-foreground">
-            Bootstrap a control plane from a saved server, join worker servers, and verify the cluster without leaving StackPilot.
+            Create a Kubernetes cluster from your saved servers, or manage an existing one.
           </p>
         </div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 lg:shrink-0">
+          <Button disabled={operationBusy} onClick={openCreation}><Plus className="size-4" />Create clusters</Button>
           <Button
             variant="outline"
             onClick={() => {
@@ -442,68 +479,28 @@ export function ClusterBuilder() {
               <AppIcon name="key-round" fallback={KeyRound} className="mr-2 h-4 w-4"  />
               Manage Servers
           </Link>
-          <Button
-            variant="outline"
-            className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive whitespace-nowrap"
-            onClick={() => {
-              setServerToWipe(connections[0] || null);
-              setShowWipeServerDialog(true);
-            }}
-          >
-            <AppIcon name="trash-2" fallback={Trash2} className="mr-2 h-4 w-4" />
-            Wipe Server K3s
-          </Button>
+
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.72fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AppIcon name="server" fallback={Server} className="h-5 w-5 text-primary"  />
-              Create or Expand Cluster
-            </CardTitle>
-            <CardDescription>
-              Run these operations on trusted servers only. StackPilot installs k3s and stores the join token encrypted for future worker joins.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {connections.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
-                No saved servers are available yet. Add SSH, Tailscale SSH, or Headscale SSH connections in Settings first.
-              </div>
-            ) : (
-              <>
-                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs text-muted-foreground space-y-1.5">
-                  <div className="font-semibold text-foreground flex items-center gap-1.5 text-xs">
-                    <AppIcon name="shield-check" fallback={ShieldCheck} className="h-4 w-4 text-primary" />
-                    AWS EC2 & Cloud Multi-Node Setup
-                  </div>
-                  <p>
-                    StackPilot automatically provisions packages (curl, wget, tar, container-selinux), multi-SAN certificates, and OS firewall rules (UFW/firewalld) on all fresh instances.
-                  </p>
-                  <p>
-                    <strong>AWS Security Group:</strong> Ensure your EC2 instances allow inbound <strong>TCP 6443</strong> (K8s API) and <strong>UDP 8472</strong> (Flannel VXLAN overlay) from each other.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                    1
-                  </span>
-                  <h3 className="text-sm font-semibold">Choose the control plane</h3>
-                </div>
-
+      <Dialog open={creationOpen} onOpenChange={closeCreation}>
+        <DialogContent resizeKey={setupStep} showCloseButton={!operationBusy} className="flex max-h-[90dvh] flex-col overflow-hidden p-0 sm:max-w-4xl">
+          <DialogHeader className="shrink-0 px-5 py-5 pr-12 sm:px-6"><DialogTitle>Create cluster</DialogTitle><DialogDescription>Choose your servers, review the installation, and confirm your cluster.</DialogDescription></DialogHeader>
+          <SetupSteps label="Cluster setup progress" labels={["Server", "Install", "Workers", "Confirmation"]} step={steps.indexOf(setupStep)} onChange={index => setSetupStep(steps[index])} disabled={operationBusy || creationDone} />
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-5 sm:p-6">
+              {connectionsQuery.isLoading ? <p role="status" className="text-sm text-muted-foreground">Loading saved servers…</p> : connections.length === 0 ? <div className="space-y-3 rounded-lg border border-dashed p-5"><p className="text-sm text-muted-foreground">Add a server connection in Settings to create a cluster.</p><Link href="/dashboard/settings" onClick={() => closeCreation(false)} className={buttonVariants({variant:"outline"})}>Add a server</Link></div> : <>
+                {setupStep === "server" && <div className="space-y-5">
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className="space-y-2">
-                    <Label>Control-plane server</Label>
+                    <Label htmlFor="control-plane-server">Control-plane server</Label>
                     <Select
                       value={effectiveControlPlaneId}
+                      disabled={operationBusy}
                       onValueChange={(value) => {
-                        if (value) setControlPlaneId(value);
+                        if (value) { setControlPlaneId(value); setInstalledControlPlane(""); setJoinedWorkerIds(new Set()); setClusterName(""); setSelectedWorkerIds([]); setActionResult(null); }
                       }}
                     >
-                      <SelectTrigger className="h-10 w-full bg-muted/30">
+                      <SelectTrigger id="control-plane-server" className="h-10 w-full bg-muted/30">
                         <span className="truncate">
                           {selectedControlPlane
                             ? `${selectedControlPlane.name} (${selectedControlPlane.host})`
@@ -529,6 +526,7 @@ export function ClusterBuilder() {
                     <Label htmlFor="clusterName">Cluster name</Label>
                     <Input
                       id="clusterName"
+                      readOnly={Boolean(selectedCluster)}
                       value={effectiveClusterName}
                       onChange={(event) => setClusterName(event.target.value)}
                       placeholder="production-edge"
@@ -536,15 +534,10 @@ export function ClusterBuilder() {
                   </div>
                 </div>
 
-                {/* Three optional fields were competing for attention with the
-                    two that are actually required. Folded away by default. */}
-                <details className="group rounded-xl border border-border bg-muted/10">
-                  <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm">
-                    <span className="font-medium">Advanced network options</span>
-                    <span className="text-xs text-muted-foreground">
-                      Advertise address, TLS SAN, sudo password
-                    </span>
-                  </summary>
+                </div>}
+                {setupStep === "install" && <div className="space-y-5">
+                  <div className="rounded-lg border border-border bg-muted/20 p-4 text-sm"><p className="font-medium">{effectiveClusterName}</p><p className="mt-1 break-words text-muted-foreground">{selectedControlPlane?.name} · {selectedControlPlane?.host}</p></div>
+<DisclosureSection title="Advanced settings" description="Network address, certificate names, and sudo password">
                   <div className="grid gap-4 border-t border-border p-4 lg:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="advertiseAddress">Advertise address</Label>
@@ -582,100 +575,25 @@ export function ClusterBuilder() {
                       />
                     </div>
                   </div>
-                </details>
-
-                <div className="flex items-center gap-2 pt-2">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
-                    2
-                  </span>
-                  <h3 className="text-sm font-semibold">
-                    {selectedCluster && selectedCluster.status === "ready"
-                      ? "Control plane active"
-                      : "Install Kubernetes on it"}
-                  </h3>
+</DisclosureSection>
+                  <DisclosureSection title="Cloud networking requirements" description="Review these when connecting servers across a cloud network">
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs text-muted-foreground space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center gap-1.5 text-xs">
+                    <AppIcon name="shield-check" fallback={ShieldCheck} className="h-4 w-4 text-primary" />
+                    AWS EC2 & Cloud Multi-Node Setup
+                  </div>
+                  <p>
+                    StackPilot automatically provisions packages (curl, wget, tar, container-selinux), multi-SAN certificates, and OS firewall rules (UFW/firewalld) on all fresh instances.
+                  </p>
+                  <p>
+                    <strong>AWS Security Group:</strong> Ensure your EC2 instances allow inbound <strong>TCP 6443</strong> (K8s API) and <strong>UDP 8472</strong> (Flannel VXLAN overlay) from each other.
+                  </p>
                 </div>
+                  </DisclosureSection>
+                  <p className="text-sm text-muted-foreground">{reuseControlPlane ? "This control plane is already installed. Its installation will be kept." : "k3s will be installed on the selected server after confirmation."}</p>
 
-                {selectedCluster && selectedCluster.status === "ready" ? (
-                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 space-y-3">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex items-center gap-2.5">
-                        <AppIcon name="check-circle-2" fallback={CheckCircle2} className="h-5 w-5 text-emerald-500 shrink-0" />
-                        <div>
-                          <div className="font-semibold text-foreground flex items-center gap-2">
-                            <span>{selectedCluster.name}</span>
-                            <Badge variant="outline" className="border-emerald-500/40 text-emerald-500 text-[10px]">
-                              Ready
-                            </Badge>
-                          </div>
-                          <div className="font-mono text-xs text-muted-foreground">{selectedCluster.server_url}</div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => inspectMutation.mutate(effectiveControlPlaneId)}
-                          disabled={inspectMutation.isPending}
-                        >
-                          {inspectMutation.isPending && inspectMutation.variables === effectiveControlPlaneId ? (
-                            <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin" />
-                          ) : (
-                            <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4" />
-                          )}
-                          Inspect Cluster
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => initializeMutation.mutate()}
-                          disabled={initializeMutation.isPending}
-                        >
-                          Re-initialize
-                        </Button>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Kubernetes control plane is active. To add worker servers to this cluster, select them in <strong>Step 3</strong> below and click <strong>Join Workers</strong>.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-muted/20 p-4">
-                    <Button
-                      onClick={() => initializeMutation.mutate()}
-                      disabled={!effectiveControlPlaneId || !effectiveClusterName || initializeMutation.isPending || activeMembership(effectiveControlPlaneId).some(({ cluster }) => cluster.control_plane_connection_id !== effectiveControlPlaneId)}
-                    >
-                      {initializeMutation.isPending ? (
-                        <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin"  />
-                      ) : (
-                        <AppIcon name="shield-check" fallback={ShieldCheck} className="mr-2 h-4 w-4"  />
-                      )}
-                      Initialize Control Plane
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => inspectMutation.mutate(effectiveControlPlaneId)}
-                      disabled={!selectedCluster || inspectMutation.isPending}
-                    >
-                      {inspectMutation.isPending && inspectMutation.variables === effectiveControlPlaneId ? (
-                        <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin"  />
-                      ) : (
-                        <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4"  />
-                      )}
-                      Inspect Cluster
-                    </Button>
-                    {selectedCluster ? (
-                      <Badge variant={statusBadgeVariant(selectedCluster.status)}>
-                        {selectedCluster.status}
-                      </Badge>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">
-                        Initialize this server before joining workers.
-                      </span>
-                    )}
-                  </div>
-                )}
-
+                </div>}
+                {setupStep === "workers" && <div className="space-y-5">
                 <div id="cluster-step-3-workers" className="space-y-3 rounded-xl border border-border bg-card p-4 scroll-mt-6">
                   <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
                     <div>
@@ -709,7 +627,7 @@ export function ClusterBuilder() {
                           >
                             <Checkbox
                               id={`worker-${connection.id}`}
-                              disabled={Boolean(isAlreadyMember || managedWorker)}
+                              disabled={operationBusy || Boolean(isAlreadyMember || managedWorker)}
                               checked={Boolean(isAlreadyMember) || effectiveSelectedWorkerIds.includes(connection.id)}
                               onCheckedChange={(checked) => toggleWorker(connection.id, checked === true)}
                             />
@@ -739,6 +657,7 @@ export function ClusterBuilder() {
                   )}
 
                   <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                    <DisclosureSection title="Worker sudo password" description="Only needed when passwordless sudo is unavailable">
                     <div className="space-y-2">
                       <Label htmlFor="workerSudo">Worker sudo password</Label>
                       <Input
@@ -749,197 +668,99 @@ export function ClusterBuilder() {
                         placeholder="Optional. Used once if workers need sudo password."
                       />
                     </div>
-                    <Button
-                      onClick={() => joinWorkersMutation.mutate({})}
-                      disabled={!selectedCluster || effectiveSelectedWorkerIds.length === 0 || joinWorkersMutation.isPending}
-                    >
-                      {joinWorkersMutation.isPending ? (
-                        <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin"  />
-                      ) : (
-                        <AppIcon name="boxes" fallback={Boxes} className="mr-2 h-4 w-4"  />
-                      )}
-                      Join Workers
-                    </Button>
+                    </DisclosureSection>
                   </div>
                 </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AppIcon name="check-circle2" fallback={CheckCircle2} className="h-5 w-5 text-primary"  />
-              Operation Output
-            </CardTitle>
-            <CardDescription>
-              Bootstrap, join, and status output appears here. Tokens are redacted by the backend.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {actionResult ? (
+                </div>}
+                {setupStep === "confirmation" && <section className="space-y-5" aria-label="Cluster creation confirmation">
+                  <div><h3 className="text-lg font-semibold">{effectiveClusterName}</h3><p className="mt-1 text-sm text-muted-foreground">{reuseControlPlane ? "Keep the control plane and join the selected workers." : "Install k3s on the control plane, then join the selected workers."}</p></div>
+                  <dl className="divide-y divide-border rounded-xl border text-sm">
+                    {[{ label: "Server", value: `${selectedControlPlane?.name} · ${selectedControlPlane?.host}` }, { label: "Install", value: reuseControlPlane ? "Reuse existing k3s control plane" : "Install k3s" }, { label: "Advertise address", value: advertiseAddress.trim() || "Automatic" }, { label: "Certificate name", value: tlsSan.trim() || "Automatic" }, { label: "Workers", value: selectedWorkerIds.length ? connections.filter(c => selectedWorkerIds.includes(c.id)).map(c => `${c.name} (${c.host})`).join(", ") : "Single-server cluster" }].map(row => <div key={row.label} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 p-4"><dt className="text-muted-foreground">{row.label}</dt><dd className="break-words [overflow-wrap:anywhere] font-medium">{row.value}</dd></div>)}
+                  </dl>
+                  <p className="text-sm text-muted-foreground">Server software and firewall rules may change. Any saved passwords are used for this operation and hidden from this review.</p>
+                  {operationBusy && <p role="status" className="flex gap-2 text-sm"><Loader2 className="size-4 animate-spin" />{initializeMutation.isPending ? "Installing control plane…" : "Joining workers…"}</p>}
+                  {actionResult && <div role={actionResult.success ? "status" : "alert"} className="rounded-lg border p-4 text-sm"><p className={actionResult.success ? "font-medium" : "text-destructive"}>{actionResult.message || actionResult.error}</p>{actionResult.hint && <p className="mt-2 text-muted-foreground">{actionResult.hint}</p>}<DisclosureSection className="mt-3" title="Operation logs"><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{shortDetails(actionResult.details) || actionResult.error || "No additional output."}</pre></DisclosureSection></div>}
+                </section>}
+              </>}
+          </div>
+          <div data-cluster-footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t px-4 py-2 sm:px-6">
+            {!creationDone && <Button variant="ghost" disabled={operationBusy} onClick={() => closeCreation(false)}>Cancel</Button>}
+            {!creationDone && setupStep !== "server" && <Button variant="outline" disabled={operationBusy} onClick={() => setSetupStep(steps[steps.indexOf(setupStep) - 1])}>Back</Button>}
+            {creationDone ? <Button onClick={() => closeCreation(false)}>Done</Button> : setupStep === "confirmation" ? <Button disabled={!effectiveControlPlaneId || !effectiveClusterName || operationBusy} onClick={() => void confirmCreation()}>{operationBusy && <Loader2 className="size-4 animate-spin" />}{reuseControlPlane ? "Confirm cluster" : "Create cluster"}</Button> : <Button disabled={!effectiveControlPlaneId || !effectiveClusterName || operationBusy} onClick={() => { setControlPlaneId(effectiveControlPlaneId); setSetupStep(steps[steps.indexOf(setupStep) + 1]); }}>{setupStep === "server" ? "Continue" : setupStep === "install" ? "Continue to workers" : "Review cluster"}</Button>}
+          </div>
+        </DialogContent>
+      </Dialog>
+      <div className="space-y-4">
+          <Card>
+            <CardHeader><CardTitle>Clusters</CardTitle><CardDescription>Check status, add workers, or open the infrastructure monitor.</CardDescription></CardHeader>
+            <CardContent className="space-y-3">
+              {clustersQuery.isLoading ? <p role="status" className="text-sm text-muted-foreground">Loading clusters…</p> : clusters.length === 0 ? <div className="space-y-3 rounded-lg border border-dashed p-5"><p className="text-sm text-muted-foreground">You haven’t created a cluster yet.</p></div> : clusters.map(cluster => <section key={cluster.id} className="space-y-3 rounded-xl border border-border p-4" aria-label={cluster.name}>
+                <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="min-w-0 break-words font-semibold">{cluster.name}</h2><div className="flex items-center gap-3"><Badge variant={statusBadgeVariant(cluster.status)}>{cluster.status}</Badge><Button size="icon" variant="ghost" className="size-11 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" aria-label={`Delete cluster ${cluster.name}`} title="Delete cluster" disabled={operationBusy || deleteClusterMutation.isPending} onClick={() => { setClusterToDelete(cluster); setWipeServersOnDelete(false); setDeleteSudoPassword(""); }}><Trash2 className="size-4" /></Button></div></div>
+                <p className="break-words text-sm text-muted-foreground">{cluster.control_plane_name || "Control plane"} · {cluster.control_plane_host} · {cluster.nodes.filter(node => node.status !== "removed").length} nodes</p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" disabled={operationBusy} onClick={() => { setControlPlaneId(cluster.control_plane_connection_id); setClusterName(cluster.name); setSelectedWorkerIds([]); setJoinedWorkerIds(new Set()); setControlPlaneSudo(""); setWorkerSudo(""); setAdvertiseAddress(""); setTlsSan(""); setActionResult(null); setSetupStep("workers"); setCreationDone(false); setCreationOpen(true); }}>Add workers</Button>
+                  <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" onClick={() => { setControlPlaneId(cluster.control_plane_connection_id); inspectMutation.mutate(cluster.control_plane_connection_id); }} disabled={inspectMutation.isPending}>Check status</Button>
+                  <Link href={`/dashboard/logging-monitoring/infrastructure?connection_id=${encodeURIComponent(cluster.control_plane_connection_id)}`} className={buttonVariants({variant:"outline",size:"sm",className:"min-h-11 sm:min-h-8"})}>Open monitor</Link>
+                  <Button size="sm" variant="outline" className="min-h-11 sm:min-h-8" onClick={() => setOutputCluster(cluster)}><CheckCircle2 className="size-4" />Operation output</Button>
+                </div>
+                <DisclosureSection title="Cluster details" description="API address and member servers"><p className="break-all font-mono text-xs text-muted-foreground">{cluster.server_url}</p><div className="mt-3 flex flex-wrap gap-2">{cluster.nodes.map(node => <Badge key={node.id} variant={node.role === "server" ? "default" : "outline"}>{node.connection_name || node.host || node.role} / {node.role}</Badge>)}</div></DisclosureSection>
+              </section>)}
+            </CardContent>
+          </Card>
+          <DisclosureSection title="Server maintenance" description="Remove a Kubernetes installation from a saved server">
+          <Button
+            variant="outline"
+            className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive whitespace-nowrap"
+            onClick={() => {
+              setServerToWipe(connections[0] || null);
+              setShowWipeServerDialog(true);
+            }}
+          >
+            <AppIcon name="trash-2" fallback={Trash2} className="mr-2 h-4 w-4" />
+            Wipe Server K3s
+          </Button>
+          </DisclosureSection>
+      </div>
+      <Dialog open={outputCluster !== null} onOpenChange={open => { if (!open) setOutputCluster(null); }}>
+        <DialogContent className="flex max-h-[85dvh] flex-col overflow-hidden sm:max-w-3xl">
+          <DialogHeader className="pr-8"><DialogTitle>Operation output</DialogTitle><DialogDescription>{outputCluster?.name} · Latest installer, worker, or status results.</DialogDescription></DialogHeader>
+          <div className="min-h-0 space-y-4 overflow-y-auto">
+            {inspectMutation.isPending && inspectMutation.variables === outputCluster?.control_plane_connection_id ? (<p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{initializeMutation.isPending ? "Installing the control plane…" : joinWorkersMutation.isPending ? "Joining worker servers…" : "Checking cluster status…"}</p>) : outputResult ? (
               <>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={actionResult.success ? "default" : "destructive"}>
-                    {actionResult.success ? "ok" : "failed"}
+                  <Badge variant={outputResult.success ? "default" : "destructive"}>
+                    {outputResult.success ? "ok" : "failed"}
                   </Badge>
                   <span className="text-sm font-medium text-foreground">
-                    {actionResult.message || actionResult.error || "Cluster operation finished"}
+                    {outputResult.message || outputResult.error || "Cluster operation finished"}
                   </span>
                 </div>
-                {actionResult.hint ? (
+                {outputResult.hint ? (
                   <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-                    {actionResult.hint}
+                    {outputResult.hint}
                   </div>
                 ) : null}
-                {actionResult.cluster?.server_url ? (
+                {outputResult.cluster?.server_url ? (
                   <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm">
                     <div className="text-xs uppercase tracking-wider text-muted-foreground">API server</div>
-                    <div className="mt-1 font-mono text-foreground">{actionResult.cluster.server_url}</div>
+                    <div className="mt-1 break-all font-mono text-foreground">{outputResult.cluster.server_url}</div>
                   </div>
                 ) : null}
-                <pre className="max-h-[36rem] overflow-auto rounded-xl border border-border bg-background p-4 text-xs leading-relaxed text-muted-foreground scrollbar-thin">
-                  {shortDetails(actionResult.details) || actionResult.error || "No detailed output was returned."}
+                <DisclosureSection title="Operation logs" description="Detailed installer and status output">
+                <pre className="max-h-[24rem] overflow-auto rounded-xl border border-border bg-background p-4 text-xs leading-relaxed text-muted-foreground scrollbar-thin">
+                  {shortDetails(outputResult.details) || outputResult.error || "No detailed output was returned."}
                 </pre>
+                </DisclosureSection>
               </>
             ) : (
               <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
-                Run an operation to see installer logs, join results, and cluster status here.
+                No operation output recorded for this cluster. Use Check status to collect the latest results.
               </div>
             )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AppIcon name="git-branch" fallback={GitBranch} className="h-5 w-5 text-primary"  />
-            Registered Clusters
-          </CardTitle>
-          <CardDescription>
-            Existing control planes and joined nodes known to StackPilot. Runtime workloads still appear in Infrastructure Monitor.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {clustersQuery.isLoading ? (
-            <div className="flex items-center text-sm text-muted-foreground">
-              <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin"  />
-              Loading clusters...
-            </div>
-          ) : clusters.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground">
-              No Kubernetes clusters have been initialized from StackPilot yet.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Cluster</TableHead>
-                  <TableHead>Control Plane</TableHead>
-                  <TableHead>API Server</TableHead>
-                  <TableHead>Nodes</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {clusters.map((cluster) => (
-                  <TableRow key={cluster.id}>
-                    <TableCell>
-                      <div className="font-medium text-foreground">{cluster.name}</div>
-                      <div className="text-xs text-muted-foreground">{cluster.provider}</div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium text-foreground">{cluster.control_plane_name || "Unknown"}</div>
-                      <div className="font-mono text-xs text-muted-foreground">{cluster.control_plane_host}</div>
-                    </TableCell>
-                    <TableCell className="max-w-[18rem] truncate font-mono text-xs">
-                      {cluster.server_url}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1.5">
-                        {cluster.nodes.map((node) => (
-                          <Badge key={node.id} variant={node.role === "server" ? "default" : "outline"}>
-                            {node.connection_name || node.host || node.role} / {node.role}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={statusBadgeVariant(cluster.status)}>{cluster.status}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setControlPlaneId(cluster.control_plane_connection_id);
-                            setClusterName(cluster.name);
-                            const step3 = document.getElementById("cluster-step-3-workers");
-                            if (step3) {
-                              step3.scrollIntoView({ behavior: "smooth" });
-                            } else {
-                              window.scrollTo({ top: 0, behavior: "smooth" });
-                            }
-                            toast.info(`Selected cluster "${cluster.name}". Choose worker servers in Step 3 to expand it.`);
-                          }}
-                        >
-                          <AppIcon name="plus" fallback={Plus} className="mr-1.5 h-3.5 w-3.5" />
-                          Add Worker
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setControlPlaneId(cluster.control_plane_connection_id);
-                            inspectMutation.mutate(cluster.control_plane_connection_id);
-                          }}
-                          disabled={inspectMutation.isPending}
-                        >
-                          {inspectMutation.isPending && inspectMutation.variables === cluster.control_plane_connection_id ? (
-                            <AppIcon name="loader2" fallback={Loader2} className="mr-2 h-4 w-4 animate-spin" />
-                          ) : (
-                            <AppIcon name="refresh-cw" fallback={RefreshCw} className="mr-2 h-4 w-4" />
-                          )}
-                          Inspect
-                        </Button>
-                        <Link
-                          // Without the connection id the monitor opens on the
-                          // local host and reports "no cluster detected" for a
-                          // cluster that is running perfectly well.
-                          href={`/dashboard/logging-monitoring/infrastructure?connection_id=${encodeURIComponent(
-                            cluster.control_plane_connection_id
-                          )}`}
-                          className={buttonVariants({ variant: "outline", size: "sm" })}
-                        >
-                            <AppIcon name="external-link" fallback={ExternalLink} className="mr-2 h-4 w-4"  />
-                            Monitor
-                        </Link>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => {
-                            setClusterToDelete(cluster);
-                            setWipeServersOnDelete(false);
-                            setDeleteSudoPassword("");
-                          }}
-                          title="Delete or deregister cluster"
-                        >
-                          <AppIcon name="trash-2" fallback={Trash2} className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={replaceCandidates.length > 0} onOpenChange={(open) => !open && setReplaceCandidates([])}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>

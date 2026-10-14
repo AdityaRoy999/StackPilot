@@ -124,7 +124,7 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
         return "set -e; docker image inspect " + image + " >/dev/null; "
             "if docker inspect " + container + " >/dev/null 2>&1; then echo 'Existing runtime requires a separate candidate identity'; exit 14; fi; "
             "docker run -d --restart unless-stopped --cpus 2 --memory 2g --pids-limit 256 --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE --security-opt no-new-privileges:true --label stackpilot.managed=true --name " + container + envArgs + " " + image + "; echo __STACKPILOT_CANDIDATE_CREATED__; "
-            "sleep 3; [ \"$(docker inspect --format '{{.State.Running}}' " + container + ")\" = true ] || { docker logs --tail 50 " + container + "; exit 1; }; "
+            "sleep 3; [ \"$(docker inspect --format '{{.State.Running}}' " + container + ")\" = true ] && [ \"$(docker inspect --format '{{.RestartCount}}' " + container + ")\" = 0 ] || { docker logs --tail 50 " + container + "; exit 1; }; "
             "echo __STACKPILOT_LOCAL_DOCKER_RUNNING__; echo __STACKPILOT_PROCESS_OBSERVED__; echo container_name=" + containerName + "; echo status=running;";
     }
     const std::string requestedPort = std::to_string(std::clamp(containerPort, 0, 65535));
@@ -152,6 +152,8 @@ std::string LocalDockerRuntime::makeRunCommand(const std::string& containerName,
         "ready=0; "
         "for i in $(seq 1 45); do "
         "status=$(docker inspect --format '{{.State.Status}}' \"$container\" 2>/dev/null || echo \"exited\"); "
+        "restarts=$(docker inspect --format '{{.RestartCount}}' \"$container\" 2>/dev/null || echo 1); "
+        "if [ \"$status\" = \"restarting\" ] || [ \"$restarts\" != 0 ]; then echo 'Candidate restarted before readiness; original startup failure follows:'; docker logs --tail 50 \"$container\" 2>&1; exit 1; fi; "
         "if [ \"$status\" = \"exited\" ] || [ \"$status\" = \"dead\" ]; then "
         "echo \"Container crashed on startup:\"; "
         "docker logs --tail 50 \"$container\" 2>&1; "
