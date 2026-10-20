@@ -11,6 +11,8 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Preserve upstream browser clients verbatim; lint first-party code.
+      "public/vendor/**",
     ],
   },
 ];

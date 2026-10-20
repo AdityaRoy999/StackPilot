@@ -35,4 +35,4 @@ Place generated qualification output in ignored `tests/artifacts/`. Keep durable
 
 ## Existing lint debt
 
-Frontend CI uses a lint ratchet instead of ignoring lint failures. Every ESLint rule remains active; `frontend/eslint-baseline.json` records existing typing and React hook violations. `npm run lint` fails on new violations. `npm run lint:strict` reports all unresolved errors. When fixing existing violations, update the baseline with `npm run lint:baseline` and review its diff; do not add entries to bypass CI.
+Frontend CI uses a lint ratchet instead of ignoring lint failures. Every ESLint rule remains active for first-party code; `frontend/eslint-baseline.json` records existing typing and React hook violations. Vendored upstream browser clients under `frontend/public/vendor/` are preserved verbatim with their licenses and excluded from first-party style linting. `npm run lint` fails on new violations. `npm run lint:strict` reports all unresolved first-party errors. When fixing existing violations, update the baseline with `npm run lint:baseline` and review its diff; do not add entries to bypass CI.

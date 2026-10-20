@@ -30,7 +30,11 @@ if (process.argv.includes('--update-baseline')) {
   const warnings = results.reduce((sum, result) => sum + result.warningCount, 0);
   console.log(`Lint: ${total} existing errors in the reviewed baseline; ${warnings} warnings; ${added.length} new violations.`);
   if (added.length) {
-    console.error((await eslint.loadFormatter('stylish')).format(results));
+    const addedFiles = new Set(added.map(([, value]) => value.file));
+    console.error('New lint violations:\n' + added.map(([, value]) =>
+      `  ${value.file}: ${value.rule} (${value.count} occurrence(s))\n    ${value.text}`).join('\n'));
+    console.error((await eslint.loadFormatter('stylish')).format(results.filter(result =>
+      addedFiles.has(path.relative(process.cwd(), result.filePath).split(path.sep).join('/')))));
     process.exitCode = 1;
   }
   const resolved = Object.keys(baseline).filter(key => !current.has(key));

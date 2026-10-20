@@ -973,7 +973,7 @@ export default function AiAgentPage() {
     }>;
   } | null>(null);
   const [agentQuestionAnswers, setAgentQuestionAnswers] = useState<Record<string, string>>({});
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [explicitProjectId, setSelectedProjectId] = useState("");
   const [selectedDeploymentId, setSelectedDeploymentId] = useState("");
   const [customTargetUrl, setCustomTargetUrl] = useState("");
   const [customUrlInput, setCustomUrlInput] = useState("");
@@ -1340,8 +1340,9 @@ export default function AiAgentPage() {
     availableModels.find((model) => model.id === activeModelId) ||
     (activeModelId ? { id: activeModelId, label: activeModelId, mode } : undefined);
   const isVisionActive = mounted && isVisionModel(activeModelId);
-  const selectedProject = projects.find((project) => project.id === selectedProjectId);
   const selectedDeployment = deployments.find((deployment) => deployment.id === selectedDeploymentId);
+  const selectedProjectId = explicitProjectId || selectedDeployment?.project_id || "";
+  const selectedProject = projects.find((project) => project.id === selectedProjectId);
 
   // Auto-resolve active running deployment for the selected project
   const activeProjectDeployment = useMemo(() => {
@@ -1376,10 +1377,6 @@ export default function AiAgentPage() {
       }
     }
   }, [selectedProjectId, deployments, selectedDeployment, selectedDeploymentId, activeSessionId]);
-
-  useEffect(() => {
-    if (selectedDeployment?.project_id && !selectedProjectId) setSelectedProjectId(selectedDeployment.project_id);
-  }, [selectedDeployment, selectedProjectId]);
 
   // Dynamically resolve target URL for Live Application Canvas
   const canvasTargetUrl = useMemo(() => {
