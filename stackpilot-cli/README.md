@@ -35,6 +35,8 @@ AI requests use the authenticated backend, not an administrator service token re
 
 Profiles map to actual Compose profiles: `base` has no extra profiles, `core` enables `ai` and `browser`, `full` enables `full`, and `monitoring` enables `full` plus `monitoring`. Production Compose uses the same feature profiles and keeps monitoring optional.
 
+Local startup also shares the host's available drives read-only so **Browse local** can select existing projects anywhere on the computer. `stackpilot up` refreshes these mounts when drives change. Production installs keep their configured roots. Set `STACKPILOT_LOCAL_FILESYSTEM=false` to restrict a local install to explicitly shared folders. See [local project access](../docs/guided-setup.md#existing-projects-anywhere-on-your-computer) for manual Compose commands and Docker Desktop permissions.
+
 Configure AI credentials in dashboard Settings, or use interactive `init` for a fresh installation. Config and authentication live under `~/.stackpilot/`. `down --volumes` deletes persistent data and is intended for disposable environments.
 
 The dashboard first-launch guide tests a real response from your selected model. Local updates preserve the recorded service profile, require the official origin and a clean main branch, and stop if PostgreSQL cannot be backed up. `.stackpilot-backups/` contains private recovery files. See [guided setup](../docs/guided-setup.md) for platform launchers, prerequisites, and update limitations.

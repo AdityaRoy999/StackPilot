@@ -173,6 +173,7 @@ class BrowserSession:
         self._download_event = asyncio.Event()
         self.last_download: Optional[Dict[str, Any]] = None
         self.dispatched_inputs = 0
+        self.dispatched_activations = 0
         self.consequential_dispatches = {}
         self.related_targets = {}
         self.frame_contexts = {}
@@ -180,6 +181,7 @@ class BrowserSession:
         self.frame_session_roots = {}
         self._selected_frame = None
         self.frame_offset = (0,0)
+        self.frame_scale = (1,1)
         self.target_id: Optional[str] = None
         self.ws_url: Optional[str] = None
         self.cdp_ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -559,6 +561,12 @@ class BrowserSession:
         if (method in {'Input.insertText', 'Input.dispatchKeyEvent', 'Page.navigate'} or
                 (method=='Input.dispatchMouseEvent' and (params or {}).get('type') in {'mousePressed','mouseReleased','mouseWheel'})):
             self.dispatched_inputs+=1
+        if ((method == 'Input.dispatchMouseEvent' and (params or {}).get('type') == 'mousePressed'
+             and (params or {}).get('button') == 'left') or
+            (method == 'Input.dispatchKeyEvent' and (params or {}).get('type') in {'keyDown','rawKeyDown'}
+             and str((params or {}).get('key') or '').lower() in {'enter','return','space',' '})):
+            # Count at enqueue, before ACK: a timeout cannot authorize replay.
+            self.dispatched_activations += 1
         started = time.monotonic()
         dialog_wait = None
         try:
@@ -821,6 +829,7 @@ class BrowserSession:
         if changed_url or reset_document:
             self._selected_frame=None
             self.frame_offset=(0,0)
+            self.frame_scale=(1,1)
             self._navigation_generation += 1
             self.interactive_elements = []
             self.discovered_subpages = []
@@ -894,6 +903,7 @@ class BrowserSession:
         self._jpeg_streaming=False
         self._selected_frame=None
         self.frame_offset=(0,0)
+        self.frame_scale=(1,1)
         self.frame_contexts={}
         self.frame_parents={}
         self.frame_session_roots={}
@@ -913,6 +923,7 @@ class BrowserSession:
         if frame_id in {'main',self._main_frame_id}:
             self._selected_frame=None
             self.frame_offset=(0,0)
+            self.frame_scale=(1,1)
         elif frame_id in self.frame_contexts:
             # Obtain the owner box in the parent document before selecting its context.
             old=self._selected_frame
@@ -926,8 +937,9 @@ class BrowserSession:
                         self.frame_contexts[frame['id']].update(url=frame.get('url',''),name=frame.get('name',''))
                     for child in node.get('childFrames',[]):index_frames(child,frame.get('id'))
                 index_frames(tree)
-                from .browser_testing.frames import frame_offset
-                self.frame_offset=await frame_offset(self,frame_id)
+                from .browser_testing.frames import frame_transform
+                ox,oy,sx,sy=await frame_transform(self,frame_id)
+                self.frame_offset=(ox,oy);self.frame_scale=(sx,sy)
             except Exception:
                 self._selected_frame=old
                 return {'status':'failed','error':'Frame owner cannot be located; no frame input dispatched.'}
@@ -2140,6 +2152,8 @@ class BrowserSession:
     async def _extract_interactive_tree(self) -> Dict[str, Any]:
         """Traverses light DOM + open shadow roots to return interactive elements (buttons, links, inputs, tabs, toggles) with viewport and page coordinates."""
         from .browser_testing.overlays import OVERLAY_HELPERS
+        from .browser_testing.accessibility import CONTROL_NAME_HELPERS
+        from .browser_testing.checkables import CHECKABLE_HELPERS
         generation = self._navigation_generation
         state_seq = self._page_state_seq
         js_code = r"""
@@ -2147,6 +2161,8 @@ class BrowserSession:
             const elements = [];
             const seen = new Set();
             __SP_OVERLAY_HELPERS__
+            __SP_CONTROL_NAME_HELPERS__
+            __SP_CHECKABLE_HELPERS__
             const activeOverlay = window.__spOverlay.active();
             const overlayControls = new Set(activeOverlay ? window.__spOverlay.controls(activeOverlay) : []);
             
@@ -2193,6 +2209,7 @@ class BrowserSession:
                 if (!e || !e.isConnected) return false;
                 if (e.closest && e.closest('[inert]')) return false;
                 if (e.closest && e.closest('[aria-hidden="true"]') && !overlayControls.has(e)) return false;
+                if (spNativeCheckable(e)) return !!spCheckableSurface(e);
                 if (typeof e.checkVisibility === 'function') {
                     return e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
                 }
@@ -2269,15 +2286,16 @@ class BrowserSession:
                 // Fast C++ visibility check avoids expensive getComputedStyle layout thrashing
                 if (!isVisible(el)) continue;
 
-                const rect = el.getBoundingClientRect();
+                const checkable = spCheckableSurface(el);
+                const surface = checkable?.node || el;
+                const rect = surface.getBoundingClientRect();
                 if (rect.width < 3 || rect.height < 3) continue;
 
                 const visibleText = (el.innerText || '').trim();
-                const accessibleText = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+                const accessibleText = (spControlName(el) || checkable?.caption?.innerText || el.getAttribute('title') || '').trim();
                 let text = /SafeValue|<\/?(?:body|html|script)|\[property\]/i.test(accessibleText) ? visibleText : accessibleText;
                 if (!text) {
-                    const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => el.ownerDocument.getElementById(id)?.innerText || '').join(' ').trim();
-                    text = (visibleText || labelled || el.labels?.[0]?.innerText || el.placeholder ||
+                    text = (visibleText || el.placeholder ||
                             (el.type === 'password' ? '' : el.value) || el.name || '').trim();
                 }
                 if (!text && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
@@ -2304,11 +2322,16 @@ class BrowserSession:
                 const pageY = cy + scrollY;
 
                 // Hit-testing / point occlusion verification (limited to top visible elements to prevent layout thrashing)
-                let isOccluded = Boolean(activeOverlay && !activeOverlay.contains(el));
+                let isOccluded = Boolean(activeOverlay && (!activeOverlay.contains(el) || !activeOverlay.contains(surface)));
                 if (isInViewport && cx >= 0 && cy >= 0 && cx < winW && cy < winH && elements.length < 35) {
                     try {
-                        const topNode = document.elementFromPoint(cx, cy);
-                        if (topNode && topNode !== el && !el.contains(topNode) && !topNode.contains(el)) {
+                        let topNode = document.elementFromPoint(cx, cy);
+                        for (let depth=0;depth<8 && topNode?.shadowRoot;depth++) {
+                            const child=topNode.shadowRoot.elementFromPoint(cx,cy);
+                            if(!child || child===topNode) break;
+                            topNode=child;
+                        }
+                        if (topNode && topNode !== surface && !surface.contains(topNode) && !topNode.contains(surface)) {
                             isOccluded = true;
                         }
                     } catch(e) {}
@@ -2372,7 +2395,8 @@ class BrowserSession:
                     pressed: el.getAttribute('aria-pressed'),
                     aria_controls: el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '',
                     min: el.min || '', max: el.max || '', readonly: Boolean(el.readOnly || el.getAttribute('aria-readonly') === 'true'),
-                    options: tagL === 'select' ? [...el.options].slice(0,60).map(o=>({text:o.text,value:o.value,disabled:o.disabled || !!o.parentElement?.disabled,selected:o.selected})) : undefined,
+                    options: tagL === 'select' ? [...el.options].slice(0,60).map(o=>({text:o.label || o.text,value:o.value,disabled:o.disabled || !!o.parentElement?.disabled,selected:o.selected})) : undefined,
+                    multiple: tagL === 'select' ? Boolean(el.multiple) : undefined,
                     checked: Boolean(el.checked || el.getAttribute('aria-checked') === 'true'),
                     disabled: el.disabled || el.getAttribute('aria-disabled') === 'true',
                     is_in_viewport: isInViewport,
@@ -2588,7 +2612,7 @@ class BrowserSession:
         """
         try:
             res = await self.send_command("Runtime.evaluate", {
-                "expression": js_code.replace('__SP_INITIAL_ID__', str(self._next_element_id)).replace('__SP_GENERATION__', str(generation)).replace('__SP_CACHE_OWNER__', json.dumps(self._element_cache_owner)).replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS),
+                "expression": js_code.replace('__SP_INITIAL_ID__', str(self._next_element_id)).replace('__SP_GENERATION__', str(generation)).replace('__SP_CACHE_OWNER__', json.dumps(self._element_cache_owner)).replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS).replace('__SP_CONTROL_NAME_HELPERS__', CONTROL_NAME_HELPERS).replace('__SP_CHECKABLE_HELPERS__', CHECKABLE_HELPERS),
                 "returnByValue": True,
             }, timeout=6.0)
             val = res.get("result", {}).get("value", {})
@@ -2611,9 +2635,10 @@ class BrowserSession:
         self.interactive_elements = val.get("elements", [])
         if self._selected_frame:
             ox,oy=self.frame_offset
+            sx,sy=self.frame_scale
             for element in self.interactive_elements:
-                element['x']+=ox; element['y']+=oy
-                element['box'][0]+=ox; element['box'][1]+=oy
+                element['x']=element['x']*sx+ox; element['y']=element['y']*sy+oy
+                box=element['box'];element['box']=[box[0]*sx+ox,box[1]*sy+oy,box[2]*sx,box[3]*sy]
         from .browser_testing.targets import remember_targets
         remember_targets(self)
         raw_subpages = val.get("subpages", [])
@@ -2687,10 +2712,11 @@ class BrowserSession:
             if "page_x" in el and "page_y" in el:
                 # page_x/page_y are center coordinates in document space
                 ox,oy=self.frame_offset if self._selected_frame else (0,0)
-                new_cx = el["page_x"] - scroll_x + ox
-                new_cy = el["page_y"] - scroll_y + oy
-                el_w = el.get("w", 0)
-                el_h = el.get("h", 0)
+                sx,sy=self.frame_scale if self._selected_frame else (1,1)
+                new_cx = (el["page_x"] - scroll_x)*sx + ox
+                new_cy = (el["page_y"] - scroll_y)*sy + oy
+                el_w = el.get("w", 0)*sx
+                el_h = el.get("h", 0)*sy
                 el["x"] = new_cx
                 el["y"] = new_cy
                 # Update bounding box (left, top, w, h)
@@ -2981,24 +3007,73 @@ class BrowserSession:
         return await ActionPerceptionVerification.dispatch_two_tier_click(self, element_id, label='Set checked state', fast_mode=True)
 
     async def select_option(self, element_id: int, value: str = "") -> bool:
-        """Selects an option in a <select> element."""
+        """Select one exact live native option and read its state back.
+
+        Match the browser-visible option label as well as its value. Native
+        selection is a widget transaction, so it must honor the same overlay,
+        frame, disabled and visibility boundaries as pointer/text input.
+        """
+        self.last_action_verification = None
+        from .browser_testing.actionability import prepare_pointer_target
+        await self.scroll_to_element(element_id)
+        actionable = await prepare_pointer_target(self, element_id)
+        self.last_actionability = actionable
+        if actionable.get('reason') != 'ready':
+            raise RuntimeError('Native select is blocked or unavailable (' + str(actionable.get('reason')) + '). No choice was changed.')
         select_js = f"""
         (() => {{
             const target = window.__spFast?.nodes.get({int(element_id)});
-            if (!target?.isConnected || target.tagName !== 'SELECT' || target.matches(':disabled')) return false;
+            if (!target?.isConnected || target.tagName !== 'SELECT' || target.matches(':disabled') ||
+                target.getAttribute('aria-disabled') === 'true' || target.closest('[inert]')) return {{error:'unavailable'}};
+            if (target.multiple) return {{error:'multiple'}};
             const requested = {json.dumps(value)}, options = [...target.options];
-            const matches = options.filter(o => o.value === requested || o.text.trim() === requested);
-            if (matches.length !== 1 || matches[0].disabled || matches[0].parentElement?.disabled) return false;
+            const normalize = text => String(text).replace(/\\s+/g,' ').trim().toLocaleLowerCase();
+            const matches = options.filter(o => o.value === requested || normalize(o.label || o.text) === normalize(requested));
+            if (matches.length !== 1 || matches[0].disabled || matches[0].parentElement?.disabled) return {{error:'option'}};
             const chosen = matches[0];
-            if (target.value === chosen.value && chosen.selected) return true;
-            target.value = chosen.value;
+            if (target.value === chosen.value && chosen.selected) return {{selected:true,changed:false,value:chosen.value}};
+            Object.getOwnPropertyDescriptor(target.ownerDocument.defaultView.HTMLSelectElement.prototype, 'value').set.call(target, chosen.value);
             target.dispatchEvent(new Event('input', {{ bubbles:true }}));
             target.dispatchEvent(new Event('change', {{ bubbles:true }}));
-            return target.value === chosen.value && chosen.selected;
+            return {{selected:target.isConnected && target.value === chosen.value && chosen.selected,changed:true,value:chosen.value}};
         }})()
         """
-        if await self.evaluate(select_js) is not True:
+        result = await self.evaluate(select_js)
+        if not isinstance(result, dict):
+            raise RuntimeError('Native selection readback was unavailable. Observe its live value before retrying; dispatch outcome is unknown.')
+        if result.get('error') == 'multiple':
+            raise RuntimeError('This is a multiple-select control. A single-option replacement could clear existing choices; no choice was changed.')
+        if not result.get('changed') and result.get('selected') is not True:
             raise RuntimeError("Select target or exact option is missing, disabled, or ambiguous. Observe current options; no choice was changed.")
+        # Let controlled frameworks finish their event/microtask/render work.
+        # Native selection's readback is stronger evidence than a generic DOM
+        # delta, and an already-selected value is an idempotent checkpoint.
+        if result.get('changed'):
+            await self.wait_for_action_quiescence(pre_url=self.current_url, min_grace_ms=35,
+                                                  max_timeout_s=.35, fast_mode=False)
+        await self.extract_interactive_tree()
+        from .browser_testing.targets import resolve_target_reference
+        resolved = await resolve_target_reference(self, element_id)
+        current_ref = resolved.get('element_id') if resolved.get('status') == 'ready' else None
+        readback = await self.evaluate(f"""(() => {{
+            const target=window.__spFast?.nodes.get({int(current_ref or 0)});
+            if(!target?.isConnected || target.tagName!=='SELECT') return null;
+            const matches=[...target.options].filter(option=>option.value==={json.dumps(result.get('value'))});
+            return {{value:target.value,selected:matches.length===1 && matches[0].selected && target.value===matches[0].value}};
+        }})()""")
+        verified = isinstance(readback, dict) and readback.get('selected') is True
+        self.last_action_verification = {
+            'verified':verified,
+            'control_kind':'native_select',
+            'effect_type':('control_change' if result.get('changed') else 'value_already_set') if verified else 'selection_unverified',
+            'changed':bool(result.get('changed')), 'already_satisfied':verified and not bool(result.get('changed')),
+            'selected_value':readback.get('value') if isinstance(readback,dict) else None,
+            'description':'Exact selected native value read back after control handlers settled.' if verified else
+                          'Selection was dispatched but the live control did not retain the requested value.'}
+        if not verified:
+            if result.get('changed'):
+                raise RuntimeError('Selection was dispatched but its current value could not be verified or was reverted by the application. Observe its live state before any retry.')
+            raise RuntimeError('The previously selected value could not be confirmed in the current control. No input was dispatched; observe its live state.')
         return True
 
     async def scroll_to(self, y: int, extract_tree: bool = True):
@@ -3031,20 +3106,23 @@ class BrowserSession:
 
     async def scroll_to_element(self, element_id: int) -> bool:
         """Scrolls a specific element into viewport center using DOM scrollIntoView or coordinates and waits for standstill."""
+        from .browser_testing.checkables import CHECKABLE_HELPERS
         scrolled = await self.evaluate(f"""
         (() => {{
+            {CHECKABLE_HELPERS}
             const el = window.__spFast?.nodes.get({element_id});
             if (el?.isConnected) {{
-                const r = el.getBoundingClientRect();
+                const surface = spCheckableSurface(el)?.node || el;
+                const r = surface.getBoundingClientRect();
                 const cx = r.left+r.width/2, cy = r.top+r.height/2;
                 const hit = document.elementFromPoint(cx,cy);
                 const inView = r.top >= 20 && r.bottom <= innerHeight-20 && r.left >= 0 && r.right <= innerWidth &&
-                    (hit === el || el.contains(hit));
+                    (hit === surface || surface.contains(hit));
                 if (inView) return 'in_view';
                 try {{
-                    el.scrollIntoView({{ behavior: 'instant', block: 'center', inline: 'nearest' }});
+                    surface.scrollIntoView({{ behavior: 'instant', block: 'center', inline: 'nearest' }});
                 }} catch(e) {{
-                    el.scrollIntoView();
+                    surface.scrollIntoView();
                 }}
                 return 'scrolled';
             }}
@@ -3269,6 +3347,7 @@ class BrowserSession:
             auto_select_suggestion: An explicitly requested option label. Commit only
                 a unique visible match; otherwise leave the choice to the planner.
         """
+        self.last_action_verification = None
         # Focus the requested control and use Chromium's native text insertion.
         # Do not set its value, append trigger characters, then rewrite it: that
         # sends several contradictory input events and breaks controlled forms.
@@ -3290,6 +3369,9 @@ class BrowserSession:
         if not isinstance(probe,dict):
             raise RuntimeError('Input focus could not be observed because the browser did not respond. No text input was dispatched.')
         if probe.get('error'):
+            if probe.get('control_kind') == 'native_select':
+                self.last_actionability = {'reason':'control_action_mismatch', 'expected_action':'select_option',
+                                          'element_id':element_id, 'options':probe.get('options', [])}
             raise RuntimeError(probe['error']+' No text input was dispatched.')
         # Native segmented controls do not accept Input.insertText. Use a typed
         # control fill (as browser testing libraries do), never the ordinary
@@ -3326,15 +3408,15 @@ class BrowserSession:
                 raise RuntimeError("Typed control rejected the requested value.")
             self._notify_listeners({"type":"cursor_action","action":"type","phase":"applied","label":"Value entered"})
             return True
-        from .browser_testing.editors import typing_guard_script
+        from .browser_testing.editors import typing_guard_script, private_input_matches_script
         from .browser_testing.motion import typing_plan
         generation = self._input_generation
         if isinstance(probe.get('x'), (int,float)) and isinstance(probe.get('y'), (int,float)):
             px,py=probe['x'],probe['y']
             if self._selected_frame:
-                from .browser_testing.frames import frame_offset
-                ox,oy=await frame_offset(self,self._selected_frame)
-                px+=ox;py+=oy
+                from .browser_testing.frames import frame_transform
+                ox,oy,sx,sy=await frame_transform(self,self._selected_frame)
+                px=px*sx+ox;py=py*sy+oy
             await self._move_pointer(round(px),round(py),'Typing')
         initial = str(probe.get('value') or '').replace('\r\n','\n').replace('\r','\n')
         if generation != self._input_generation:
@@ -3379,8 +3461,9 @@ class BrowserSession:
             while True:
                 if generation != self._input_generation:
                     raise asyncio.CancelledError('Typing stopped')
-                actual = await self.evaluate(read_editor_script(target_js))
-                if isinstance(actual, dict) and actual.get('value') == expected:
+                actual = await self.evaluate(private_input_matches_script(target_js,expected) if private else read_editor_script(target_js))
+                matched = actual is True if private else isinstance(actual, dict) and actual.get('value') == expected
+                if matched:
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Editor document did not match the requested text after native insertion. Input may have changed; read the editor before retrying. Preserve the requested program and inspect the source editor, not the output pane.")
@@ -3389,6 +3472,20 @@ class BrowserSession:
             self._notify_listeners({**event,"phase":"interrupted","label":"Typing interrupted"})
             raise
         self._notify_listeners({**event,"phase":"applied","label":"Text entered"})
+
+        if private:
+            # APV deliberately masks password values, so its generic DOM delta
+            # cannot establish a successful private fill. Preserve the native
+            # executor's equality check as a preparation checkpoint only. No
+            # value, length, prefix or hash enters the model-visible result.
+            self.last_autocomplete_suggestions = []
+            await self.extract_interactive_tree()
+            if await self.evaluate(private_input_matches_script(target_js,expected)) is not True:
+                raise RuntimeError('Private input changed after native typing. Observe its current control before retrying; no secret value is exposed.')
+            self.last_action_verification = {'verified':True,'effect_type':'control_change',
+                                            'control_kind':'password','private':True,'value_matches':True,
+                                            'description':'Private input matched the requested text after native typing. Authentication remains unverified until its actual outcome is asserted.'}
+            return True
 
         # 4. Autocomplete harvest with progressive retry loop
         # Angular/PrimeNG autocompletes have debounce timers (typically 200-500ms) before
@@ -4143,11 +4240,11 @@ class BrowserManager:
             await session.cancel_actions()
 
     async def close_session(self, session_id: str):
-        if session_id in self.sessions:
+        session = self.sessions.pop(session_id, None)
+        if session is not None:
             if self.display_session_id == session_id:
                 self.display_session_id = None
-            await self.sessions[session_id].close()
-            del self.sessions[session_id]
+            await session.close()
 
 
 # Global instance

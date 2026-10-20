@@ -86,6 +86,20 @@ interface Deployment {
   created_at: string;
 }
 
+interface ExposureStatus {
+  request_id?: string;
+  state: "queued" | "preparing" | "connecting" | "ready" | "failed";
+  requested_mode?: string;
+  runtime_url: string;
+  runtime_exposure: string;
+  named_url?: string;
+  error?: string;
+}
+function exposurePending(state?: string) { return ["queued", "preparing", "connecting"].includes(state || ""); }
+function localExposureChoice(mode?: string): "direct" | "portless" | "cloudflare_tunnel" {
+  return mode === "cloudflare_tunnel" ? "cloudflare_tunnel" : mode === "portless_local" || mode === "portless" ? "portless" : "direct";
+}
+
 interface KubernetesRuntime {
   deployed: boolean;
   status: string;
@@ -2048,6 +2062,14 @@ function RuntimeDialog({
     enabled: !!deployment.id,
   });
 
+  const exposureQuery = useQuery({
+    queryKey: ["deployment-exposure", deployment.id],
+    queryFn: async ({ signal }) => (await api.get<ExposureStatus>(`/deployments/${deployment.id}/exposure`, { signal })).data,
+    enabled: wantsLocalDocker,
+    refetchInterval: query => exposurePending(query.state.data?.state) ? 500 : false,
+    retry: 1,
+  });
+
   const healthQuery = useQuery({
     queryKey: ["runtime-health", deployment.id],
     queryFn: async () => {
@@ -2168,8 +2190,8 @@ function RuntimeDialog({
   });
 
   const runtime: KubernetesRuntime | undefined = runtimeQuery.data?.runtime;
-  const [activeRuntimeUrl, setActiveRuntimeUrl] = useState<string | null>(null);
-  const liveRuntimeUrl = activeRuntimeUrl || deploymentRuntimeUrl(deployment, runtime);
+  const confirmedExposure = exposureQuery.data;
+  const liveRuntimeUrl = confirmedExposure?.runtime_url || deploymentRuntimeUrl(deployment, runtime);
   const isRemoteDocker =
     runtime?.provider === "remote_docker" ||
     deployment.runtime_provider === "remote_docker" ||
@@ -2192,6 +2214,7 @@ function RuntimeDialog({
   const currentDesiredReplicas = runtime?.desired_replicas ?? deployment.desired_replicas ?? 1;
   const currentReadyReplicas = runtime?.ready_replicas ?? 0;
   const activeExposureMode =
+    confirmedExposure?.runtime_exposure ||
     runtime?.exposure_mode ||
     deployment.runtime_exposure ||
     (runtime?.ingress_name || deployment.k8s_ingress_name ? "ingress" : "service");
@@ -2244,7 +2267,7 @@ function RuntimeDialog({
   const commitSha = realCommitSha(deployment);
   const commitUrl = githubCommitUrl(deployment);
 
-  const [localExposureMode, setLocalExposureMode] = useState<"direct" | "portless" | "cloudflare_tunnel">(() => {
+  const [exposureDraft, setLocalExposureMode] = useState<"direct" | "portless" | "cloudflare_tunnel">(() => {
     if (deployment.runtime_exposure === "cloudflare_tunnel" || deployment.runtime_url?.includes("trycloudflare.com")) {
       return "cloudflare_tunnel";
     }
@@ -2254,45 +2277,43 @@ function RuntimeDialog({
     return "direct";
   });
   const [tunnelToken, setTunnelToken] = useState("");
-  const [isUpdatingExposure, setIsUpdatingExposure] = useState(false);
+  const [namedTunnelUrl, setNamedTunnelUrl] = useState<string | null>(null);
+  const requestedExposureRef = useRef("");
+  const completedExposureRef = useRef("");
 
   const updateExposureMutation = useMutation({
+    onMutate: async () => { await queryClient.cancelQueries({ queryKey: ["deployment-exposure", deployment.id] }); },
     mutationFn: async (mode: "direct" | "portless" | "cloudflare_tunnel") => {
-      setIsUpdatingExposure(true);
-      try {
-        const res = await api.post(`/deployments/${deployment.id}/exposure`, {
-          exposure_mode: mode,
-          tunnel_token: tunnelToken,
-          project_name: deployment.project_name,
-          port: Number.parseInt(portInput, 10) || 3000,
-        });
-        return res.data as { runtime_url: string; runtime_exposure: string };
-      } finally {
-        setIsUpdatingExposure(false);
-      }
+      const res = await api.post<ExposureStatus>(`/deployments/${deployment.id}/exposure`, {
+        exposure_mode: mode,
+        tunnel_token: tunnelToken,
+        public_url: namedTunnelUrl ?? confirmedExposure?.named_url ?? "",
+      });
+      return res.data;
     },
     onSuccess: (data) => {
-      if (data?.runtime_url) {
-        setActiveRuntimeUrl(data.runtime_url);
-      }
-      toast.success("Exposure mode updated", {
-        description: `Deployment is now available at ${data.runtime_url}`,
-        action: {
-          label: "Copy URL",
-          onClick: () => {
-            navigator.clipboard.writeText(data.runtime_url);
-            toast.info("Copied to clipboard");
-          },
-        },
-      });
-      queryClient.invalidateQueries({ queryKey: ["deployments"] });
-      runtimeQuery.refetch();
-      onChanged();
+      requestedExposureRef.current = data.request_id || "";
+      queryClient.setQueryData(["deployment-exposure", deployment.id], data);
+      setTunnelToken("");
+      if (data.state === "ready") setLocalExposureMode(localExposureChoice(data.runtime_exposure));
     },
     onError: (error: unknown) => {
       toast.error(requestErrorMessage(error, "Failed to update exposure mode"));
     },
   });
+  const isUpdatingExposure = updateExposureMutation.isPending || exposurePending(confirmedExposure?.state);
+  const localExposureMode = updateExposureMutation.isPending ? exposureDraft : confirmedExposure?.state === "ready" ? localExposureChoice(confirmedExposure.runtime_exposure) : exposurePending(confirmedExposure?.state) ? localExposureChoice(confirmedExposure?.requested_mode) : exposureDraft;
+  useEffect(() => {
+    const result = exposureQuery.data;
+    if (!result?.request_id) return;
+    if (exposurePending(result.state)) requestedExposureRef.current = result.request_id;
+    if (result.state !== "ready" || result.request_id !== requestedExposureRef.current || completedExposureRef.current === result.request_id) return;
+    completedExposureRef.current = result.request_id;
+    toast.success("Connection ready", { description: result.runtime_url });
+    void queryClient.invalidateQueries({ queryKey: ["deployments"] });
+    void runtimeQuery.refetch();
+    onChanged();
+  }, [exposureQuery.data, queryClient, runtimeQuery, onChanged]);
 
   const runtimeQueryRef = useRef(runtimeQuery);
   useEffect(() => {
@@ -2360,10 +2381,12 @@ function RuntimeDialog({
                     Local URL & Public Ingress
                   </Label>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Switch exposure anytime without restarting or rebuilding the container.
+                    Your current connection changes once the new address is ready.
                   </p>
                 </div>
               </div>
+              {isUpdatingExposure && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{confirmedExposure?.state === "preparing" ? "Preparing the secure connection…" : "Creating your public link…"}</p>}
+              {confirmedExposure?.state === "failed" && <p role="alert" className="text-sm text-destructive">{confirmedExposure.error || "The public connection could not be created. Your app is still running locally."}</p>}
 
               <div className="grid grid-cols-3 gap-2 rounded-xl border border-border bg-muted/30 p-1">
                 <Button
@@ -2419,7 +2442,7 @@ function RuntimeDialog({
                     <strong>Portless Domain</strong>: Clean loopback hostname (e.g. <code>http://{deployment.project_name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}.localhost</code>) via RFC 6761 loopback.
                   </div>
                   <p className="text-[11px] text-muted-foreground/80">
-                    Accessible locally without needing to specify or remember port numbers.
+                    Uses a readable local hostname with the container’s published port.
                   </p>
                 </div>
               )}
@@ -2435,9 +2458,12 @@ function RuntimeDialog({
                   </p>
                   <div className="flex gap-2 items-center pt-1">
                     <Input
+                      type="password"
+                      aria-label="Named tunnel token"
+                      autoComplete="off"
                       value={tunnelToken}
                       onChange={(e) => setTunnelToken(e.target.value)}
-                      placeholder="Custom Tunnel Token (optional, leave empty for free Quick Tunnel)"
+                      placeholder="Named tunnel token (optional)"
                       className="h-8 bg-muted/40 text-xs"
                     />
                     <Button
@@ -2451,9 +2477,11 @@ function RuntimeDialog({
                       {isUpdatingExposure ? (
                         <AppIcon name="refresh-cw" fallback={RefreshCw} className="h-3.5 w-3.5 animate-spin mr-1.5" />
                       ) : null}
-                      Re-Tunnel
+                      Retry connection
                     </Button>
                   </div>
+                  <Input aria-label="Named tunnel public address" value={namedTunnelUrl ?? confirmedExposure?.named_url ?? ""} onChange={event => setNamedTunnelUrl(event.target.value)} placeholder="https://app.yourdomain.com (for a named tunnel)" className="h-8 bg-muted/40 text-xs" />
+                  <p className="text-muted-foreground">For a named tunnel, enter its token and the HTTPS address configured in Cloudflare. Leave both blank for a temporary link.</p>
                 </div>
               )}
             </div>
@@ -2627,7 +2655,7 @@ function RuntimeDialog({
                     <span className="text-muted-foreground">{isRemoteDocker ? "Runtime provider" : "Exposure"}</span>
                     <div className="flex items-center gap-2 text-foreground">
                       <AppIcon name="globe" fallback={Globe} className="h-3.5 w-3.5 text-primary"  />
-                      {formatRuntimeStatus(isRemoteDocker ? "remote_docker" : isLocalDocker ? (localExposureMode === "cloudflare_tunnel" ? "cloudflare_tunnel" : localExposureMode === "portless" ? "portless_local" : "local_docker") : activeExposureMode)}
+                      {formatRuntimeStatus(isRemoteDocker ? "remote_docker" : activeExposureMode)}
                     </div>
                   </div>
                   {!isRemoteDocker && !isLocalDocker && (
@@ -2767,6 +2795,8 @@ function RuntimeDialog({
                 <div className="mt-4 rounded-lg border border-border/70 bg-background/70 px-3 py-2 text-xs text-muted-foreground">
                   {isRemoteDocker
                     ? "This runtime is running on the connected remote host. The container lifecycle is managed over SSH/Tailscale, while build and deployment logs still stay visible in StackPilot."
+                    : isLocalDocker
+                    ? activeExposureMode === "cloudflare_tunnel" ? "This app runs in Docker and is exposed through its public HTTPS connection." : "This app runs in Docker. Its local address is available on this computer."
                     : `Current target: ${currentDesiredReplicas} replica${currentDesiredReplicas === 1 ? "" : "s"}.${isDeployed ? ` Ready now: ${currentReadyReplicas}.` : ""} ${activeExposureMode === "ingress" ? "Requests should flow through the ingress layer." : "Requests are currently exposed directly through the Kubernetes service."}`}
                 </div>
               </div>

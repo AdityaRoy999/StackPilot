@@ -10,6 +10,7 @@
 #include "../services/ApplicationCatalog.h"
 #include "../services/ProjectStackInspector.h"
 #include "../utils/BlockingTaskRunner.h"
+#include "../utils/LocalSourcePaths.h"
 #include "../utils/AgentPolicy.h"
 #include "../services/BuildService.h"
 #include "../services/DeploymentCleanupService.h"
@@ -658,73 +659,10 @@ std::string shellQuote(const std::string& value) {
     return quoted;
 }
 
-std::vector<std::filesystem::path> configuredLocalSourceRoots() {
-    std::vector<std::filesystem::path> roots;
-    const char* env = std::getenv("LOCAL_SOURCE_ROOTS");
-    const std::string raw = (env && *env) ? env : "/app/local-projects";
-    std::stringstream stream(raw);
-    std::string item;
-    while (std::getline(stream, item, ';')) {
-        item = trim(item);
-        if (!item.empty()) {
-            roots.emplace_back(item);
-        }
-    }
-    if (roots.empty()) {
-        roots.emplace_back("/app/local-projects");
-    }
-    return roots;
-}
-
-bool pathStartsWith(const std::filesystem::path& candidate, const std::filesystem::path& root) {
-    auto candidateIt = candidate.begin();
-    auto rootIt = root.begin();
-    for (; rootIt != root.end(); ++rootIt, ++candidateIt) {
-        if (candidateIt == candidate.end() || *candidateIt != *rootIt) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool resolveAllowedLocalPath(const std::string& rawPath,
                              std::filesystem::path& resolvedPath,
                              std::string& error) {
-    namespace fs = std::filesystem;
-    const std::string cleaned = trim(rawPath);
-    if (cleaned.empty()) {
-        error = "Local path is required";
-        return false;
-    }
-
-    const fs::path requested(cleaned);
-    if (!requested.is_absolute()) {
-        error = "Local source path must be an absolute path inside a configured local source root";
-        return false;
-    }
-
-    std::error_code ec;
-    const fs::path canonicalRequested = fs::weakly_canonical(requested, ec);
-    if (ec || !fs::exists(canonicalRequested, ec) || !fs::is_directory(canonicalRequested, ec)) {
-        error = "Local source path does not exist or is not a directory";
-        return false;
-    }
-
-    for (const auto& root : configuredLocalSourceRoots()) {
-        std::error_code rootEc;
-        const fs::path canonicalRoot = fs::weakly_canonical(root, rootEc);
-        if (rootEc || !fs::exists(canonicalRoot, rootEc) || !fs::is_directory(canonicalRoot, rootEc)) {
-            continue;
-        }
-
-        if (pathStartsWith(canonicalRequested, canonicalRoot)) {
-            resolvedPath = canonicalRequested;
-            return true;
-        }
-    }
-
-    error = "Local source path is outside the configured allowed roots";
-    return false;
+    return stackpilot::LocalSourcePaths::resolve(rawPath, resolvedPath, error);
 }
 
 std::vector<BuildEnvVar> parseEnvVars(const Json::Value& body) {
@@ -851,6 +789,8 @@ Json::Value projectRowToJson(const pqxx::row& row) {
     pj["source_type"] = row["source_type"].is_null() ? "github" : row["source_type"].as<std::string>();
     pj["ssh_connection_id"] = row["ssh_connection_id"].is_null() ? "" : row["ssh_connection_id"].as<std::string>();
     pj["source_path"] = row["source_path"].is_null() ? "" : row["source_path"].as<std::string>();
+    if (pj["source_type"].asString() == "local" && !pj["source_path"].asString().empty())
+        pj["source_path"] = stackpilot::LocalSourcePaths::hostPath(pj["source_path"].asString());
     try {
         pj["application_template_id"] =
             row["application_template_id"].is_null() ? "" : row["application_template_id"].as<std::string>();
@@ -2174,22 +2114,84 @@ void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
     }
     BlockingTaskRunner::run([req, callback = std::move(callback), userId, projectId]() mutable {
         Json::Value details(Json::objectValue);
-        auto respond = [&](const Json::Value& stack) {
-            Json::Value payload; payload["stack"] = stack;
-            if (!projectId.empty()) payload["details"] = details;
+        Json::Value cachedStack;
+        std::string sourceKey, inspectedAt, inspectionStartedAt, previousError;
+        bool cacheMatchesSource = false, cacheFresh = false, refreshCooldown = false;
+        const bool forceRefresh = req->getParameter("refresh") == "1";
+        auto respond = [&](const Json::Value& stack, bool reused = false) {
+            Json::Value result = stack;
+            Json::Value cache(Json::objectValue);
+            cache["cached"] = reused;
+            cache["stale"] = false;
+            cache["inspected_at"] = inspectedAt;
+            if (!projectId.empty() && !sourceKey.empty()) {
+                const bool unavailable = stack.get("status", "").asString() == "unavailable" ||
+                    (stack.get("truncated", false).asBool() && stack["components"].empty());
+                if (unavailable) {
+                    result = ProjectStackInspector::unavailable("Source inspection is temporarily unavailable. Refresh to retry.");
+                    cache["refresh_error"] = "Source inspection is temporarily unavailable. Refresh to retry.";
+                    if (cacheMatchesSource && cachedStack.isObject()) {
+                        result = cachedStack;
+                        cache["cached"] = true;
+                        cache["stale"] = true;
+                    }
+                }
+                if (!reused) {
+                    try {
+                        auto connection = Database::getInstance().getConnection(); pqxx::work txn(*connection);
+                        if (unavailable) {
+                            // Keep the last successful detection; throttle automatic retries.
+                            txn.exec_params(
+                                "INSERT INTO project_stack_snapshots AS saved (project_id,source_key,last_attempted_at,last_error) "
+                                "SELECT p.id,$2::jsonb,$3::timestamptz,$4 FROM projects p "
+                                "WHERE p.id=$1::uuid AND has_project_access(p.id,$5::uuid) AND project_stack_source_key(p.id)=$2::jsonb "
+                                "ON CONFLICT (project_id) DO UPDATE SET last_attempted_at=EXCLUDED.last_attempted_at,last_error=EXCLUDED.last_error "
+                                "WHERE saved.source_key=EXCLUDED.source_key AND saved.last_attempted_at<=EXCLUDED.last_attempted_at",
+                                projectId, sourceKey, inspectionStartedAt, cache["refresh_error"].asString(), userId);
+                        } else {
+                            // Source identity and inspection time prevent a late scan from
+                            // replacing a newer snapshot or a different project's source.
+                            const auto saved = txn.exec_params(
+                                "INSERT INTO project_stack_snapshots AS saved (project_id,source_key,stack,inspected_at,last_attempted_at,last_error) "
+                                "SELECT p.id,$2::jsonb,$3::jsonb,$4::timestamptz,$4::timestamptz,'' FROM projects p "
+                                "WHERE p.id=$1::uuid AND has_project_access(p.id,$5::uuid) AND project_stack_source_key(p.id)=$2::jsonb "
+                                "ON CONFLICT (project_id) DO UPDATE SET source_key=EXCLUDED.source_key,stack=EXCLUDED.stack,"
+                                "inspected_at=EXCLUDED.inspected_at,last_attempted_at=EXCLUDED.last_attempted_at,last_error='' "
+                                "WHERE saved.inspected_at IS NULL OR saved.inspected_at<=EXCLUDED.inspected_at RETURNING inspected_at::text",
+                                projectId, sourceKey, compactJson(stack), inspectionStartedAt, userId);
+                            cache["persisted"] = !saved.empty();
+                            cache["stale"] = saved.empty();
+                            if (!saved.empty()) cache["inspected_at"] = saved[0][0].as<std::string>();
+                        }
+                        txn.commit();
+                    } catch (const std::exception&) {
+                        spdlog::warn("Unable to persist stack metadata for project {}", projectId);
+                        cache["persisted"] = false;
+                        cache["refresh_error"] = "The stack could not be saved. Refresh to retry.";
+                    }
+                }
+            }
+            Json::Value payload; payload["stack"] = result;
+            if (!projectId.empty()) { payload["details"] = details; payload["cache"] = cache; }
             callback(drogon::HttpResponse::newHttpJsonResponse(payload));
         };
         try {
             Json::Value source = req->getJsonObject() ? *req->getJsonObject() : Json::Value(Json::objectValue);
-            std::string pat;
+            std::string pat, savedGithubPat;
             if (!projectId.empty()) {
                 auto connection = Database::getInstance().getConnection(); pqxx::work txn(*connection);
                 auto rows = txn.exec_params(
                     "SELECT p.source_type, p.repo_url, p.github_pat, p.source_path, p.ssh_connection_id, p.application_template_id, "
                     "p.application_config::text AS application_config, p.execution_mode, p.remote_runtime_type, p.remote_k8s_exposure, "
                     "p.runtime_scheme, p.created_at, p.updated_at, o.name AS workspace, s.name AS source_server, r.name AS runtime_server, "
+                    "snapshot.stack::text AS cached_stack, snapshot.inspected_at::text AS inspected_at, snapshot.last_error, "
+                    "project_stack_source_key(p.id)::text AS source_key, clock_timestamp()::text AS inspection_started_at, "
+                    "COALESCE(snapshot.source_key=project_stack_source_key(p.id),false) AS cache_matches_source, "
+                    "COALESCE(snapshot.inspected_at IS NOT NULL AND (snapshot.invalidated_at IS NULL OR snapshot.inspected_at>=snapshot.invalidated_at),false) AS cache_fresh, "
+                    "COALESCE(snapshot.last_error<>'' AND snapshot.last_attempted_at>clock_timestamp()-interval '30 seconds',false) AS refresh_cooldown, "
                     "(SELECT COUNT(*)::int FROM project_env_vars v WHERE v.project_id=p.id) AS variables "
                     "FROM projects p LEFT JOIN organizations o ON o.id=p.organization_id "
+                    "LEFT JOIN project_stack_snapshots snapshot ON snapshot.project_id=p.id "
                     "LEFT JOIN ssh_connections s ON s.id=p.ssh_connection_id "
                     "LEFT JOIN ssh_connections r ON r.id=p.remote_connection_id "
                     "WHERE p.id=$1 AND has_project_access(p.id,$2)", projectId, userId);
@@ -2199,13 +2201,25 @@ void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
                     response->setStatusCode(drogon::k404NotFound); callback(response); return;
                 }
                 const auto& row = rows[0];
+                sourceKey = row["source_key"].as<std::string>();
+                inspectionStartedAt = row["inspection_started_at"].as<std::string>();
+                inspectedAt = row["inspected_at"].is_null() ? "" : row["inspected_at"].as<std::string>();
+                cacheMatchesSource = row["cache_matches_source"].as<bool>();
+                cacheFresh = row["cache_fresh"].as<bool>();
+                refreshCooldown = row["refresh_cooldown"].as<bool>();
+                previousError = row["last_error"].is_null() ? "" : row["last_error"].as<std::string>();
+                if (!row["cached_stack"].is_null()) {
+                    Json::CharReaderBuilder builder; std::string errors;
+                    std::istringstream stream(row["cached_stack"].as<std::string>());
+                    Json::parseFromStream(builder, stream, &cachedStack, &errors);
+                }
                 for (const auto& key : {"source_type", "repo_url", "source_path", "ssh_connection_id", "application_template_id"})
                     source[key] = row[key].is_null() ? "" : row[key].as<std::string>();
                 for (const auto& key : {"workspace", "source_server", "runtime_server", "source_type", "repo_url", "source_path", "application_template_id",
                         "execution_mode", "remote_runtime_type", "remote_k8s_exposure", "runtime_scheme", "created_at", "updated_at"})
                     details[key] = row[key].is_null() ? "" : row[key].as<std::string>();
                 details["variables"] = row["variables"].as<int>();
-                if (!row["github_pat"].is_null()) pat = TokenCrypto::decrypt(row["github_pat"].as<std::string>());
+                if (!row["github_pat"].is_null()) savedGithubPat = row["github_pat"].as<std::string>();
                 Json::CharReaderBuilder builder; std::string errors;
                 std::istringstream stream(row["application_config"].is_null() ? "{}" : row["application_config"].as<std::string>());
                 Json::parseFromStream(builder, stream, &source["application_config"], &errors);
@@ -2219,7 +2233,7 @@ void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
                 auto environments = txn.exec_params(
                     "SELECT e.name, e.branch, e.auto_deploy, e.require_ci, e.cleanup_previous_on_success, "
                     "(SELECT COUNT(*)::int FROM project_environment_env_vars v WHERE v.environment_id=e.id) AS variables "
-                    "FROM project_environments e WHERE e.project_id=$1 ORDER BY (e.name='production') DESC, e.created_at", projectId);
+                    "FROM project_environments e WHERE e.project_id=$1 ORDER BY (e.name='production') DESC, e.created_at, e.id", projectId);
                 if (!environments.empty()) source["branch"] = environments[0]["branch"].as<std::string>();
                 details["environments"] = Json::arrayValue;
                 for (const auto& environment : environments) {
@@ -2234,6 +2248,11 @@ void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
                 pat = source.get("github_pat", "").asString();
             }
             const auto type = source.get("source_type", "github").asString();
+            const bool useSavedStack = !forceRefresh && cacheMatchesSource && cacheFresh && cachedStack.isObject();
+            if (type != "application" && useSavedStack) { respond(cachedStack, true); return; }
+            if (type != "application" && !forceRefresh && cacheMatchesSource && refreshCooldown) {
+                respond(ProjectStackInspector::unavailable(previousError), true); return;
+            }
             if (type == "application") {
                 const auto* preset = ApplicationCatalog::findTemplate(source.get("application_template_id", "").asString());
                 const auto image = source["application_config"].get("image", preset ? preset->image : "").asString();
@@ -2256,9 +2275,12 @@ void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
                         }
                     }
                 }
-                respond(ProjectStackInspector::application(image)); return;
+                if (useSavedStack) respond(cachedStack, true);
+                else respond(ProjectStackInspector::application(image));
+                return;
             }
             if (type == "github") {
+                if (pat.empty() && !savedGithubPat.empty()) pat = TokenCrypto::decrypt(savedGithubPat);
                 if (pat.empty()) pat = loadConnectedGitHubToken(userId);
                 respond(ProjectStackInspector::github(source.get("repo_url", "").asString(), pat, source.get("branch", "HEAD").asString())); return;
             }
@@ -2270,14 +2292,18 @@ void ProjectController::inspectStackSource(const drogon::HttpRequestPtr& req,
                 respond(ProjectStackInspector::local(root)); return;
             }
             if (type == "ssh") {
-                auto connection = Database::getInstance().getConnection(); pqxx::work txn(*connection);
-                auto rows = txn.exec_params(
+                const auto rows = [&] {
+                    auto connection = Database::getInstance().getConnection(); pqxx::work txn(*connection);
+                    auto rows = txn.exec_params(
                     "SELECT COALESCE(connection_type,'ssh') AS remote_connection_type, host AS remote_host, port AS remote_port, "
                     "username AS remote_username, auth_type AS remote_auth_type, password_encrypted AS remote_password_encrypted, "
                     "private_key_encrypted AS remote_private_key_encrypted, known_hosts_entry AS remote_known_hosts_entry "
                     "FROM ssh_connections WHERE id=$1 AND user_id=$2", source.get("ssh_connection_id", "").asString(), userId);
+                    txn.commit();
+                    return rows;
+                }();
                 if (rows.empty()) { respond(ProjectStackInspector::unavailable("Select a saved server you can access to inspect this source.")); return; }
-                auto config = rowToRemoteRuntimeConfig(rows[0]); txn.commit();
+                auto config = rowToRemoteRuntimeConfig(rows[0]);
                 const auto path = source.get("source_path", "").asString(); SshService ssh;
                 if (!ssh.isValidRemotePath(path)) { respond(ProjectStackInspector::unavailable("Select an absolute source folder on the server.")); return; }
                 auto inspection = ssh.runRemoteCommand(config, path, ProjectStackInspector::remoteCommand(), 15);
@@ -2304,76 +2330,87 @@ void ProjectController::browseLocalSources(
         callback(resp); return;
     }
 
-    auto body = req->getJsonObject();
-    const std::string requestedPath = (body && (*body).isMember("path")) ? (*body)["path"].asString() : "";
+    BlockingTaskRunner::run([req, callback = std::move(callback)]() mutable {
+        auto body = req->getJsonObject();
+        const std::string requestedPath = (body && (*body).isMember("path")) ? (*body)["path"].asString() : "";
 
-    try {
-        namespace fs = std::filesystem;
+        try {
+            namespace fs = std::filesystem;
 
-        Json::Value payload;
-        Json::Value roots(Json::arrayValue);
-        for (const auto& root : configuredLocalSourceRoots()) {
+            Json::Value payload;
+            Json::Value roots(Json::arrayValue);
+            for (const auto& root : stackpilot::LocalSourcePaths::roots()) {
+                std::error_code ec;
+                const fs::path canonicalRoot = fs::weakly_canonical(root.path, ec);
+                if (!ec && fs::exists(canonicalRoot, ec) && fs::is_directory(canonicalRoot, ec)) {
+                    Json::Value item;
+                    item["path"] = stackpilot::LocalSourcePaths::hostPath(canonicalRoot);
+                    item["name"] = root.name;
+                    roots.append(item);
+                }
+            }
+            payload["roots"] = roots;
+
+            if (trim(requestedPath).empty()) {
+                payload["path"] = "";
+                payload["entries"] = Json::arrayValue;
+                callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+                return;
+            }
+
+            fs::path resolvedPath;
+            std::string pathError;
+            if (!resolveAllowedLocalPath(requestedPath, resolvedPath, pathError)) {
+                Json::Value err; err["error"] = pathError;
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k400BadRequest);
+                callback(resp); return;
+            }
+
+            Json::Value entries(Json::arrayValue);
             std::error_code ec;
-            const fs::path canonicalRoot = fs::weakly_canonical(root, ec);
-            if (!ec && fs::exists(canonicalRoot, ec) && fs::is_directory(canonicalRoot, ec)) {
-                Json::Value item;
-                item["path"] = canonicalRoot.string();
-                item["name"] = canonicalRoot.filename().empty() ? canonicalRoot.string() : canonicalRoot.filename().string();
-                roots.append(item);
-            }
-        }
-        payload["roots"] = roots;
-
-        if (trim(requestedPath).empty()) {
-            payload["path"] = "";
-            payload["entries"] = Json::arrayValue;
-            callback(drogon::HttpResponse::newHttpJsonResponse(payload));
-            return;
-        }
-
-        fs::path resolvedPath;
-        std::string pathError;
-        if (!resolveAllowedLocalPath(requestedPath, resolvedPath, pathError)) {
-            Json::Value err; err["error"] = pathError;
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-            resp->setStatusCode(drogon::k400BadRequest);
-            callback(resp); return;
-        }
-
-        Json::Value entries(Json::arrayValue);
-        std::error_code ec;
-        std::vector<fs::directory_entry> directoryEntries;
-        for (const auto& entry : fs::directory_iterator(resolvedPath, fs::directory_options::skip_permission_denied, ec)) {
+            std::vector<fs::directory_entry> directoryEntries;
+            fs::directory_iterator iterator(resolvedPath, ec);
             if (ec) {
-                break;
+                Json::Value err; err["error"] = "This folder cannot be opened. Choose another folder or check its permissions";
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+                resp->setStatusCode(drogon::k403Forbidden);
+                callback(resp); return;
             }
-            if (entry.is_symlink(ec) || !entry.is_directory(ec)) {
-                continue;
+            for (const auto& entry : iterator) {
+                std::error_code entryError;
+                if (entry.is_symlink(entryError) || entryError || !entry.is_directory(entryError) || entryError) {
+                    continue;
+                }
+                directoryEntries.push_back(entry);
             }
-            directoryEntries.push_back(entry);
-        }
-        std::sort(directoryEntries.begin(), directoryEntries.end(), [](const fs::directory_entry& left, const fs::directory_entry& right) {
-            return left.path().filename().string() < right.path().filename().string();
-        });
+            std::sort(directoryEntries.begin(), directoryEntries.end(), [](const fs::directory_entry& left, const fs::directory_entry& right) {
+                return left.path().filename().string() < right.path().filename().string();
+            });
 
-        for (const auto& entry : directoryEntries) {
-            Json::Value item;
-            item["name"] = entry.path().filename().string();
-            item["directory"] = true;
-            item["path"] = entry.path().string();
-            entries.append(item);
-        }
+            for (const auto& entry : directoryEntries) {
+                Json::Value item;
+                item["name"] = entry.path().filename().string();
+                item["directory"] = true;
+                item["path"] = stackpilot::LocalSourcePaths::hostPath(entry.path());
+                entries.append(item);
+            }
 
-        payload["path"] = resolvedPath.string();
-        payload["entries"] = entries;
-        callback(drogon::HttpResponse::newHttpJsonResponse(payload));
-    } catch (const std::exception& e) {
-        spdlog::error("Browse local sources error: {}", e.what());
-        Json::Value err; err["error"] = "Internal server error";
-        auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
-        resp->setStatusCode(drogon::k500InternalServerError);
-        callback(resp);
-    }
+            payload["path"] = stackpilot::LocalSourcePaths::hostPath(resolvedPath);
+            const bool atRoot = std::any_of(roots.begin(), roots.end(), [&](const Json::Value& root) {
+                return root["path"].asString() == payload["path"].asString();
+            });
+            payload["parent_path"] = atRoot ? "" : stackpilot::LocalSourcePaths::hostPath(resolvedPath.parent_path());
+            payload["entries"] = entries;
+            callback(drogon::HttpResponse::newHttpJsonResponse(payload));
+        } catch (const std::exception& e) {
+            spdlog::error("Browse local sources error: {}", e.what());
+            Json::Value err; err["error"] = "Internal server error";
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(drogon::k500InternalServerError);
+            callback(resp);
+        }
+    });
 }
 
 void ProjectController::listGitHubRepos(

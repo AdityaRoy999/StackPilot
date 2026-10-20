@@ -1,74 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  const { id: deploymentId } = await params;
-  if (!deploymentId) {
-    return NextResponse.json({ error: "Deployment ID is required" }, { status: 400 });
+type RouteContext = { params: Promise<{ id: string }> };
+
+async function forward(request: NextRequest, { params }: RouteContext) {
+  const { id } = await params;
+  const base = process.env.INTERNAL_API_URL || `${process.env.STACKPILOT_BACKEND_INTERNAL_URL || process.env.BACKEND_INTERNAL_URL || "http://backend:8090"}/api/v1`;
+  const headers = new Headers({ "Content-Type": "application/json" });
+  for (const key of ["cookie", "authorization", "origin", "referer", "x-stackpilot-csrf"]) {
+    const value = request.headers.get(key);
+    if (value) headers.set(key, value);
   }
-
-  try {
-    const body = await request.json();
-    const exposureMode = body.exposure_mode || "direct"; // "direct" | "portless" | "cloudflare_tunnel"
-    const tunnelToken = body.tunnel_token || "";
-    const projectName = body.project_name || "app";
-    const port = body.port || 3000;
-
-    const backendBaseUrl = `${process.env.STACKPILOT_BACKEND_INTERNAL_URL || "http://127.0.0.1:8090"}/api/v1`;
-    const cookieHeader = request.headers.get("cookie") || "";
-    const authHeader = request.headers.get("authorization") || "";
-    const originHeader = request.headers.get("origin") || "";
-    const refererHeader = request.headers.get("referer") || "";
-    const csrfHeader = request.headers.get("x-stackpilot-csrf") || "";
-
-    const candidateUrls = [
-      process.env.INTERNAL_API_URL,
-      "http://backend:8090/api/v1",
-      backendBaseUrl,
-    ].filter(Boolean) as string[];
-
-    for (const url of candidateUrls) {
-      try {
-        const backendRes = await fetch(`${url}/deployments/${deploymentId}/exposure`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(csrfHeader ? { "X-stackpilot-CSRF": csrfHeader } : {}),
-            ...(originHeader ? { Origin: originHeader } : {}),
-            ...(refererHeader ? { Referer: refererHeader } : {}),
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-            ...(authHeader ? { Authorization: authHeader } : {}),
-          },
-          body: JSON.stringify({
-            exposure_mode: exposureMode,
-            tunnel_token: tunnelToken,
-            project_name: projectName,
-            port,
-          }),
-        });
-
-        if (backendRes.ok) {
-          const data = await backendRes.json();
-          return NextResponse.json(data);
-        } else {
-          const data = await backendRes.json().catch(() => ({}));
-          return NextResponse.json(data, { status: backendRes.status });
-        }
-      } catch {
-        // Try next candidate URL
-      }
+  let body: string | undefined;
+  if (request.method === "POST") {
+    try {
+      const input = await request.json();
+      body = JSON.stringify({ exposure_mode: input.exposure_mode, tunnel_token: input.tunnel_token, public_url: input.public_url });
+    } catch {
+      return NextResponse.json({ error: "Invalid connection details" }, { status: 400 });
     }
-
-    return NextResponse.json(
-      { error: "Could not reach StackPilot backend to update deployment exposure" },
-      { status: 502 }
-    );
-  } catch (error: unknown) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to update deployment exposure" },
-      { status: 500 }
-    );
+  }
+  try {
+    const response = await fetch(`${base.replace(/\/$/, "")}/deployments/${encodeURIComponent(id)}/exposure`, {
+      method: request.method, headers, body, cache: "no-store",
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(12000)]),
+    });
+    return NextResponse.json(await response.json(), { status: response.status, headers: { "Cache-Control": "no-store" } });
+  } catch {
+    return NextResponse.json({ error: "Could not reach StackPilot to check the connection. Refresh its status before retrying." }, { status: 502 });
   }
 }
+
+export const GET = forward;
+export const POST = forward;

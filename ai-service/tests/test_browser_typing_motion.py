@@ -24,9 +24,12 @@ class TypingMotionTests(unittest.IsolatedAsyncioTestCase):
                 return {'type':input_type,'value':current[0],'autocomplete':False}
             if 'normalizeCode(view.read())===' in script:
                 return True
+            if "el.type==='password'" in script and 'el.value===' in script:
+                return current[0] == text
             return {'kind':'native','value':current[0]}
         session.send_command=AsyncMock(side_effect=dispatch)
         session.evaluate=AsyncMock(side_effect=observe)
+        session.extract_interactive_tree=AsyncMock()
         return session,current
 
     def test_unicode_clusters_and_large_documents_stay_bounded(self):

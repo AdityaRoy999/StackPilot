@@ -73,8 +73,9 @@ services:
     image: cloudflare/cloudflared:2026.9.1
     container_name: stackpilot-remote-tunnel
     profiles: ["remote"]
-    restart: "no"
-    command: ["tunnel", "--no-autoupdate", "--protocol", "http2", "--url", "http://remote-gateway:8094"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--no-prechecks", "--metrics", "0.0.0.0:20241", "--protocol", "http2", "--url", "http://remote-gateway:8094"]
+    logging: *stackpilot-logging
     depends_on:
       - remote-gateway
     read_only: true

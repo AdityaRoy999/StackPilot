@@ -2,6 +2,7 @@
 import copy
 
 from .assertions import BrowserExpectation, normalize_expectation
+from .control_contract import normalize_control_action
 from ..testing_runtime import action_status
 
 SUPPORTED_BATCH_ACTIONS = frozenset({'click','hover','type','scroll','scroll_to','press_key','navigate','navigate_back','navigate_forward','return_to_parent',
@@ -25,6 +26,37 @@ def continue_batch_after(result):
     return action_status(result) == 'passed' or benign_no_effect(result)
 
 
+def acknowledged_submission(result):
+    """Dispatch evidence permits verification next, never another mutation."""
+    verification = (result.get('verification') or {}) if isinstance(result, dict) else {}
+    return (isinstance(result, dict) and result.get('requires_outcome') is True
+            and result.get('status') == 'unverified' and result.get('action') in {'click', 'press_key'}
+            and not result.get('error') and not result.get('approval_required')
+            and verification.get('verified') is True and verification.get('effect_type') in {
+                'dom_mutation', 'visual_state_change', 'control_change', 'route_change',
+                'modal_open', 'modal_close', 'form_submit', 'alert_emitted'})
+
+
+def normalize_batch_completion(arguments):
+    """Repair a misplaced Boolean terminal marker without overriding the caller.
+
+    Standalone browser_assert accepts complete_task. A model occasionally puts
+    it on the final assertion inside a batch, where completion belongs to the
+    outer transaction. Never normalize a nonterminal or malformed marker.
+    """
+    if not isinstance(arguments, dict):
+        return arguments
+    actions = arguments.get('actions')
+    if (not isinstance(actions, list) or not actions or not isinstance(actions[-1], dict)
+            or actions[-1].get('action') != 'assert' or type(actions[-1].get('complete_task')) is not bool):
+        return arguments
+    normalized = copy.deepcopy(arguments)
+    complete = normalized['actions'][-1].pop('complete_task')
+    if 'complete_task' not in normalized:
+        normalized['complete_task'] = complete
+    return normalized
+
+
 def editable_control(control):
     if not isinstance(control, dict):
         return False
@@ -45,8 +77,9 @@ def compile_batch(actions, controls=()):
     """
     if not isinstance(actions, list) or not 1 <= len(actions) <= 32:
         return actions
-    normalized = copy.deepcopy(actions)
+    normalized = [normalize_control_action(action, controls) for action in copy.deepcopy(actions)]
     editable_ids = {c.get('id') for c in controls if editable_control(c)}
+    selectable_ids = {c.get('id') for c in controls if c.get('tag') == 'select' and not c.get('disabled')}
     compiled = []
     for index, action in enumerate(normalized):
         if not isinstance(action, dict):
@@ -63,9 +96,10 @@ def compile_batch(actions, controls=()):
                     spec['element_id'] = target
         following = normalized[index + 1] if index + 1 < len(normalized) else None
         if (action.get('action') == 'click' and not set(action) - {'action', 'element_id'}
-                and isinstance(following, dict) and following.get('action') == 'type'
+                and isinstance(following, dict)
                 and type(action.get('element_id')) is int
-                and action['element_id'] in editable_ids
+                and ((following.get('action') == 'type' and action['element_id'] in editable_ids)
+                     or (following.get('action') == 'select_option' and action['element_id'] in selectable_ids))
                 and following.get('element_id') == action['element_id']):
             # Native type focuses and checks the same observed field itself.
             continue
@@ -159,7 +193,10 @@ def validate_batch(actions, complete_task=False, *, max_actions=8):
 
 def completion_evidence(actions, results, complete_task):
     return bool(complete_task is True and len(results) == len(actions) and results
-                and all(continue_batch_after(r) for r in results)
+                and all((continue_batch_after(r) and (r.get('status') != 'unverified' or benign_no_effect(r))) or
+                        (acknowledged_submission(r) and index < len(results)-1 and
+                         all(later.get('action') == 'assert' for later in results[index+1:]))
+                        for index,r in enumerate(results))
                 and results[-1].get('action') == 'assert' and results[-1].get('purpose') == 'outcome'
                 and results[-1].get('assertions')
                 and all(a.get('status') == 'passed' for a in results[-1]['assertions']))

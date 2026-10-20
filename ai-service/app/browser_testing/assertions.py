@@ -9,6 +9,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
 
+from .text_evidence import SAFE_SEMANTIC_TEXT_HELPERS
+from .checkables import CHECKABLE_HELPERS
+from .accessibility import CONTROL_NAME_HELPERS
+
 
 def normalize_expectation(spec):
     """Discard only redundant fields that cannot change the asserted outcome."""
@@ -58,9 +62,13 @@ class BrowserExpectation(BaseModel):
 
 
 PROBE = r"""(() => {
+ __SAFE_SEMANTIC_TEXT_HELPERS__
+ __SP_CHECKABLE_HELPERS__
+ __SP_CONTROL_NAME_HELPERS__
  const specs = __SPECS__;
  const visible = e => {
    if (!e || !e.isConnected || e.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+   if (spNativeCheckable(e)) return !!spCheckableSurface(e);
    if (typeof e.checkVisibility === 'function' && !e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return false;
    const s = getComputedStyle(e);
    return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' && e.getClientRects().length > 0;
@@ -105,13 +113,17 @@ PROBE = r"""(() => {
      if (spec.kind === 'url') actual = location.href;
      else if (spec.kind === 'title') actual = document.title;
      else if (spec.kind === 'accessible_name') {
-       const labelledBy=e.getAttribute('aria-labelledby');
-       const labels=labelledBy ? labelledBy.split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim() : '';
-       actual = e.getAttribute('aria-label') || labels || e.getAttribute('title') || e.innerText || e.textContent || '';
+       actual = spControlName(e) || e.getAttribute('title') || e.innerText || e.textContent || '';
      } else if (spec.kind === 'value') {
        if (['checkbox','radio'].includes(e.type)) return {matched:false,actual:null,unavailable:true,reason:'Use kind checked with an expected boolean to verify a checkbox or radio; its value does not prove selection'};
        if (!('value' in e)) return {matched:false,actual:null,reason:'Target has no value'};
        actual = String(e.value);
+     } else if(e?.tagName==='INPUT') {
+       return {matched:false,actual:null,unavailable:true,reason:'Native input labels use accessible_name; entered content uses value, and checkbox/radio state uses checked. text does not read an input label.'};
+     } else if(e?.matches(spSemanticTextSelector)) {
+       const reading=spReadSemanticText(e);
+       if(!reading.complete)return {matched:false,actual:null,unavailable:true,reason:'Semantic text exceeds the bounded safe read'};
+       actual=reading.text;
      } else actual = (selector || spec.element_id != null) ? (visible(e) ? e.innerText || e.textContent || '' : '') : document.body?.innerText || '';
      const normalize = s => String(s).replace(/\s+/g, ' ').trim();
      const value = normalize(actual), expected = normalize(spec.expected);
@@ -119,7 +131,7 @@ PROBE = r"""(() => {
      return {matched: matched && (!e || visible(e)), actual:String(actual).slice(0,2000)};
    } catch(err) { return {matched:false,actual:null,unavailable:true,reason:'Invalid target or page observation'}; }
  });
-})()"""
+})()""".replace('__SP_CHECKABLE_HELPERS__', CHECKABLE_HELPERS).replace('__SP_CONTROL_NAME_HELPERS__', CONTROL_NAME_HELPERS).replace('__SAFE_SEMANTIC_TEXT_HELPERS__', SAFE_SEMANTIC_TEXT_HELPERS)
 
 
 async def assert_browser_state(session, expectations: list, timeout_seconds: float = 5,
@@ -144,7 +156,11 @@ async def assert_browser_state(session, expectations: list, timeout_seconds: flo
         # Validation errors can contain supplied secrets; do not echo their input.
         return {"status": "failed", "action": "assert", "error": "Invalid assertion contract: " + (str(exc) if isinstance(exc, ValueError) and type(exc) is ValueError else "check target, kind, expected value and timeout")}
     started = time.monotonic()
-    key = json.dumps(specs, sort_keys=True)
+    # Retargeting the same text expectation without new input is still a
+    # retry of that observation. Reprobe its new target once; changing a ref
+    # must not buy another five-second wait on every guessed control.
+    key = json.dumps([{k:v for k,v in spec.items() if k not in {'element_id','selector'}}
+                      if spec['kind']=='text' else spec for spec in specs], sort_keys=True)
     observation_state = (key, getattr(session, 'dispatched_inputs', None), getattr(session, 'current_url', None))
     previous = getattr(session, '_last_assertion_record', None)
     repeated_mismatch = bool(previous and previous.get('state') == observation_state and previous.get('status') == 'failed'
@@ -197,7 +213,12 @@ async def assert_browser_state(session, expectations: list, timeout_seconds: flo
     result = {"status": state, "action": "assert", "purpose": purpose, "assertions": results, "attempts": attempts,
             "elapsed_ms": round((time.monotonic() - started) * 1000),
             "url": getattr(session, "current_url", ""),
-            "hint": "Unchanged failed expectation was reprobed once; inspect actual values or change the test strategy." if repeated_mismatch and state != 'passed' else "",
+            "hint": ("Unchanged failed expectation was reprobed once; inspect actual values or change the test strategy. "
+                     if repeated_mismatch and state != 'passed' else "") + (
+                     "Text match=exact compares the entire target text (the whole page when no target is given). "
+                     "Use browser_observe query for a specific value/quantity/status and its surrounding context, "
+                     "then assert its current text_evidence reference. Keep the requested expectation; never retry a submission to repair a read-only assertion."
+                     if state != 'passed' and any(spec['kind']=='text' for spec in specs) else ""),
             "verification": {"verified": passed, "effect_type": "assertion",
                              "description": f"{sum(r['status'] == 'passed' for r in results)}/{len(results)} explicit expectations passed"}}
     return guard.assertion_result(result, specs) if guard else result

@@ -47,7 +47,11 @@ export interface ProjectEnvironmentSummary {
   cleanup_previous_on_success?: boolean;
   variables?: number;
 }
-export interface ProjectStackResponse { stack: ProjectStack; details?: ProjectStackDetails }
+export interface ProjectStackResponse {
+  stack: ProjectStack;
+  details?: ProjectStackDetails;
+  cache?: { cached: boolean; stale: boolean; inspected_at?: string; persisted?: boolean; refresh_error?: string };
+}
 export interface StackSource {
   source_type: string;
   repo_url?: string;

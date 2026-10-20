@@ -49,7 +49,7 @@ PROBE = r"""(() => {
    name:e.name||'',input_id:e.id||'',href:anchor?.getAttribute('href')||'',
    form:!!f,form_id:f ? (f.id || f.getAttribute('name') || ('form_' + [...document.forms].indexOf(f))) : '',
    form_action:f?.getAttribute('action')||'',form_method:f?.method||'',
-   aria_controls:e.getAttribute('aria-controls')||'',global:!!e.closest('nav,[role="navigation"]'),
+   aria_controls:e.getAttribute('aria-controls')||'',global:!!e.closest('nav,header,footer,[role="navigation"]'),
    disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',url:location.href,
    submit_control:f ? (()=>{const submit=f.querySelector('button:not([type]),button[type="submit"],input[type="submit"],input[type="image"]');
      return submit ? {label:(submit.getAttribute('aria-label')||submit.innerText||submit.value||'Submit').trim(),

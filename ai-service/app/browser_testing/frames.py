@@ -1,8 +1,9 @@
 """Viewport geometry and occlusion across Chromium frame process boundaries."""
 
 
-async def frame_offset(session, frame_id, visiting=None):
-    if frame_id==session._main_frame_id:return (0,0)
+async def frame_transform(session, frame_id, visiting=None):
+    """Map frame CSS coordinates to the top-level viewport, including scale."""
+    if frame_id==session._main_frame_id:return (0,0,1,1)
     visiting=set(visiting or ())
     if frame_id in visiting or len(visiting)>=16:raise RuntimeError('Frame ancestry is cyclic or too deep.')
     visiting.add(frame_id)
@@ -11,22 +12,30 @@ async def frame_offset(session, frame_id, visiting=None):
     owner=await session.send_command('DOM.getFrameOwner',{'frameId':frame_id},cdp_session_id=parent_session)
     box=await session.send_command('DOM.getBoxModel',{'backendNodeId':owner['backendNodeId']},cdp_session_id=parent_session)
     quad=box['model']['content']
-    x,y=quad[:2]
-    if len(quad)!=8 or abs(quad[1]-quad[3])>.5 or abs(quad[0]-quad[6])>.5:
+    if len(quad)!=8 or abs(quad[1]-quad[3])>.5 or abs(quad[0]-quad[6])>.5 or abs(quad[2]-quad[4])>.5 or abs(quad[5]-quad[7])>.5:
         raise RuntimeError('Rotated or skewed frame geometry requires a visual handler.')
+    x,y=quad[:2]
+    sx=sy=1
     context=session.frame_contexts.get(frame_id,{})
     if context.get('context_id'):
         viewport=await session.send_command('Runtime.evaluate',{'expression':'({width:innerWidth,height:innerHeight})',
             'contextId':context['context_id'],'returnByValue':True},cdp_session_id=context.get('session_id'))
         size=viewport.get('result',{}).get('value',{})
-        if size and (abs(quad[2]-quad[0]-size['width'])>1 or abs(quad[7]-quad[1]-size['height'])>1):
-            raise RuntimeError('Scaled frame geometry requires a visual handler.')
+        if size:
+            if size.get('width',0)<=0 or size.get('height',0)<=0:
+                raise RuntimeError('Frame viewport has no usable dimensions.')
+            sx=(quad[2]-quad[0])/size['width'];sy=(quad[7]-quad[1])/size['height']
+            if sx<=0 or sy<=0:raise RuntimeError('Frame is hidden or mirrored.')
     if parent_session:
         root=session.frame_session_roots.get(parent_session)
         if not root:raise RuntimeError('Parent frame process root is unavailable.')
-        ox,oy=await frame_offset(session,root,visiting)
-        x+=ox;y+=oy
-    return x,y
+        ox,oy,px,py=await frame_transform(session,root,visiting)
+        x=ox+x*px;y=oy+y*py;sx*=px;sy*=py
+    return x,y,sx,sy
+
+
+async def frame_offset(session, frame_id, visiting=None):
+    return (await frame_transform(session,frame_id,visiting))[:2]
 
 
 async def frame_point_is_clear(session,frame_id,x,y):
@@ -46,8 +55,8 @@ async def frame_point_is_clear(session,frame_id,x,y):
     roots.append((None,session._main_frame_id))
     roots.reverse()
     for index,(sid,root) in enumerate(roots):
-        ox,oy=await frame_offset(session,root)
-        hit=await session.send_command('DOM.getNodeForLocation',{'x':round(x-ox),'y':round(y-oy)},cdp_session_id=sid)
+        ox,oy,sx,sy=await frame_transform(session,root)
+        hit=await session.send_command('DOM.getNodeForLocation',{'x':round((x-ox)/sx),'y':round((y-oy)/sy)},cdp_session_id=sid)
         if index==len(roots)-1:
             return hit.get('frameId')==frame_id
         boundary=roots[index+1][1]

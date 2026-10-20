@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import api from "@/lib/api";
 import { ChevronDown, FileCode, Loader2, RefreshCw } from "@/lib/platform-icons";
@@ -10,12 +10,19 @@ import { stackComponentLabel, stackIconComponents, stackRoleLabels, type Project
 import { TechnologyIcon } from "./TechnologyIcon";
 
 export function useProjectStack(projectId: string, updatedAt?: string) {
-  return useQuery({
+  const client = useQueryClient();
+  const options = queryOptions({
     queryKey: ["project-stack", projectId, updatedAt],
     queryFn: async ({ signal }) => (await api.get<ProjectStackResponse>(`/projects/${projectId}/stack`, { signal })).data,
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
+  const query = useQuery(options);
+  const refresh = useMutation({
+    mutationFn: async () => (await api.get<ProjectStackResponse>(`/projects/${projectId}/stack?refresh=1`)).data,
+    onSuccess: data => client.setQueryData(options.queryKey, data),
+  });
+  return { ...query, refresh: refresh.mutate, isRefreshing: refresh.isPending, refreshFailed: refresh.isError };
 }
 
 function StackSymbol({ component }: { component: StackComponent }) {

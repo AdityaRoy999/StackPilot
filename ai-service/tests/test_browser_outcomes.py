@@ -112,6 +112,39 @@ class BrowserOutcomeTests(unittest.TestCase):
         guard.observe([{'id': 1, 'text': 'Name', 'value': 'private fixture value'}])
         self.assertNotIn('value', guard.controls[('id', '1')])
 
+    def test_destination_text_does_not_alias_old_navigation_caption(self):
+        guard = self.guard('Open the About page and verify its heading')
+        evidence = {'id':21,'tag':'h1','role':'text','read_only':True,'supported_actions':['assert']}
+        guard.observe_readonly([evidence], 'https://fixture.invalid/about')
+        result = guard.assertion_result(assertion({'kind':'text','element_id':21,'expected':'About'}))
+        self.assertEqual(result['purpose'], 'outcome')
+        # A current launcher or guessed CSS alias is not this read-only result.
+        for spec in ({'kind':'text','element_id':ABOUT['id'],'expected':'About'},
+                     {'kind':'text','selector':'nav button','expected':'About'}):
+            self.assertEqual(guard.assertion_result(assertion(spec))['purpose'], 'checkpoint')
+
+    def test_same_page_or_actionable_caption_cannot_use_destination_exception(self):
+        guard = self.guard()
+        guard.observe_readonly([{'id':21,'tag':'p','role':'text','read_only':True,'supported_actions':['assert']}],
+                               'https://fixture.invalid/')
+        guard.observe_readonly([{'id':22,'tag':'button','role':'text','read_only':True,'supported_actions':['assert']}],
+                               'https://fixture.invalid/about')
+        for ref in (21,22):
+            self.assertEqual(guard.assertion_result(assertion({'kind':'text','element_id':ref,'expected':'About'}))['purpose'], 'checkpoint')
+
+    def test_search_and_destination_links_do_not_contaminate_original_baseline(self):
+        guard = self.guard('Search for an article and verify its heading and lead')
+        guard.observe([{'id':11,'tag':'a','text':'Ada Lovelace'}], 'https://fixture.invalid/search')
+        guard.observe([{'id':12,'tag':'a','text':'mathematician'}], 'https://fixture.invalid/article')
+        for spec in ({'kind':'text','selector':'h1','expected':'Ada Lovelace'},
+                     {'kind':'text','expected':'mathematician','match':'contains'}):
+            self.assertEqual(guard.assertion_result(assertion(spec))['purpose'], 'outcome')
+        # A direct assertion on that current link remains just its caption.
+        self.assertEqual(guard.assertion_result(assertion(
+            {'kind':'text','element_id':12,'expected':'mathematician'}))['purpose'], 'checkpoint')
+        self.assertEqual(guard.assertion_result(assertion(
+            {'kind':'text','expected':'About','match':'contains'}))['purpose'], 'checkpoint')
+
 
 if __name__ == '__main__':
     unittest.main()

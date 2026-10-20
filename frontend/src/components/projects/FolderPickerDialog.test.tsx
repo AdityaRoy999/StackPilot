@@ -43,6 +43,26 @@ it("browses the selected VPS and commits its current directory, while files rema
   expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 
+it("navigates Windows drives and uses the server parent path without losing backslashes", async () => {
+  const drives = [{ path: "C:\\", name: "C:" }, { path: "D:\\", name: "D:" }];
+  vi.mocked(api.post)
+    .mockResolvedValueOnce({ data: { path: "", roots: drives, entries: [] } })
+    .mockResolvedValueOnce({ data: { path: "D:\\", parent_path: "", roots: drives, entries: [{ name: "My Projects", path: "D:\\My Projects", directory: true }] } })
+    .mockResolvedValueOnce({ data: { path: "D:\\My Projects", parent_path: "D:\\", roots: drives, entries: [] } })
+    .mockResolvedValueOnce({ data: { path: "D:\\", parent_path: "", roots: drives, entries: [] } })
+    .mockResolvedValueOnce({ data: { path: "", roots: drives, entries: [] } });
+  const { onSelect } = await render();
+  await act(async () => button("D:").click());
+  await act(async () => button("My Projects").click());
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Folder path"]')!.value).toBe("D:\\My Projects");
+  await act(async () => button("Use this folder").click());
+  expect(onSelect).toHaveBeenCalledWith("D:\\My Projects");
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!.click());
+  expect(api.post).toHaveBeenLastCalledWith("/local/sources/browse", { path: "D:\\" });
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!.click());
+  expect(api.post).toHaveBeenLastCalledWith("/local/sources/browse", { path: "" });
+});
+
 it("does not let a delayed response from a closed picker replace a new session", async () => {
   let finish!: (value: unknown) => void;
   vi.mocked(api.post).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));

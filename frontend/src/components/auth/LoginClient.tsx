@@ -12,11 +12,12 @@ import { destinationAfterLogin } from "@/lib/onboarding";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoogleAuthButton } from "@/components/auth/GoogleAuthButton";
 import { GitHubAuthButton } from "@/components/auth/GitHubAuthButton";
+import { AuthSplitLayout } from "@/components/auth/AuthSplitLayout";
 import { Eye, EyeOff } from "@/lib/platform-icons";
 import { AppIcon } from "@/lib/custom-icons";
+import styles from "./AuthSplitLayout.module.css";
 
 export function LoginClient({
   googleClientId,
@@ -62,87 +63,84 @@ export function LoginClient({
   };
 
   const authButtonClass =
-    "relative h-10 w-full justify-center rounded-lg border-border !bg-transparent px-4 text-sm font-medium !text-foreground shadow-none hover:!bg-muted hover:!text-foreground dark:!bg-transparent";
+    "relative h-12 w-full justify-center rounded-lg border-border !bg-transparent px-4 text-sm font-medium !text-foreground shadow-none hover:!bg-muted hover:!text-foreground dark:!bg-transparent";
+  const hasSocialAuth = githubOAuthEnabled || Boolean(googleClientId);
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader className="space-y-1">
-        <CardTitle className="text-2xl font-bold tracking-tight text-center">
-          StackPilot Platform
-        </CardTitle>
-        <CardDescription className="text-center">
-          Enter your credentials to sign in
-        </CardDescription>
-      </CardHeader>
-      <div className="px-6">
-        <div className="space-y-3">
-          <GitHubAuthButton mode="signin" enabled={githubOAuthEnabled} className={authButtonClass} />
-          <GoogleAuthButton mode="signin" clientId={googleClientId} className={authButtonClass} />
-        </div>
-        <div className="my-5 flex items-center gap-3 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          <div className="h-px flex-1 bg-border" />
-          <span>or</span>
-          <div className="h-px flex-1 bg-border" />
-        </div>
-      </div>
-      <form onSubmit={handleLogin}>
-        <CardContent className="space-y-4 pb-6">
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input
-              id="email"
-              type="email"
-              placeholder="Email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loginMutation.isPending}
-            />
+    <AuthSplitLayout headingId="login-heading">
+      <h1 id="login-heading" className={styles.heading}>Welcome back</h1>
+      <p className={styles.intro}>Sign in to your StackPilot workspace.</p>
+      {hasSocialAuth && (
+        <>
+          <div className={styles.providers}>
+            <GitHubAuthButton mode="signin" enabled={githubOAuthEnabled} className={authButtonClass} />
+            {googleClientId && <GoogleAuthButton mode="signin" clientId={googleClientId} className={authButtonClass} />}
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <div className="relative">
-              <Input
-                id="password"
-                type={showPassword ? "text" : "password"}
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loginMutation.isPending}
-                className="pr-10"
-              />
-              <button
-                type="button"
-                className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                onClick={() => setShowPassword((current) => !current)}
-                disabled={loginMutation.isPending}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <AppIcon name="eye-off" fallback={EyeOff} className="h-4 w-4"  /> : <AppIcon name="eye" fallback={Eye} className="h-4 w-4"  />}
-              </button>
-            </div>
-            <div className="flex justify-end">
-              <Link href="/auth/forgot-password" className="text-xs text-primary hover:underline">
-                Forgot password?
-              </Link>
-            </div>
-          </div>
-        </CardContent>
-        <CardFooter className="flex flex-col space-y-4">
-          <Button
-            type="submit"
-            className="w-full"
+          <div className={styles.divider}>or continue with email</div>
+        </>
+      )}
+      <form onSubmit={handleLogin} className={styles.fields}>
+        <div className={styles.field}>
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            name="email"
+            type="email"
+            autoComplete="username"
+            placeholder="you@example.com"
+            required
+            className="h-12 px-3.5 text-base md:text-sm"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             disabled={loginMutation.isPending}
-          >
-            {loginMutation.isPending ? "Signing in..." : "Sign in"}
-          </Button>
-          <div className="text-center text-sm text-gray-500">
-            Don&apos;t have an account?{" "}
-            <Link href="/auth/register" className="text-blue-600 hover:underline">
-              Sign up
-            </Link>
+          />
+        </div>
+        <div className={styles.field}>
+          <div className={styles.passwordLabel}>
+            <Label htmlFor="password">Password</Label>
+            <Link href="/auth/forgot-password" className={styles.link}>Forgot password?</Link>
           </div>
-        </CardFooter>
+          <div className={styles.passwordInput}>
+            <Input
+              id="password"
+              name="password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="current-password"
+              placeholder="Enter your password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={loginMutation.isPending}
+              className="h-12 pl-3.5 pr-12 text-base md:text-sm"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-0.5 top-1/2 size-11 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => setShowPassword((current) => !current)}
+              disabled={loginMutation.isPending}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? <AppIcon name="eye-off" fallback={EyeOff} className="h-4 w-4"  /> : <AppIcon name="eye" fallback={Eye} className="h-4 w-4"  />}
+            </Button>
+          </div>
+        </div>
+        <Button
+          type="submit"
+          className="mt-1 h-12 w-full text-sm font-semibold"
+          disabled={loginMutation.isPending}
+        >
+          {loginMutation.isPending ? "Signing in..." : "Sign in"}
+        </Button>
       </form>
-    </Card>
+      <div className={styles.signup}>
+        Don&apos;t have an account?{" "}
+        <Link href="/auth/register" className={styles.link}>
+          Sign up
+        </Link>
+      </div>
+    </AuthSplitLayout>
   );
 }

@@ -5,6 +5,7 @@
 #include "DeploymentCleanupService.h"
 #include "../utils/StringUtils.h"
 #include "DeploymentJournal.h"
+#include "ProjectExposure.h"
 
 #include "../controllers/LogWebSocketController.h"
 #include "../db/Database.h"
@@ -339,6 +340,10 @@ DeploymentCleanupResult DeploymentCleanupService::cleanupDeployment(
 
         result.runtimeProvider = runtimeProvider;
         result.imageName = imageName;
+        if ((options.deleteDatabaseRow || options.deleteRecordedRuntimes) &&
+            runtimeProvider == "local_docker" && runtimeSnapshotJson["public_exposure"].isObject()) {
+            projectExposure::release(deploymentId, userId);
+        }
         if ((options.deleteDatabaseRow || options.deleteRecordedRuntimes) &&
             runtimeSnapshotJson["runtime_verification"]["native"].get("preview_available",false).asBool()) {
             Json::Value request;request["deployment_id"]=deploymentId;

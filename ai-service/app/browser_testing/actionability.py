@@ -1,14 +1,17 @@
 """Live hit testing and native pointer recovery; never forces DOM state."""
 import asyncio
 from .overlays import OVERLAY_HELPERS
+from .checkables import CHECKABLE_HELPERS
 
 ACTIONABILITY = r"""(() => {
  __SP_OVERLAY_HELPERS__
+ __SP_CHECKABLE_HELPERS__
  const el = window.__spFast?.nodes.get(__ID__);
  if (!el || !el.isConnected) return {reason:'stale_element'};
- const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+ const checkable=spCheckableSurface(el), surface=checkable?.node || el;
+ const r = surface.getBoundingClientRect(), s = getComputedStyle(surface);
  const disabled = el.matches(':disabled') || el.getAttribute('aria-disabled') === 'true' || !!el.closest('[inert]');
- const visible = r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+ const visible = spNativeCheckable(el) ? !!checkable : r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
  const l = Math.max(0,r.left), t = Math.max(0,r.top), right = Math.min(innerWidth-1,r.right), bottom = Math.min(innerHeight-1,r.bottom);
  const inView = visible && right > l && bottom > t;
  const deepHit = (x,y) => {
@@ -24,7 +27,8 @@ ACTIONABILITY = r"""(() => {
  if (inView) {
    for (const [fx,fy] of [[.5,.5],[.25,.25],[.75,.25],[.25,.75],[.75,.75]]) {
      const x=Math.round(l+(right-l)*fx), y=Math.round(t+(bottom-t)*fy), hit=deepHit(x,y);
-     if (hit === el || el.contains(hit)) {point={x,y}; break;}
+     const nestedControl=checkable?.proxy && hit?.closest('a,button,input,select,textarea,[role="button"],[role="link"]');
+     if ((hit === surface || surface.contains(hit)) && (!nestedControl || nestedControl===el)) {point={x,y}; break;}
      if (!blocker && hit) blocker=hit;
    }
  }
@@ -33,13 +37,13 @@ ACTIONABILITY = r"""(() => {
  const invalid = form ? [...form.querySelectorAll('input,select,textarea')].filter(n=>!n.disabled && n.willValidate && !n.validity.valid)
    .slice(0,12).map(n=>({label:label(n),required:n.required,validation:n.validationMessage.slice(0,180)})) : [];
  const activeOverlay = window.__spOverlay.active();
- const outsideOverlay = activeOverlay && !activeOverlay.contains(el);
+ const outsideOverlay = activeOverlay && (!activeOverlay.contains(el) || !activeOverlay.contains(surface));
  const blockingDialog = outsideOverlay ? activeOverlay : blocker?.closest('[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open]');
  if (outsideOverlay) {point=null;blocker=blocker || activeOverlay;}
  const blockingNavigation = blocker?.closest('header,nav,[role="navigation"]');
  const targetNavigation = el.closest('header,nav,[role="navigation"]');
  return {x:point?.x,y:point?.y,text:(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0,120),
-   disabled,is_in_viewport:inView,is_occluded:inView && !point,
+   disabled,is_in_viewport:inView,is_occluded:inView && !point,checkable_label_proxy:!!checkable?.proxy,
    reason:disabled?'disabled':!visible?'hidden':!inView?'outside_viewport':!point?'occluded':'ready',
    invalid_fields:invalid,
    navigation_hover_blocker:!!blockingNavigation && !blockingNavigation.contains(el) && !blockingDialog,
@@ -48,7 +52,7 @@ ACTIONABILITY = r"""(() => {
    blocker:blocker?{tag:blocker.tagName.toLowerCase(),role:blocker.getAttribute('role') || '',
      label:label(blocker),dialog:Boolean(blockingDialog),
      text:(blockingDialog?.innerText || blocker.innerText || '').slice(0,300)}:null};
-})()""".replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS)
+})()""".replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS).replace('__SP_CHECKABLE_HELPERS__', CHECKABLE_HELPERS)
 
 
 async def inspect_actionability(session, element_id: int) -> dict:
@@ -58,19 +62,20 @@ async def inspect_actionability(session, element_id: int) -> dict:
             # Scrolling a child can also scroll its parent. Recompute the owner
             # bounds and hit-test in the main page to avoid clicking its overlay.
             try:
-                from .frames import frame_offset,frame_point_is_clear
-                session.frame_offset=await frame_offset(session,session._selected_frame)
-                ox,oy=session.frame_offset
-                if not await frame_point_is_clear(session,session._selected_frame,result['x']+ox,result['y']+oy):
+                from .frames import frame_transform,frame_point_is_clear
+                ox,oy,sx,sy=await frame_transform(session,session._selected_frame)
+                session.frame_offset=(ox,oy);session.frame_scale=(sx,sy)
+                if not await frame_point_is_clear(session,session._selected_frame,result['x']*sx+ox,result['y']*sy+oy):
                     return {**result,'reason':'occluded','is_occluded':True,'blocker':{'dialog':True,'text':'The frame is covered in its parent page.'}}
             except Exception:
                 return {**result,'reason':'frame_geometry_unavailable','is_occluded':True}
         x,y=getattr(session,'frame_offset',(0,0))
-        result['x']+=x
-        result['y']+=y
+        sx,sy=getattr(session,'frame_scale',(1,1))
+        result['x']=result['x']*sx+x
+        result['y']=result['y']*sy+y
         if result.get('neutral_pointer'):
-            result['neutral_pointer']['x']+=x
-            result['neutral_pointer']['y']+=y
+            result['neutral_pointer']['x']=result['neutral_pointer']['x']*sx+x
+            result['neutral_pointer']['y']=result['neutral_pointer']['y']*sy+y
     return result if isinstance(result, dict) else {"reason": "observation_unavailable"}
 
 

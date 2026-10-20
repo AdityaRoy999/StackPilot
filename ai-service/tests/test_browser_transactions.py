@@ -1,8 +1,46 @@
 import unittest
-from app.browser_testing.transactions import validate_batch, completion_evidence, continue_batch_after, SUPPORTED_BATCH_ACTIONS, compile_batch
+from app.browser_testing.transactions import validate_batch, completion_evidence, continue_batch_after, SUPPORTED_BATCH_ACTIONS, compile_batch, acknowledged_submission, normalize_batch_completion
 
 
 class TransactionTests(unittest.TestCase):
+    def test_boolean_final_assert_completion_marker_is_hoisted_without_mutating_plan(self):
+        arguments = {'session_id':'qa','actions':[{'action':'assert','purpose':'outcome','complete_task':True,
+                      'expectations':[{'kind':'title','expected':'Todo'}]}]}
+        normalized = normalize_batch_completion(arguments)
+        self.assertTrue(normalized['complete_task'])
+        self.assertNotIn('complete_task', normalized['actions'][-1])
+        self.assertIn('complete_task', arguments['actions'][-1])
+        self.assertIsNone(validate_batch(normalized['actions'], normalized['complete_task']))
+        explicit_false = normalize_batch_completion({**arguments,'complete_task':False})
+        self.assertFalse(explicit_false['complete_task'])
+        self.assertNotIn('complete_task', explicit_false['actions'][-1])
+
+    def test_nonfinal_and_malformed_completion_markers_are_rejected(self):
+        assertion = {'action':'assert','purpose':'outcome','expectations':[{'kind':'title','expected':'Todo'}]}
+        for arguments in ({'actions':[{**assertion,'complete_task':True},assertion]},
+                          {'actions':[{**assertion,'complete_task':'true'}]}):
+            normalized = normalize_batch_completion(arguments)
+            self.assertIsNotNone(validate_batch(normalized['actions'], normalized.get('complete_task', False)))
+
+    def test_acknowledged_submission_can_complete_only_after_terminal_outcome(self):
+        submitted = {'action':'click','status':'unverified','requires_outcome':True,
+                     'verification':{'verified':True,'effect_type':'dom_mutation'}}
+        outcome = {'action':'assert','status':'passed','purpose':'outcome','assertions':[{'status':'passed'}],
+                   'verification':{'verified':True,'effect_type':'assertion'}}
+        self.assertTrue(acknowledged_submission(submitted))
+        self.assertFalse(continue_batch_after(submitted))
+        self.assertTrue(completion_evidence([{},{}], [submitted,outcome], True))
+        for update in ({'requires_outcome':False}, {'status':'failed'}, {'error':'Timeout'},
+                       {'verification':{'verified':False,'effect_type':'dom_mutation'}},
+                       {'verification':{'verified':True,'effect_type':'no_effect'}},
+                       {'verification':{'verified':True,'effect_type':'focus'}},
+                       {'verification':{'verified':True,'effect_type':'unknown'}}):
+            self.assertFalse(completion_evidence([{},{}], [{**submitted,**update},outcome], True))
+        self.assertFalse(completion_evidence([{},{}], [submitted,{**outcome,'purpose':'checkpoint'}], True))
+        self.assertFalse(completion_evidence([{},{}], [submitted,{**outcome,'assertions':[{'status':'failed'}]}], True))
+        mutation = {'action':'type','status':'passed','verification':{'verified':True,'effect_type':'control_change'}}
+        self.assertFalse(completion_evidence([{},{},{}], [submitted,mutation,outcome], True))
+
     def test_compiler_preserves_expectations_and_removes_redundant_field_clicks(self):
         controls = [{'id': i, 'tag': 'input', 'type': 'text'} for i in range(4)]
         actions = [step for i in range(4) for step in (

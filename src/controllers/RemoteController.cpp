@@ -1,5 +1,6 @@
 #include "RemoteController.h"
 #include "../services/RemoteAccess.h"
+#include "../services/RemoteTunnelService.h"
 #include "../db/Database.h"
 #include "../utils/JwtHelper.h"
 #include "../utils/BlockingTaskRunner.h"
@@ -19,7 +20,6 @@ void reply(const Callback& cb,const Json::Value& body,drogon::HttpStatusCode sta
 }
 void error(const Callback& cb,const std::string& message,drogon::HttpStatusCode status=drogon::k400BadRequest){Json::Value body;body["error"]=message;reply(cb,body,status);}
 bool uuid(const std::string& id){return std::regex_match(id,std::regex("[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"));}
-std::string execute(const char* command){std::string out;FILE* pipe=popen(command,"r");if(!pipe)return out;char buffer[1024];while(fgets(buffer,sizeof(buffer),pipe)&&out.size()<16000)out+=buffer;pclose(pipe);return out;}
 Json::Value identity(const drogon::HttpRequestPtr& req){return JwtHelper::verifyRequestToken(req);}
 bool account(const Json::Value& user){return !user.get("user_id","").asString().empty() && !user.get("mcp",false).asBool();}
 Json::Value rowsJson(const pqxx::result& rows){Json::Value out(Json::arrayValue);for(const auto& row:rows){Json::Value item;for(const auto& field:row)item[field.name()]=field.is_null()?Json::Value():Json::Value(field.as<std::string>());out.append(item);}return out;}
@@ -30,20 +30,12 @@ void RemoteController::manage(const drogon::HttpRequestPtr& req,Callback&& cb){
             auto user=identity(req);if(!account(user)){error(cb,"Account sign-in required",drogon::k401Unauthorized);return;}
             const auto uid=user["user_id"].asString();auto body=req->getJsonObject();
             if(req->path()=="/api/v1/remote/access"){
+                std::string action;
                 if(req->method()==drogon::Post){
-                    auto action=body?body->get("action","").asString():"";
-                    if(action=="start")execute("docker start stackpilot-remote-tunnel 2>/dev/null");
-                    else if(action=="stop")execute("docker stop -t 3 stackpilot-remote-tunnel 2>/dev/null");
-                    else{error(cb,"Choose start or stop");return;}
+                    action=body?body->get("action","").asString():"";
+                    if(action!="start" && action!="stop" && action!="restart"){error(cb,"Choose start, stop or restart");return;}
                 }
-                const auto running=execute("docker inspect -f '{{.State.Running}}' stackpilot-remote-tunnel 2>/dev/null").rfind("true",0)==0;
-                auto started=execute("docker inspect -f '{{.State.StartedAt}}' stackpilot-remote-tunnel 2>/dev/null");
-                while(!started.empty()&&(started.back()=='\n'||started.back()=='\r'))started.pop_back();
-                const auto logs=running&&std::regex_match(started,std::regex("[0-9T:Z.-]{20,40}"))?execute(("docker logs --since "+started+" --tail 60 stackpilot-remote-tunnel 2>&1").c_str()):"";
-                std::smatch match;Json::Value result;result["running"]=running;result["url"]="";
-                if(logs.find("Registered tunnel connection")!=std::string::npos && std::regex_search(logs,match,std::regex("https://[a-z0-9-]+\\.trycloudflare\\.com")))result["url"]=match.str();
-                const char* configured=std::getenv("STACKPILOT_REMOTE_PUBLIC_URL");if(configured&&*configured)result["url"]=configured;
-                result["available"]=!execute("docker inspect -f '{{.Name}}' stackpilot-remote-tunnel 2>/dev/null").empty();reply(cb,result);return;
+                reply(cb,RemoteTunnelService::instance().access(action));return;
             }
             auto connection=Database::getInstance().getConnection();pqxx::work tx(*connection);
             if(req->path()=="/api/v1/remote/pairings"){

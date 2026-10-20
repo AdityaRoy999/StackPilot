@@ -2697,7 +2697,7 @@ export function CreateProjectDialog({ initiallyOpen = false, onDismiss }: { init
                       id="localSourcePath"
                       value={localSourcePath}
                       onChange={(e) => setLocalSourcePath(e.target.value)}
-                      placeholder="/app/local-projects/my-project"
+                      placeholder="Enter your project’s full folder path"
                       className="bg-muted/40"
                     />
                     <Button

@@ -10,6 +10,7 @@
 #include "db/Database.h"
 #include "utils/StringUtils.h"
 #include "services/JobQueueService.h"
+#include "services/ProjectExposure.h"
 #include "utils/BlockingTaskRunner.h"
 
 #include <algorithm>
@@ -646,11 +647,13 @@ int main() {
         });
     }
 
+    stackpilot::projectExposure::resumePending();
     spdlog::info("Server starting on http://0.0.0.0:8090");
     spdlog::info("Press Ctrl+C to stop");
 
     // This blocks — runs the event loop
     app.run();
+    stackpilot::projectExposure::stop();
 
     return 0;
 }

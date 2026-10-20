@@ -14,6 +14,16 @@ Choose a service profile and press **Install / start StackPilot**. The wizard re
 
 Once ready, open the dashboard, create an account, and sign in. The first-launch guide lets you save an encrypted AI provider connection, enter a model identifier, and **Test AI connection**. This sends one small real completion request to the selected provider and may incur its normal API charge. It does not execute agent tools. A catalog fallback is not treated as a successful connection. You can skip AI and configure it later using **Setup guide** in the sidebar.
 
+## Existing projects anywhere on your computer
+
+**Browse local** opens the drives and folders on the computer running StackPilot. Choose a drive, navigate to your existing project, or enter its full folder path (for example, `C:\Users\you\Projects\my-app`). You do not have to move projects into `local-projects`. When connecting from a phone or another computer, this picker still browses the StackPilot host.
+
+The local launcher and `stackpilot up` generate `.stackpilot-local-folders.compose.json` with read-only mounts for available Windows fixed/removable drives, or the host filesystem on macOS/Linux. Newly connected drives are detected on the next `stackpilot up`. Docker Desktop must allow access to the selected drive. Normal operating-system permissions still apply. Builds copy the chosen project into an isolated workspace; the source folder is not modified by building. Only the backend receives the drive mounts; AI workers receive the selected project copy.
+
+Production HTTPS installations keep their explicitly configured source roots. For a restricted local installation, set `STACKPILOT_LOCAL_FILESYSTEM=false` in `.env` and run `stackpilot up`; existing `LOCAL_SOURCE_ROOTS` and `STACKPILOT_LOCAL_PROJECTS_DIR` still work. Restarting containers alone does not add or remove mounts.
+
+If starting Compose manually, first generate the local configuration with `stackpilot up`, then retain it in subsequent commands: `docker compose -f docker-compose.yml -f .stackpilot-local-folders.compose.json up -d`. The generated file contains host paths, no credentials, and is excluded from Git and image build contexts.
+
 ## Reopen setup and update
 
 Run the downloaded launcher again, or run `stackpilot setup` from an installed checkout. `stackpilot setup --no-browser` prints its loopback link for opening manually. Windows checkouts can also use `./stackpilot.ps1 setup`; Linux/macOS can use `.stackpilot-venv/bin/stackpilot setup`.

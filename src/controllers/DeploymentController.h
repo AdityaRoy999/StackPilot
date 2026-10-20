@@ -34,7 +34,7 @@ public:
     ADD_METHOD_TO(DeploymentController::checkDrift, "/api/v1/deployments/{deployment_id}/drift", drogon::Get);
     ADD_METHOD_TO(DeploymentController::getRootCauseAnalysis, "/api/v1/deployments/{deployment_id}/rca", drogon::Get);
     ADD_METHOD_TO(DeploymentController::rollbackDeployment, "/api/v1/deployments/{deployment_id}/rollback", drogon::Post);
-    ADD_METHOD_TO(DeploymentController::updateDeploymentExposure, "/api/v1/deployments/{deployment_id}/exposure", drogon::Post, drogon::Put);
+    ADD_METHOD_TO(DeploymentController::updateDeploymentExposure, "/api/v1/deployments/{deployment_id}/exposure", drogon::Get, drogon::Post, drogon::Put);
     ADD_METHOD_TO(DeploymentController::getCostReport, "/api/v1/cost", drogon::Get, drogon::Options);
     METHOD_LIST_END
 

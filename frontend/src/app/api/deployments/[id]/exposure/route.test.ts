@@ -22,6 +22,8 @@ describe("deployment exposure proxy", () => {
     expect(response.status).toBe(401);
     expect(upstream).toHaveBeenCalledOnce();
     const options = upstream.mock.calls[0][1] as RequestInit;
-    expect(options.headers).toMatchObject({ Origin: "http://localhost:3000", "X-stackpilot-CSRF": "1" });
+    const headers = new Headers(options.headers);
+    expect(headers.get("Origin")).toBe("http://localhost:3000");
+    expect(headers.get("X-stackpilot-CSRF")).toBe("1");
   });
 });

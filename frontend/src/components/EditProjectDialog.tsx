@@ -739,7 +739,7 @@ const segmentedButtonActiveClass =
                     id="edit-sourcePath"
                     value={sourcePath}
                     onChange={(e) => setSourcePath(e.target.value)}
-                    placeholder={sourceType === "local" ? "/app/local-projects/my-project" : "/home/user/apps/my-project"}
+                    placeholder={sourceType === "local" ? "Enter your project’s full folder path" : "/home/user/apps/my-project"}
                     className="bg-muted/40"
                   />
                   <Button

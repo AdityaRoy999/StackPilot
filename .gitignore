@@ -120,6 +120,7 @@ native-browser/.venv/
 .stackpilot-install.json
 .stackpilot-backups/
 .stackpilot-update.lock
+.stackpilot-local-folders.compose.json
 /stackpilot web/public/stackpilot-setup-*.zip
 /stackpilot web/public/stackpilot-setup-checksums.txt
 /me_after_logout.json

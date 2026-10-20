@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">StackPilot</title>
+  <desc id="description">Your code. Your infrastructure. One workspace. A self-hosted agentic AI deployment platform for building, deploying and verifying applications.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1200" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b1210"/>
+      <stop offset="0.65" stop-color="#101a16"/>
+      <stop offset="1" stop-color="#13271e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="900" y1="75" x2="1100" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d2ffe5"/>
+      <stop offset="1" stop-color="#73cda6"/>
+    </linearGradient>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#b9f5d5" fill-opacity="0.09"/>
+    </pattern>
+  </defs>
+  <rect x="1" y="1" width="1198" height="338" rx="22" fill="url(#background)" stroke="#2b4035"/>
+  <rect x="1" y="1" width="1198" height="338" rx="22" fill="url(#grid)"/>
+  <path d="M62 62h30M62 62v14M1138 62h-30M1138 62v14M62 278h30M62 278v-14M1138 278h-30M1138 278v-14" stroke="#88bba0" stroke-opacity="0.55" stroke-width="2"/>
+  <text x="88" y="104" fill="#9bb5a5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" letter-spacing="3">YOUR APPLICATION DELIVERY WORKSPACE</text>
+  <text x="84" y="183" fill="#f0faf4" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="75" font-weight="700" letter-spacing="-4">StackPilot</text>
+  <text x="88" y="222" fill="#b6c8bd" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="20">Your code. Your infrastructure. One workspace.</text>
+  <text x="88" y="266" fill="#b9f5d5" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="12" letter-spacing="1.5">BUILD  /  DEPLOY  /  VERIFY</text>
+  <g transform="translate(904 77)" stroke="url(#accent)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m0 60 86-48 86 48-86 48L0 60Z" fill="#b9f5d5" fill-opacity="0.07"/>
+    <path d="m0 96 86 48 86-48"/>
+    <path d="m0 132 86 48 86-48"/>
+  </g>
+  <circle cx="990" cy="287" r="4" fill="#b9f5d5"/>
+  <path d="M990 267v-10" stroke="#b9f5d5" stroke-opacity="0.4" stroke-dasharray="2 3"/>
+</svg>

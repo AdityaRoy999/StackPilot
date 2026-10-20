@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from "sonner";
 
 interface Device { id: string; name: string; status: string; confirmation_code: string; last_seen_at: string | null; expires_at: string; created_at?: string; location_label?: string; timezone?: string; user_agent?: string; request_count?: string; }
-interface Access { available: boolean; running: boolean; url: string; }
+interface Access { available: boolean; running: boolean; url: string; ready?: boolean; state?: string; error?: string; }
 interface Run { id: string; device_id?: string; session_id: string; title: string; state: string; created_at?: string; }
 
 function deviceDescription(agent = "") {
@@ -36,6 +36,7 @@ export default function RemotePage() {
   const [pairing, setPairing] = useState<{ secret: string; expires_at: string; origin: string } | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [accessError, setAccessError] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const [connectOpen, setConnectOpen] = useState(false);
   const [historyDevice, setHistoryDevice] = useState("");
@@ -68,13 +69,11 @@ export default function RemotePage() {
     const refresh = async () => {
       if (disposed || inFlight || document.hidden) return;
       inFlight = true;
-      const accessRevision = accessRevisionRef.current;
       setNow(Date.now());
       try {
-        const [d, a, r] = await Promise.all([api.get("/remote/devices", { signal: controller.signal }), api.get("/remote/access", { signal: controller.signal }), api.get("/remote/runs", { signal: controller.signal })]);
+        const [d, r] = await Promise.all([api.get("/remote/devices", { signal: controller.signal }), api.get("/remote/runs", { signal: controller.signal })]);
         if (disposed) return;
         setDevices(d.data.devices || []); setRuns(r.data.runs || []); setError("");
-        if (accessRevision === accessRevisionRef.current) applyAccess(a.data);
       } catch { if (!disposed) setError("Could not reach the host. Check the backend connection."); }
       finally {
         inFlight = false;
@@ -85,18 +84,49 @@ export default function RemotePage() {
     void refresh();
     document.addEventListener("visibilitychange", visibility);
     return () => { disposed = true; controller.abort(); clearTimeout(timer); document.removeEventListener("visibilitychange", visibility); };
-  }, [liveRemote, applyAccess]);
+  }, [liveRemote]);
+
+  // Tunnel readiness must not wait for device/history queries or the idle
+  // 30-second refresh. Poll promptly during startup, then back off once ready.
+  const accessBusy = busy === "access";
+  useEffect(() => {
+    if (accessBusy) return;
+    let disposed = false, inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
+    const refresh = async () => {
+      if (disposed || inFlight || document.hidden) return;
+      inFlight = true;
+      const revision = accessRevisionRef.current;
+      let delay = connectOpen ? 3000 : 30000;
+      try {
+        const response = await api.get<Access>("/remote/access", { signal: controller.signal, timeout: 10000 });
+        if (disposed || revision !== accessRevisionRef.current) return;
+        applyAccess(response.data);
+        setAccessError(response.data.error || "");
+        if (response.data.running && !(response.data.ready ?? !!response.data.url)) delay = 500;
+      } catch {
+        if (!disposed && revision === accessRevisionRef.current) setAccessError("Could not check the remote link. Check Docker and your internet connection.");
+        delay = 3000;
+      } finally {
+        inFlight = false;
+        if (!disposed && !document.hidden) timer = setTimeout(() => void refresh(), delay);
+      }
+    };
+    const visibility = () => { clearTimeout(timer); if (!document.hidden) void refresh(); };
+    void refresh();
+    document.addEventListener("visibilitychange", visibility);
+    return () => { disposed = true; controller.abort(); clearTimeout(timer); document.removeEventListener("visibilitychange", visibility); };
+  }, [accessBusy, connectOpen, applyAccess]);
 
   async function changeAccess(action: "start" | "stop" | "restart") {
     setBusy("access");
     accessRevisionRef.current++;
     setPairing(null);
+    setAccessError("");
     try {
-      if (action === "restart") {
-        const stopped = await api.post("/remote/access", { action: "stop" });
-        applyAccess(stopped.data);
-      }
-      const res = await api.post("/remote/access", { action: action === "restart" ? "start" : action }); applyAccess(res.data);
+      const res = await api.post<Access>("/remote/access", { action }); applyAccess(res.data);
+      if (res.data.error) setAccessError(res.data.error);
     } catch { toast.error("Could not change remote access."); }
     finally { accessRevisionRef.current++; setBusy(""); }
   }
@@ -122,6 +152,9 @@ export default function RemotePage() {
     finally { setBusy(""); }
   }
   const validPairing = pairing && new Date(pairing.expires_at).getTime() > now;
+  const managedReady = access.ready ?? !!access.url;
+  const customAddress = !!baseUrl && baseUrl.replace(/\/$/, "") !== access.url.replace(/\/$/, "");
+  const canPair = !!baseUrl && (customAddress || managedReady) && !accessError;
   const pairingUrl = validPairing ? `${pairing.origin}/remote#pair=${pairing.secret}` : "";
   const pending = devices.filter(d => d.status === "pending");
   const deviceStatus = (device: Device) => device.status === "approved" && new Date(device.expires_at).getTime() <= now ? "expired" : device.status;
@@ -164,14 +197,15 @@ export default function RemotePage() {
         <div className="min-h-0 flex-1 overflow-y-auto">      <section className="min-w-0 space-y-4 p-5 sm:p-6">
 
         <p className="text-sm leading-relaxed text-muted-foreground">Keep this computer awake and StackPilot running. Open a secure link on your phone, then confirm its code here.</p>
-        <div className="flex flex-wrap items-center gap-3"><span className={`size-2 rounded-full ${access.running || access.url ? "bg-emerald-500" : "bg-muted-foreground"}`} /><span className="text-sm">{access.running ? access.url ? "Remote link ready" : "Creating secure link…" : access.url ? "Custom endpoint configured" : "Remote link is off"}</span>
+        <div className="flex flex-wrap items-center gap-3"><span className={`size-2 rounded-full ${managedReady ? "bg-emerald-500" : access.running ? "animate-pulse bg-amber-500 motion-reduce:animate-none" : "bg-muted-foreground"}`} /><span role="status" className="text-sm">{access.running ? managedReady ? "Remote link ready" : access.state === "reconnecting" ? "Reconnecting secure link…" : "Creating secure link…" : access.url ? "Custom endpoint configured" : "Remote link is off"}</span>
           {access.available && <Button size="sm" variant="outline" disabled={busy === "access"} onClick={() => void changeAccess(access.running ? "stop" : "start")}>{busy === "access" && <Loader2 className="size-4 animate-spin" />}{access.running ? "Turn off" : "Enable remote link"}</Button>}
           {access.available && access.running && <Button size="sm" variant="outline" disabled={busy === "access"} onClick={() => void changeAccess("restart")}>Reconnect link</Button>}
         </div>
+        {accessError && <p role="alert" className="text-sm text-destructive">{accessError}</p>}
         <DisclosureSection title="Connection address" description={baseUrl ? "Secure endpoint configured · expand to edit" : "Set a custom HTTPS gateway if needed"}>
         <div className="min-w-0 space-y-2"><label htmlFor="remote-origin" className="text-sm font-medium">Secure host address</label><Input id="remote-origin" className="w-full min-w-0" value={baseUrl} onChange={e => editAddress(e.target.value)} placeholder="https://your-host.example.com" /><p className="text-xs leading-relaxed text-muted-foreground">Use the generated link or your own HTTPS gateway.</p></div>
         </DisclosureSection>
-        <Button className="w-full sm:w-auto" disabled={!baseUrl || !!busy || !!error} onClick={() => void pair()}><Smartphone className="size-4" />Pair a phone</Button>
+        <Button className="w-full sm:w-auto" disabled={!canPair || !!busy || !!error} onClick={() => void pair()}><Smartphone className="size-4" />Pair a phone</Button>
         {pairingUrl && <div className="min-w-0 space-y-3 rounded-xl border p-3 sm:p-4"><div className="mx-auto w-full max-w-56 rounded-xl bg-white p-3"><QRCode value={pairingUrl} size={192} style={{ width: "100%", height: "auto" }} /></div><p className="text-center text-sm text-muted-foreground">Scan with your phone’s camera. Expires in {Math.max(1, Math.ceil((new Date(pairing!.expires_at).getTime() - now) / 60000))} minutes.</p><Button className="w-full whitespace-normal" variant="outline" onClick={() => void navigator.clipboard.writeText(pairingUrl).then(() => toast.success("Pairing link copied")).catch(() => toast.error("Clipboard unavailable"))}><Copy className="size-4 shrink-0" />Copy private pairing link</Button></div>}
         {pairing && !validPairing && <p className="text-sm text-muted-foreground">This link expired. Create another link to pair.</p>}
         {!access.available && <p className="text-sm text-muted-foreground">The managed tunnel is not installed on this host. Start the Remote Docker profile, or enter your own HTTPS gateway address.</p>}

@@ -46,7 +46,7 @@ Use this when the source already exists on a saved server.
 
 ## Host-Mounted Local Source
 
-Local source projects must live under the allowed local source root mounted into the backend container. This prevents arbitrary laptop paths from being read by the backend.
+For local installations, **Browse local** can select existing projects across the StackPilot host's drives. The launcher mounts available host roots read-only into the backend; builds work on an isolated copy of the selected project. Docker Desktop sharing and normal filesystem permissions still apply. Remote browsers browse the StackPilot host, not the connecting device. Production installations keep explicitly configured source roots. See [local folder access](guided-setup.md#existing-projects-anywhere-on-your-computer) for configuration and restricted-mode options.
 
 ## MCP Source Artifact
 

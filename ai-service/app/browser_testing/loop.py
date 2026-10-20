@@ -10,12 +10,12 @@ def browser_call_signature(name, arguments, session):
     if name in READ_TOOLS:
         return None
     controls = [{k: el.get(k) for k in ('id','text','value','checked','disabled','expanded','selected','pressed',
-                 'invalid','required','readonly','overlay_id','is_inside_modal','is_in_viewport','is_occluded','box')}
+                 'invalid','required','readonly','overlay_id','is_inside_modal','is_in_viewport','is_occluded')}
                 for el in getattr(session, 'interactive_elements', [])]
     dialog = getattr(session, 'native_dialog', None) or {}
     state = [getattr(session, 'target_id', None), getattr(session, '_selected_frame', None),
              getattr(session, '_navigation_generation', None), getattr(session, 'current_url', ''),
-             getattr(session, 'page_title', ''), getattr(session, 'scroll_y', 0),
+             getattr(session, 'page_title', ''), getattr(session, 'scroll_y', 0), getattr(session, '_observed_visual_state', None),
              {k:dialog.get(k) for k in ('id','dialog_id','type')}, controls]
     return signature + ':' + hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()[:16]
 

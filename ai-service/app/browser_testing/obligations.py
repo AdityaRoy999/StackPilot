@@ -48,6 +48,7 @@ def refresh_obligations(goal,coverage):
     previous={o['id']:o for o in coverage.get('workflow_obligations',[]) if o.get('goal_hash')==digest}
     result=[]
     for review in coverage.get('controls_requiring_review',[]):
+        if review.get('ui_mechanics_verified'):continue
         label=str(review.get('label') or '')
         critical=bool(CRITICAL.search(label) or review.get('form') is not False and review.get('type') in {'submit','image'})
         semantic={k:review.get(k) or '' for k in ('url','tag','role','type','name','input_id','href','form_action','form_method','card_context')}

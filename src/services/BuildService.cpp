@@ -1,3 +1,4 @@
+#include "../utils/LocalSourcePaths.h"
 // ============================================================
 // BuildService.cpp — Repository clone + Docker image build
 // ============================================================
@@ -701,25 +702,7 @@ void appendLogLine(const std::filesystem::path& logFile,
     if (onLogLine) onLogLine(line);
 }
 
-std::vector<std::filesystem::path> configuredLocalSourceRoots() {
-    std::vector<std::filesystem::path> roots;
-    const char* env = std::getenv("LOCAL_SOURCE_ROOTS");
-    const std::string raw = (env && *env) ? env : "/app/local-projects";
 
-    std::stringstream stream(raw);
-    std::string item;
-    while (std::getline(stream, item, ';')) {
-        if (item.empty()) {
-            continue;
-        }
-        roots.emplace_back(item);
-    }
-
-    if (roots.empty()) {
-        roots.emplace_back("/app/local-projects");
-    }
-    return roots;
-}
 
 bool isExcludedLocalSourceName(const std::string& name) {
     static const std::vector<std::string> excluded = {
@@ -1154,7 +1137,8 @@ BuildResult BuildService::buildFromLocalSource(const std::string& deploymentId,
     BuildResult result;
 
     std::string validationReason;
-    if (!isAllowedLocalSourcePath(localPath, validationReason)) {
+    std::filesystem::path resolvedSource;
+    if (!stackpilot::LocalSourcePaths::resolve(localPath, resolvedSource, validationReason)) {
         result.error = validationReason;
         result.logs = validationReason;
         if (onLogLine) onLogLine(validationReason);
@@ -1184,7 +1168,7 @@ BuildResult BuildService::buildFromLocalSource(const std::string& deploymentId,
     }
 
     std::string copyReason;
-    if (!copyLocalSourceTree(localPath, sourceDir, copyReason)) {
+    if (!copyLocalSourceTree(resolvedSource, sourceDir, copyReason)) {
         result.error = copyReason;
         appendLogLine(logFile, copyReason, onLogLine);
         result.logs = readFileBounded(logFile);
@@ -2063,43 +2047,8 @@ std::string BuildService::readFileBounded(const std::filesystem::path& filePath,
 }
 
 bool BuildService::isAllowedLocalSourcePath(const std::filesystem::path& localPath, std::string& reason) const {
-    namespace fs = std::filesystem;
-    if (localPath.empty() || !localPath.is_absolute()) {
-        reason = "Local source path must be an absolute path mounted into the backend container";
-        return false;
-    }
-
-    std::error_code ec;
-    const fs::path canonicalSource = fs::weakly_canonical(localPath, ec);
-    if (ec || !fs::exists(canonicalSource, ec) || !fs::is_directory(canonicalSource, ec)) {
-        reason = "Local source path does not exist or is not a directory";
-        return false;
-    }
-
-    for (const auto& root : configuredLocalSourceRoots()) {
-        std::error_code rootEc;
-        const fs::path canonicalRoot = fs::weakly_canonical(root, rootEc);
-        if (rootEc || !fs::exists(canonicalRoot, rootEc) || !fs::is_directory(canonicalRoot, rootEc)) {
-            continue;
-        }
-
-        auto sourceIt = canonicalSource.begin();
-        auto rootIt = canonicalRoot.begin();
-        bool matchesRoot = true;
-        for (; rootIt != canonicalRoot.end(); ++rootIt, ++sourceIt) {
-            if (sourceIt == canonicalSource.end() || *sourceIt != *rootIt) {
-                matchesRoot = false;
-                break;
-            }
-        }
-
-        if (matchesRoot) {
-            return true;
-        }
-    }
-
-    reason = "Local source path is outside the configured allowed roots";
-    return false;
+    std::filesystem::path resolved;
+    return stackpilot::LocalSourcePaths::resolve(localPath.string(), resolved, reason);
 }
 
 bool BuildService::copyLocalSourceTree(const std::filesystem::path& source,

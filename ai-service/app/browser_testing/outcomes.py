@@ -23,6 +23,7 @@ class BrowserOutcomeGuard:
     def __init__(self, goal: str, broad: bool = False):
         self.goal, self.broad = goal, broad
         self.controls = {}
+        self.readonly_text = {}
         self.page = None
         self.reasons = []
         # Explicit observation requests may legitimately check unchanged state.
@@ -37,6 +38,7 @@ class BrowserOutcomeGuard:
                 continue
             # Store label/visibility metadata only, never entered field values.
             before = {key: control.get(key) for key in ('text', 'aria_label', 'label', 'is_in_viewport')}
+            before['url'] = url
             keys = []
             if control.get('id') is not None:
                 keys.append(('id', str(control['id'])))
@@ -47,6 +49,16 @@ class BrowserOutcomeGuard:
             for key in keys:
                 if len(self.controls) < 800:
                     self.controls.setdefault(key, before)
+
+    def observe_readonly(self, evidence, url=''):
+        for item in evidence or ():
+            if (isinstance(item, dict) and type(item.get('id')) is int
+                    and item.get('read_only') is True and item.get('supported_actions') == ['assert']
+                    and item.get('role') == 'text'
+                    and item.get('tag') not in {'a','button','input','select','textarea'}):
+                self.readonly_text[str(item['id'])] = url
+        while len(self.readonly_text) > 800:
+            self.readonly_text.pop(next(iter(self.readonly_text)))
 
     def checkpoint_reason(self, spec):
         kind = spec.get('kind')
@@ -63,8 +75,20 @@ class BrowserOutcomeGuard:
         key = (('id', str(spec['element_id'])) if spec.get('element_id') is not None
                else ('selector', spec.get('selector')))
         before = self.controls.get(key)
+        if (kind == 'text' and spec.get('element_id') is not None and self.page
+                and self.readonly_text.get(str(spec['element_id']))
+                and self.readonly_text[str(spec['element_id'])] != self.page.get('url')):
+            # A destination heading/paragraph can share words with its old
+            # navigation link. Its observed read-only identity is not that
+            # unchanged launcher. Direct controls and unknown CSS aliases still
+            # receive the ordinary checkpoint guard below.
+            return ''
         if kind in {'text', 'accessible_name'}:
-            candidates = [before] if before else list(self.controls.values())
+            # Search results and destination links are observed after leaving
+            # the starting page. Their captions must not retroactively become
+            # unchanged baseline markers for the whole article/document.
+            candidates = [before] if before else [control for control in self.controls.values()
+                if not self.page or control.get('url') == self.page.get('url')]
             # Whole-page text containing a known button caption has the same flaw.
             # Unknown CSS aliases still cannot turn a known unchanged caption
             # into navigation/transaction proof. Assert the destination state.
@@ -132,3 +156,20 @@ def outcome_guard_for(session):
         guard.observe(getattr(session, 'interactive_elements', ()),
                       getattr(session, 'current_url', ''), getattr(session, 'page_title', ''))
     return guard
+
+
+def terminal_assertion(arguments, result, *, broad=False):
+    """An explicit final assertion may finish a targeted workflow, not an audit.
+
+    This is the same completion declaration as a terminal batch. A matching
+    checkpoint, partial/mixed failure or unknown dispatch can never opt in.
+    """
+    if (broad or not isinstance(arguments, dict) or not isinstance(result, dict)
+            or arguments.get('complete_task') is not True
+            or arguments.get('purpose') != 'outcome'
+            or result.get('purpose') != 'outcome' or result.get('status') != 'passed'
+            or (result.get('verification') or {}).get('verified') is not True):
+        return False
+    checks = result.get('assertions')
+    return bool(checks and all(isinstance(check, dict) and check.get('status') == 'passed' for check in checks)
+                and any(check.get('evidence_role') == 'outcome' for check in checks))

@@ -50,6 +50,88 @@ class DecisionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('private', json.dumps(bodies))
         self.assertNotIn('password', json.dumps(bodies))
 
+    async def test_indistinguishable_controls_abstain_before_network(self):
+        client = SimpleNamespace(post=AsyncMock())
+        self.session.interactive_elements[:2] = [
+            {'id': 29, 'tag': 'button', 'text': ' Details ', 'is_in_viewport': True},
+            {'id': 30, 'tag': 'button', 'text': 'details', 'is_in_viewport': True}]
+        decider = SystemOneDecider()
+        self.assertIsNone(await decider.choose(client, self.session, 'Open the desired Details',
+            targeted=True, mode='fast'))
+        client.post.assert_not_awaited()
+        self.assertEqual(decider.last_reason, 'indistinguishable_controls')
+        self.assertFalse(decider.disabled)
+        self.assertFalse(decider.diagnostics['attempted'])
+        self.assertEqual(decider.diagnostics['request_ms'], 0)
+
+    async def test_observed_context_can_disambiguate_repeated_controls(self):
+        for key in ('card_context', 'form_id', 'heading'):
+            with self.subTest(key=key):
+                self.session.interactive_elements[:2] = [
+                    {'id': 29, 'tag': 'button', 'text': 'Details', key: 'Billing', 'is_in_viewport': True},
+                    {'id': 30, 'tag': 'button', 'text': 'Details', key: 'Shipping', 'is_in_viewport': True}]
+                bodies = []
+                def handler(request):
+                    bodies.append(json.loads(request.content))
+                    return httpx.Response(200, json=self.data)
+                result = await self.choose(handler, goal='Open Billing Details')
+                self.assertEqual(result['element_id'], 29)
+                self.assertEqual(bodies[0]['state']['controls']['1'][key], 'Billing')
+                self.assertEqual(bodies[0]['state']['controls']['2'][key], 'Shipping')
+
+    async def test_only_bounded_redacted_scalar_context_is_sent(self):
+        first = self.session.interactive_elements[0]
+        first.update(card_context='user@example.test token=private-card ' + 'c' * 1000,
+            form_id='billing api_key=private-form ' + 'f' * 1000,
+            heading='Owner +91 99999 12345 secret=private-heading ' + 'h' * 1000,
+            value='private-value', form={'value': 'private-nested-value'})
+        second = self.session.interactive_elements[1]
+        second.update(card_context={'value': 'private-object-value'}, heading=['private-list-value'])
+        bodies = []
+        def handler(request):
+            bodies.append(json.loads(request.content))
+            return httpx.Response(200, json=self.data)
+        self.assertIsNotNone(await self.choose(handler))
+        encoded = json.dumps(bodies)
+        self.assertNotIn('private-', encoded)
+        self.assertNotIn('user@example.test', encoded)
+        self.assertNotIn('99999', encoded)
+        current = bodies[0]['state']['controls']['1']
+        self.assertLessEqual(len(current['card_context']), 160)
+        self.assertLessEqual(len(current['form_id']), 128)
+        self.assertLessEqual(len(current['heading']), 160)
+        self.assertNotIn('card_context', bodies[0]['state']['controls']['2'])
+        self.assertNotIn('heading', bodies[0]['state']['controls']['2'])
+
+    async def test_context_redaction_or_truncation_cannot_create_hidden_ambiguity(self):
+        for contexts in [('Owner first@example.test', 'Owner second@example.test'),
+                         ('c' * 160 + ' first', 'c' * 160 + ' second')]:
+            self.session.interactive_elements[:2] = [
+                {'id': 29, 'tag': 'button', 'text': 'Details', 'card_context': contexts[0], 'is_in_viewport': True},
+                {'id': 30, 'tag': 'button', 'text': 'Details', 'card_context': contexts[1], 'is_in_viewport': True}]
+            client = SimpleNamespace(post=AsyncMock())
+            decider = SystemOneDecider()
+            self.assertIsNone(await decider.choose(client, self.session, 'Open Details',
+                targeted=True, mode='fast'))
+            client.post.assert_not_awaited()
+            self.assertEqual(decider.last_reason, 'indistinguishable_controls')
+
+    async def test_latency_diagnostics_include_declined_and_failed_requests(self):
+        for response in (httpx.Response(503), httpx.Response(200, json={'answers': {
+                'operation': answer('REASON', {'REASON': .99, 'CLICK': .01})}})):
+            decider = SystemOneDecider()
+            self.assertIsNone(await self.choose(lambda request: response, decider))
+            diagnostic = decider.diagnostics
+            self.assertTrue(diagnostic['attempted'])
+            self.assertGreaterEqual(diagnostic['request_ms'], 0)
+            self.assertGreaterEqual(diagnostic['elapsed_ms'], diagnostic['request_ms'])
+            self.assertIn(diagnostic['reason'], {'planner_required', 'unavailable_or_invalid'})
+            self.assertNotIn('url', diagnostic)
+        # A cooldown does not retain the preceding HTTP duration as a new cost.
+        self.assertIsNone(await self.choose(decider=decider))
+        self.assertFalse(decider.diagnostics['attempted'])
+        self.assertEqual(decider.diagnostics['request_ms'], 0)
+
     async def test_ambiguous_response_or_decline_returns_to_planner(self):
         for choice, scores in [('REASON', {'REASON': .99, 'CLICK': .01}),
                                ('CLICK', {'CLICK': .8, 'REASON': .2})]:

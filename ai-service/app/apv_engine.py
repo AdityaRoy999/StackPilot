@@ -66,15 +66,18 @@ class ActionPerceptionVerification:
     async def capture_snapshot(cls, session: Any) -> PerceptionSnapshot:
         """Captures a lightweight perceptual snapshot of the active page state."""
         from .browser_testing.overlays import OVERLAY_HELPERS
+        from .browser_testing.checkables import CHECKABLE_HELPERS
         url = (session.current_url or "").rstrip("/")
         title = getattr(session, "page_title", "")
         scroll_y = getattr(session, "scroll_y", 0)
 
         js_probe = """(() => {
             __SP_OVERLAY_HELPERS__
+            __SP_CHECKABLE_HELPERS__
             const isVisible = (e) => {
                 if (!e || !e.isConnected) return false;
                 if (e.closest && e.closest('[aria-hidden="true"],[inert]')) return false;
+                if (spNativeCheckable(e)) return !!spCheckableSurface(e);
                 if (typeof e.checkVisibility === 'function') {
                     return e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
                 }
@@ -119,7 +122,7 @@ class ActionPerceptionVerification:
                         e.getAttribute('aria-selected'), e.getAttribute('aria-expanded'), e.getAttribute('aria-checked'),
                         e.getAttribute('aria-pressed')])
             };
-        })()""".replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS)
+        })()""".replace('__SP_OVERLAY_HELPERS__', OVERLAY_HELPERS).replace('__SP_CHECKABLE_HELPERS__', CHECKABLE_HELPERS)
 
         res = {}
         try:
@@ -162,7 +165,7 @@ class ActionPerceptionVerification:
         key_text = val.get("keyText", "")
         dom_hash = hashlib.md5(f"{len(session.interactive_elements)}:{key_text}".encode()).hexdigest()[:12]
 
-        return PerceptionSnapshot(
+        snapshot = PerceptionSnapshot(
             url=url,
             title=title,
             scroll_x=cur_scroll_x,
@@ -177,6 +180,11 @@ class ActionPerceptionVerification:
             captured=captured,
             timestamp=time.time()
         )
+        if captured:
+            # Reuse this existing post-action read for loop detection. A theme
+            # round-trip changes visual state even when every control is identical.
+            session._observed_visual_state = snapshot.visual_state
+        return snapshot
 
     @classmethod
     async def dispatch_two_tier_click(

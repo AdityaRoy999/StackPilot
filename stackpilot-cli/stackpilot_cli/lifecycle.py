@@ -60,9 +60,13 @@ def prerequisites():
 
 
 def compose(root, profile="core"):
+    from .local_sources import local_sources_override
     if profile not in PROFILES:
         raise ValueError("Choose a supported service profile.")
     command = ["docker", "compose", "-f", str(root / "docker-compose.yml")]
+    local_folders = local_sources_override(root)
+    if local_folders:
+        command += ["-f", str(local_folders)]
     for item in PROFILES[profile]:
         command += ["--profile", item]
     return command
@@ -124,7 +128,7 @@ def update_status(root, fetch=True):
     # These files belong to setup, including when updating an older checkout
     # whose .gitignore predates this wizard. Tracked changes are never excluded.
     unmanaged = [name for name in untracked if name and name not in {
-        ".stackpilot-install.json", ".stackpilot-update.lock"} and not name.startswith(".stackpilot-backups/")]
+        ".stackpilot-install.json", ".stackpilot-update.lock", ".stackpilot-local-folders.compose.json"} and not name.startswith(".stackpilot-backups/")]
     if tracked_changes or unmanaged:
         raise RuntimeError("Local changes detected. Commit or move them before updating; nothing has been overwritten.")
     if fetch:

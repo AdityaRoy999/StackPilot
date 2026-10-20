@@ -65,7 +65,7 @@ export default function RemotePhonePage() {
     finally { pairing.current = false; setBusy(false); }
   }
 
-  return <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-8 text-foreground">
+  return <main data-stackpilot-remote-entry className="flex min-h-dvh items-center justify-center bg-background px-4 py-8 text-foreground">
     <section className="w-full max-w-md space-y-6 rounded-3xl border bg-card p-6 sm:p-8">
       <div className="flex items-center gap-3"><span className="rounded-2xl bg-primary/10 p-3 text-primary"><Smartphone className="size-7" /></span><div><h1 className="text-2xl font-semibold">StackPilot on your phone</h1><p className="mt-1 text-sm text-muted-foreground">Your entire platform, wherever you are.</p></div></div>
       {error && <p role="alert" className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}

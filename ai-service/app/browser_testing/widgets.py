@@ -115,7 +115,7 @@ async def focus_target(session, element_id):
 
 
 async def choose_option(session, args):
-    """A whole autocomplete transaction ends before another field steals focus."""
+    """Commit a native select or a whole scoped autocomplete transaction."""
     ref, wanted = args.get('element_id'), args.get('option_text')
     if type(ref) is not int or not isinstance(wanted,str) or not wanted.strip():
         return {'status':'failed','error':'choose_option requires a current input element_id and exact option_text.'}
@@ -124,6 +124,26 @@ async def choose_option(session, args):
         return {'status':'failed','error':'Autocomplete timeout must be between 0.2 and 5 seconds.'}
     if args.get('text') is not None and not isinstance(args['text'], str):
         return {'status':'failed','error':'Autocomplete text must be a string.'}
+    native = await session.evaluate("""(() => {
+      const input=window.__spFast?.nodes.get(__ID__);
+      if (!input?.isConnected || input.tagName!=='SELECT') return null;
+      return {id:__ID__,tag:'select',multiple:input.multiple,disabled:input.matches(':disabled') || input.getAttribute('aria-disabled')==='true',
+        options:[...input.options].map(option=>({text:option.label||option.text,value:option.value,
+          disabled:option.disabled||!!option.parentElement?.disabled,selected:option.selected}))};
+    })()""".replace('__ID__',str(ref)))
+    if isinstance(native, dict) and native.get('tag') == 'select':
+        from .control_contract import exact_native_option
+        chosen = exact_native_option(native, wanted)
+        if native.get('multiple') or native.get('disabled') or chosen is None:
+            return {'status':'failed','action':'choose_option',
+                    'error':'No unique enabled native option matches the exact label/value, or this select needs explicit multiple selections. No choice was changed.',
+                    'recovery':{'reason':'native_option_unavailable','expected_action':'select_option',
+                                'element_id':ref,'multiple':native.get('multiple',False),'options':native['options'][:60]}}
+        await session.select_option(ref, chosen['value'])
+        return {'status':'passed','action':'choose_option','selection':chosen['text'],'value':chosen['value'],
+                'already_satisfied':bool((getattr(session,'last_action_verification',None) or {}).get('already_satisfied')),
+                'verification':getattr(session,'last_action_verification',None) or
+                               {'verified':True,'effect_type':'control_change','description':'Exact native option selected and read back.'}}
     if args.get('text') is not None:
         await session.type_text(args['text'], element_id=ref)
     else:

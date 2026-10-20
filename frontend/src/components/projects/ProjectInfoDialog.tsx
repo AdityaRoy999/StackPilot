@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Info } from "@/lib/platform-icons";
+import { Info, RefreshCw } from "@/lib/platform-icons";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
@@ -27,7 +27,14 @@ function Configuration({ details }: { details?: ProjectStackDetails }) {
 
 function ProjectInfoContent({ id, updatedAt, tab }: { id: string; updatedAt?: string; tab: string }) {
   const query = useProjectStack(id, updatedAt);
-  if (tab === "Stack") return <StackInspection stack={query.data?.stack} loading={query.isFetching} failed={query.isError} onRetry={() => void query.refetch()} />;
+  if (tab === "Stack") return <div className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs text-muted-foreground">{query.data?.cache?.inspected_at ? `Saved ${new Date(query.data.cache.inspected_at).toLocaleString()}` : "Detected from source manifests"}</p>
+      <Button type="button" variant="ghost" size="sm" disabled={query.isFetching || query.isRefreshing} onClick={() => query.refresh()}><RefreshCw className={cn("mr-1.5 size-3.5", query.isRefreshing && "animate-spin")} />Refresh stack</Button>
+    </div>
+    {(query.refreshFailed || query.data?.cache?.refresh_error) && <p role="status" className="text-xs text-muted-foreground">{query.refreshFailed ? "Could not refresh the stack. Your saved result is still available." : query.data?.cache?.refresh_error}</p>}
+    <StackInspection stack={query.data?.stack} loading={query.isPending} failed={query.isError} onRetry={() => query.refresh()} />
+  </div>;
   if (query.isPending) return <p role="status" className="text-sm text-muted-foreground">Loading configuration…</p>;
   if (query.isError) return <div className="space-y-3 text-sm"><p>Project details could not be loaded.</p><Button variant="outline" size="sm" onClick={() => void query.refetch()}>Retry</Button></div>;
   if (tab === "Configuration") return <Configuration details={query.data?.details} />;

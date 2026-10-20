@@ -57,6 +57,11 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
             item["role"] = role
         if el.get("type"):
             item["type"] = el.get("type")
+        if tag == 'select' or tag == 'input' and el.get('type') in {'checkbox','radio'}:
+            item['text_semantics'] = 'accessible_name'
+            item['supported_assertions'] = ['accessible_name', 'value' if tag == 'select' else 'checked', 'visible', 'in_viewport', 'validity']
+        if tag == 'select' and not el.get('multiple') and el.get('type') != 'select-multiple':
+            item['supported_actions'] = ['select_option']
         if el.get("placeholder"):
             item["placeholder"] = el.get("placeholder")[:40]
         if el.get("value") is not None and str(el.get("value")).strip():
@@ -65,7 +70,7 @@ def _compact_interactive_elements(elements: List[Dict[str, Any]], max_count: int
             item["checked"] = bool(el.get("checked"))
         if el.get("disabled"):
             item["disabled"] = True
-        for key in ("editor_kind", "required", "invalid", "expanded", "selected", "pressed", "options", "aria_controls", "min", "max", "readonly", "has_popup", "is_inside_modal", "card_context", "form_id"):
+        for key in ("editor_kind", "required", "invalid", "expanded", "selected", "pressed", "options", "multiple", "aria_controls", "min", "max", "readonly", "has_popup", "is_inside_modal", "card_context", "form_id"):
             if el.get(key) is not None:
                 item[key] = el[key]
         if el.get("href"):
@@ -142,6 +147,7 @@ AGENT_TOOLS = [
                     "session_id": {"type": "string"},
                     "timeout_seconds": {"type": "number", "minimum": 0, "maximum": 30},
                     "purpose": {"type": "string", "enum": ["checkpoint", "outcome"], "description": "checkpoint checks intermediate state; outcome checks the user's requested terminal result"},
+                    "complete_task": {"type": "boolean", "description": "True only for a final purpose=outcome assertion covering all requested work. Verified checks finish the targeted task without another planner/report turn."},
                     "expectations": {
                         "type": "array", "minItems": 1, "maxItems": 20,
                         "items": {
@@ -474,7 +480,7 @@ AGENT_TOOLS = [
                 "properties": {
                     "session_id": {"type": "string", "description": "Session identifier (defaults to 'default')"},
                     "action": {"type": "string", "enum": ["click", "hover", "double_click", "right_click", "drag_and_drop", "type", "scroll", "scroll_to", "navigate_back", "navigate_forward", "return_to_parent", "get_theme", "press_key", "navigate", "toggle_checkbox", "set_checked", "select_option", "choose_option", "choose_date", "handle_dialog", "switch_tab", "switch_frame"], "description": "Use navigate_back/navigate_forward for actual history and return_to_parent for detail/modal recovery; observe fresh targets afterwards. Use choose_option for a whole autocomplete transaction, choose_date for a verified calendar date, handle_dialog for a currently observed native dialog, and switch_tab/switch_frame for an observed session-owned surface."},
-                    "option_text":{"type":"string","description":"Exact observed autocomplete label; ambiguous partial names produce a question."},
+                    "option_text":{"type":"string","description":"Exact observed autocomplete or native select option label; ambiguous partial names need a fresh choice."},
                     "format":{"type":"string","enum":["YYYY-MM-DD","DD/MM/YYYY","MM/DD/YYYY"]},
                     "dialog_id":{"type":"string"}, "accept":{"type":"boolean"},
                     "target_id":{"type":"string"}, "frame_id":{"type":"string"},
@@ -495,7 +501,7 @@ AGENT_TOOLS = [
                     "key": {"type": "string", "description": "Key name to press (e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown')"},
                     "modifiers": {"type": "array", "items": {"type": "string"}, "description": "Modifier keys e.g. ['Control'], ['Alt'], ['Shift']"},
                     "url": {"type": "string", "description": "URL when action is 'navigate'"},
-                    "value": {"type": "string", "description": "Option value when action is 'select_option'"}
+                    "value": {"type": "string", "description": "For a native tag=select, use action=select_option with an exact observed options[].value (or label). Never type into a native select."}
                 },
                 "required": ["action"]
             }
@@ -538,7 +544,7 @@ AGENT_TOOLS = [
                                 "delta_y": {"type": "integer"},
                                 "field": {"type": "string", "description": "Field name or placeholder"},
                                 "key": {"type": "string", "description": "Key name to press"},
-                                "value": {"type": "string", "description": "Select option value"}
+                                "value": {"type": "string", "description": "For tag=select use select_option with an observed options[].value; never type into a native select"}
                             },
                             "required": ["action"], "additionalProperties": False
                         }
@@ -967,10 +973,13 @@ async def _execute_legacy_tool(tool_name: str, arguments: Dict[str, Any], user_i
     async def execute():
         active_session = browser_manager.sessions.get(session_id)
         before_inputs = getattr(active_session, 'dispatched_inputs', 0)
+        before_activations = getattr(active_session, 'dispatched_activations', 0)
         if active_session and tool_name == 'browser_interact':
             active_session._pending_consequential_dispatch = None
+            active_session._pending_click_limit = None
         result = None
         dispatched = False
+        limited_dispatch = False
         try:
             if scope:
                 result=await scope[0].record_tool(tool_name,arguments,lambda:_execute_tool_call(tool_name,arguments,user_id))
@@ -989,9 +998,15 @@ async def _execute_legacy_tool(tool_name: str, arguments: Dict[str, Any], user_i
                 if len(recorded) >= 256:
                     recorded.pop(next(iter(recorded)))
                 recorded[pending] = True
+            if tool_name == 'browser_interact':
+                from .browser_testing.cardinality import record_click_limit
+                limited_dispatch = record_click_limit(session, getattr(session, '_pending_click_limit', None), before_activations)
         if dispatched:
             result['consequential_dispatch'] = 'dispatched_once'
             result['hint'] = result.get('hint','') + ' Verify observed confirmation or rejection. Do not repeat this operation after a failed check.'
+        if limited_dispatch and isinstance(result, dict):
+            result['explicit_click_dispatch'] = 'dispatched_once'
+            result['hint'] = result.get('hint','') + ' The requested once-only activation was dispatched. Wait for its result using read-only assertions; do not click the trigger again.'
         tracker=getattr(session,'operation_recovery',None)
         if tracker and tool_name=='browser_interact': tracker.record(session,arguments,result)
         return result
@@ -1205,8 +1220,15 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             controls = _compact_interactive_elements(matches, offset=offset)
             total = len(matches)
             has_more = offset + len(controls) < total
+            from .browser_testing.text_evidence import observe_text_evidence
+            text_evidence = await observe_text_evidence(session, query, scope=scope, offset=offset)
+            from .browser_testing.outcomes import outcome_guard_for
+            guard = outcome_guard_for(session)
+            if guard:
+                guard.observe_readonly(text_evidence.get('text_evidence'), session.current_url)
             return {"status": "observed", "action": "observe", "url": session.current_url,
                     "title": session.page_title, "interactive_elements": controls, "widget_state":widgets,
+                    **text_evidence,
                     "downloads": list(getattr(session, 'download_events', {}).values())[-5:],
                     "total_controls": total, "page_total_controls": len(session.interactive_elements or []),
                     "query":query, "scope":scope, "offset": offset, "has_more": has_more,
@@ -1218,6 +1240,10 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
     if tool_name == "browser_assert":
         from .browser_driver import browser_manager
         from .browser_testing.assertions import assert_browser_state
+        if type(arguments.get('complete_task', False)) is not bool:
+            return {'status':'failed','action':'assert','error':'complete_task must be a boolean.'}
+        if arguments.get('complete_task') and arguments.get('purpose') != 'outcome':
+            return {'status':'failed','action':'assert','error':'Task completion requires purpose=outcome and explicit expected results.'}
         session = browser_manager.sessions.get(str(arguments.get("session_id") or "default"))
         if not session or not session.is_connected:
             return {"status": "unverified", "action": "assert", "reason": "No connected browser session to assert against."}
@@ -1227,11 +1253,14 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             nested = {item.get("purpose") for item in expectations if isinstance(item, dict) and item.get("purpose")}
             if len(nested) == 1:
                 purpose = nested.pop()
-        return await assert_browser_state(session, expectations, arguments.get("timeout_seconds", 5), purpose or "checkpoint")
+        result = await assert_browser_state(session, expectations, arguments.get("timeout_seconds", 5), purpose or "checkpoint")
+        from .browser_testing.text_evidence import assertion_recovery_evidence
+        return await assertion_recovery_evidence(session, result)
 
     if tool_name == "browser_interact":
         session_id = str(arguments.get("session_id") or "default")
         action = str(arguments.get("action", "")).lower()
+        session = None
         try:
             from .browser_driver import browser_manager
             if session_id not in browser_manager.sessions or not browser_manager.sessions[session_id].is_connected:
@@ -1240,6 +1269,8 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             else:
                 session = browser_manager.sessions[session_id]
 
+            session.last_actionability = None
+            session.last_action_verification = None
             if getattr(session,'native_dialog',None) and action!='handle_dialog':
                 return {'status':'failed','action':action,'error':'Resolve the observed native dialog before page input.',
                         'widget_state':{'native_dialog':session.native_dialog}}
@@ -1292,7 +1323,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             elif action in targeted_actions and ref is not None and not any(str(e.get('id')) == str(ref) for e in session.interactive_elements):
                 return {'status':'stale_element','action':action,'error':'Observed element reference is no longer current. Observe and select the current target; no input was dispatched.'}
             if action in targeted_actions and ref is None:
-                fields = ('name','placeholder','input_id') if action == 'type' else ('text','href','aria_label')
+                fields = ('name','placeholder','input_id','aria_label','label') if action == 'type' else ('text','href','aria_label','label','name')
                 query = str(arguments.get('field') or arguments.get('target') or (arguments.get('text') if action != 'type' else '') or '').strip().casefold()
                 if query:
                     candidates = [e for e in session.interactive_elements if any(query in str(e.get(k) or '').strip().casefold() for k in fields)]
@@ -1304,6 +1335,24 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     if candidates:
                         arguments = {**arguments,'element_id':candidates[0]['id']}
                         ref = candidates[0]['id']
+            # Compile only an exact observed native option before approval and
+            # submission checks, so those checks describe the dispatched action.
+            from .browser_testing.control_contract import normalize_control_action, control_contract_result
+            arguments = normalize_control_action(arguments, session.interactive_elements)
+            action = arguments.get('action', action)
+            contract_error = control_contract_result(arguments, session.interactive_elements)
+            if contract_error:
+                return contract_error
+            session.last_actionability = None
+            from .browser_testing.editors import input_already_matches
+            if await input_already_matches(session,arguments):
+                target = next((e for e in session.interactive_elements if e.get('id') == ref), {})
+                return {'status':'passed','action':'type','target':target.get('text') or target.get('name') or 'Input',
+                        'url':session.current_url,'dispatch_state':'not_dispatched','verification_state':'checkpoint_passed',
+                        'already_satisfied':True,'interactive_elements':_compact_interactive_elements(session.interactive_elements),
+                        'verification':{'verified':True,'effect_type':'value_already_set',
+                                        'description':'Fresh readback already matches the requested input. No duplicate typing dispatched; submission remains unverified.'},
+                        'hint':'Continue remaining steps from these controls; do not retype this value.'}
             tracker=getattr(session,'operation_recovery',None)
             if tracker:
                 blocked=tracker.blocked(session,arguments)
@@ -1317,6 +1366,10 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             # coordinate clicks and Enter. Chat text/authorize-all cannot grant it.
             from .browser_testing.permissions import observe_step, permission_reason, authorized
             control = await observe_step(session, arguments)
+            from .browser_testing.cardinality import preflight_click_limit
+            click_limit, click_reservation = preflight_click_limit(session, arguments, control)
+            if click_limit:
+                return click_limit
             from .browser_testing.campaigns import campaign_scope
             scope=campaign_scope.get()
             if scope and control and action in {'click','double_click','press_key'}:
@@ -1375,6 +1428,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             if getattr(session,'audit_read_only',False) and action == 'press_key' and control is None:
                 return {'status':'blocked','action':action,'error':'Current target semantics could not be observed. No input dispatched; observe the page before selecting this action.'}
             session._pending_consequential_dispatch = submission_key
+            session._pending_click_limit = click_reservation
             if action in {'hover','double_click','right_click'} and ref is not None:
                 from .browser_testing.actionability import inspect_actionability
                 await session.scroll_to_element(int(ref))
@@ -1710,7 +1764,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 return {'status':'observed','action':action,'verification':session.last_action_verification,
                         'widget_state':await observe_widgets(session),'interactive_elements':[],
                         'hint':'Resolve this observed native dialog before any further page operation.'}
-            if pre_snapshot is not None:
+            if pre_snapshot is not None and not (action in {'select_option', 'type'} and session.last_action_verification):
                 post_snapshot = await ActionPerceptionVerification.capture_snapshot(session)
                 session.last_action_verification = ActionPerceptionVerification.verify_action_outcome(
                     pre_snapshot, post_snapshot, action=action, target=target_name or label).to_dict()
@@ -1744,16 +1798,6 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
 
             clean_target = target_name or label or action
 
-            next_untested = []
-            for e in tree.get("elements", []):
-                norm = normalize_element_text(e.get("text") or e.get("aria_label") or "")
-                href = (e.get("href") or "").strip()
-                tag = (e.get("tag") or "").lower()
-                role = (e.get("role") or "").lower()
-                if norm and len(norm) > 1 and norm.lower() != clean_target.lower() and not norm.lower().startswith("skip"):
-                    if href not in {"/", "#", ""} or tag in {"button", "a"} or role in {"button", "link", "tab"}:
-                        next_untested.append(f"'{norm}' (id: {e['id']})")
-
             verif = getattr(session, "last_action_verification", {}) or {}
             effect_type = verif.get("effect_type", "")
             post_action_url = (session.current_url or "").rstrip("/")
@@ -1783,6 +1827,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 "archetype": arch_str,
                 "pda_depth": pda_depth_val,
                 "verification": getattr(session, "last_action_verification", None),
+                "already_satisfied": bool((getattr(session, "last_action_verification", None) or {}).get('already_satisfied')),
                 "download": getattr(session, "last_download", None) if action == "click" else None,
                 "timing": ({'target_resolve_ms':getattr(session,'last_target_resolution_ms',0)} |
                            (getattr(session,'last_action_timing',{}) if action == 'click' else {})),
@@ -1809,14 +1854,22 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
             return ret_payload
         except Exception as e:
             result={"status":"failed","action":action,"error": f"Browser interaction failed: {str(e)}"}
+            verification = getattr(session, 'last_action_verification', None)
+            if isinstance(verification, dict):
+                result['verification'] = verification
+            recovery = getattr(session, 'last_actionability', None)
+            if isinstance(recovery, dict) and recovery.get('reason') not in {None, 'ready'}:
+                result['recovery'] = recovery
             return result
 
     if tool_name == "browser_interact_batch":
+        from .browser_testing.transactions import normalize_batch_completion
+        arguments = normalize_batch_completion(arguments)
         session_id = str(arguments.get("session_id") or "default")
         actions = arguments.get("actions", [])
         from .browser_driver import browser_manager
         from .browser_testing.transactions import (validate_batch, completion_evidence,
-            continue_batch_after, compile_batch, scene_changed, page_assertion)
+            continue_batch_after, compile_batch, scene_changed, page_assertion, acknowledged_submission)
         existing = browser_manager.sessions.get(session_id)
         original_count = len(actions) if isinstance(actions, list) else 0
         actions = compile_batch(actions, getattr(existing, 'interactive_elements', ()))
@@ -1854,7 +1907,7 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                     "timing": sub_res.get("timing"),
                     "assertions": sub_res.get("assertions", []),
                     "purpose": sub_res.get("purpose"),
-                    **({key: sub_res[key] for key in ('requested_purpose', 'completion_reason') if key in sub_res}),
+                    **({key: sub_res[key] for key in ('requested_purpose', 'completion_reason', 'already_satisfied', 'dispatch_state', 'verification_state', 'requires_outcome') if key in sub_res}),
                     "error": sub_res.get("error"),
                     "recovery": sub_res.get("recovery"),
                     "hint": sub_res.get("hint"),
@@ -1864,7 +1917,9 @@ async def _execute_tool_call(tool_name: str, arguments: Dict[str, Any], user_id:
                 from .tool_progress import snapshot_step
                 await snapshot_step(session, "browser_assert" if sub_action == "assert" else "browser_interact", sub_args, sub_res,
                                     include_frame=arguments.get('include_frame',True) is not False)
-                if sub_res.get('approval_required') or not continue_batch_after(results[-1]):
+                verifying_submission = (acknowledged_submission(results[-1]) and step_index+1 < len(actions)
+                                        and actions[step_index+1].get('action') == 'assert')
+                if sub_res.get('approval_required') or (not continue_batch_after(results[-1]) and not verifying_submission):
                     break
                 boundary = boundary or scene_changed(sub_res)
 

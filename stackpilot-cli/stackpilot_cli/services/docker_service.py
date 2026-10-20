@@ -25,8 +25,12 @@ def get_workspace_root() -> Path:
 
 def compose_command(root, profile=None):
     from ..config import load_config
+    from ..local_sources import local_sources_override
     config = load_config()
     command = ["docker", "compose", "-f", str(root / ("docker-compose.prod.yml" if config.get("production") else "docker-compose.yml"))]
+    local_folders = local_sources_override(root, production=bool(config.get("production")))
+    if local_folders:
+        command.extend(["-f", str(local_folders)])
     for selected in PROFILES[normalize_profile(profile or config.get("default_profile", "core"))]:
         command.extend(["--profile", selected])
     return command

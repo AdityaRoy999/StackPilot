@@ -10,6 +10,7 @@ docs/
 .vscode/
 .git/
 .env*
+.stackpilot-local-folders.compose.json
 *.pem
 
 # Separate services not needed for backend C++ compilation
